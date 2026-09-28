@@ -27,6 +27,9 @@
     room: null,
     rooms: [],
 
+    joinedRoom: false,
+    leavingRoom: false,
+
     remotes: new Map(),
 
     game: null,
@@ -39,8 +42,6 @@
     dead: false,
     deathSent: false,
     deathTime: 0,
-
-    leavingRoom: false,
 
     originalBots: [],
     botManager: null,
@@ -55,7 +56,9 @@
     avatarTimer: null,
 
     localAvatar: null,
-    avatarDirty: true
+    avatarDirty: true,
+
+    lastBotUpdate: 0
   };
 
   const log = (...a) => console.log("[Connections]", ...a);
@@ -103,6 +106,7 @@
 
   function getLocalPlayer() {
     const game = getGame();
+
     if (!game) return null;
 
     const candidates = [
@@ -131,7 +135,9 @@
 
     try {
       if (typeof game.isInMatch === "function") {
-        if (game.isInMatch()) return true;
+        if (game.isInMatch()) {
+          return true;
+        }
       }
     } catch {}
 
@@ -299,15 +305,24 @@
       return false;
     }
 
-    if (typeof player.alive === "boolean" && !player.alive) {
+    if (
+      typeof player.alive === "boolean" &&
+      !player.alive
+    ) {
       return false;
     }
 
-    if (typeof player.isAlive === "boolean" && !player.isAlive) {
+    if (
+      typeof player.isAlive === "boolean" &&
+      !player.isAlive
+    ) {
       return false;
     }
 
-    if (typeof player.dead === "boolean" && player.dead) {
+    if (
+      typeof player.dead === "boolean" &&
+      player.dead
+    ) {
       return false;
     }
 
@@ -380,6 +395,7 @@
     if (!State.dead) return;
 
     const player = getLocalPlayer();
+
     if (!player) return;
 
     try {
@@ -462,17 +478,24 @@
 
   const Network = {
     connect() {
-      if (State.connecting) return;
-
-      if (
-        State.ws &&
-        State.ws.readyState === WebSocket.OPEN
-      ) {
+      if (State.connecting) {
         return;
       }
 
       if (!State.room) {
         warn("No room selected.");
+        updateStatus("Enter a room ID.");
+        return;
+      }
+
+      if (
+        State.ws &&
+        State.ws.readyState === WebSocket.OPEN
+      ) {
+        if (!State.joinedRoom && !State.leavingRoom) {
+          this.joinRoom();
+        }
+
         return;
       }
 
@@ -495,6 +518,8 @@
       ws.onopen = () => {
         State.connecting = false;
         State.connected = true;
+        State.joinedRoom = false;
+        State.leavingRoom = false;
 
         log("Network connected.");
 
@@ -502,14 +527,9 @@
           name: State.name
         });
 
-        NetworkSend("join_room", {
-          room: State.room,
-          roomId: State.room,
-          id: State.id,
-          name: State.name
-        });
+        this.joinRoom();
 
-        startStateLoop();
+        updateRoomUI();
       };
 
       ws.onmessage = event => {
@@ -531,6 +551,7 @@
       ws.onclose = () => {
         State.connected = false;
         State.connecting = false;
+        State.joinedRoom = false;
         State.ws = null;
 
         stopStateLoop();
@@ -542,12 +563,92 @@
         if (State.leavingRoom) {
           State.room = null;
           State.leavingRoom = false;
+
+          try {
+            localStorage.removeItem(
+              "connections_room"
+            );
+          } catch {}
         }
+
+        updateRoomUI();
       };
     },
 
+    joinRoom() {
+      if (!State.room) {
+        warn("Cannot join: no room selected.");
+        return false;
+      }
+
+      if (
+        !State.ws ||
+        State.ws.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+
+      State.leavingRoom = false;
+
+      const sent = NetworkSend(
+        "join_room",
+        {
+          room: State.room,
+          roomId: State.room,
+          id: State.id,
+          name: State.name
+        }
+      );
+
+      if (sent) {
+        log("Joining room:", State.room);
+        updateStatus(
+          `Joining • ${State.room}`
+        );
+      }
+
+      return sent;
+    },
+
+    leaveRoom() {
+      if (
+        !State.ws ||
+        State.ws.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+
+      if (!State.joinedRoom && !State.confirmedMatch) {
+        return false;
+      }
+
+      State.leavingRoom = true;
+
+      stopStateLoop();
+
+      State.confirmedMatch = false;
+
+      BotSystem.clear();
+
+      const sent = NetworkSend(
+        "leave_room"
+      );
+
+      if (sent) {
+        log("Leaving room:", State.room);
+
+        updateStatus(
+          "Leaving room..."
+        );
+      }
+
+      return sent;
+    },
+
     handle(msg) {
-      if (!msg || !msg.type) return;
+      if (!msg || !msg.type) {
+        return;
+      }
 
       switch (msg.type) {
         case "connected": {
@@ -606,6 +707,13 @@
 
           if (room) {
             State.room = String(room);
+
+            try {
+              localStorage.setItem(
+                "connections_room",
+                State.room
+              );
+            } catch {}
           }
 
           const id =
@@ -620,11 +728,22 @@
             State.id = String(id);
           }
 
+          State.joinedRoom = true;
           State.leavingRoom = false;
 
-          log("Joined room:", State.room);
+          log(
+            "Joined room:",
+            State.room
+          );
 
           updateRoomUI();
+
+          if (
+            State.confirmedMatch &&
+            !State.sendTimer
+          ) {
+            startStateLoop();
+          }
 
           break;
         }
@@ -654,7 +773,9 @@
             msg.data?.playerId;
 
           if (id != null) {
-            BotSystem.remove(String(id));
+            BotSystem.remove(
+              String(id)
+            );
           }
 
           break;
@@ -666,29 +787,61 @@
         }
 
         case "left_room": {
+          State.joinedRoom = false;
+
+          stopStateLoop();
+
+          State.confirmedMatch = false;
+
+          BotSystem.clear();
+
           if (State.leavingRoom) {
             State.room = null;
             State.leavingRoom = false;
 
-            BotSystem.clear();
+            try {
+              localStorage.removeItem(
+                "connections_room"
+              );
+            } catch {}
 
             updateRoomUI();
 
             log("Left room.");
+          } else {
+            updateRoomUI();
+
+            log(
+              "Server confirmed room leave."
+            );
           }
 
           break;
         }
 
         case "room_deleted": {
-          State.room = null;
+          State.joinedRoom = false;
           State.leavingRoom = false;
+
+          stopStateLoop();
+
+          State.confirmedMatch = false;
+
+          State.room = null;
 
           BotSystem.clear();
 
+          try {
+            localStorage.removeItem(
+              "connections_room"
+            );
+          } catch {}
+
           updateRoomUI();
 
-          log("Room deleted by server.");
+          log(
+            "Room deleted by server."
+          );
 
           break;
         }
@@ -716,7 +869,10 @@
         msg.player ||
         msg.data;
 
-      if (!rawState || typeof rawState !== "object") {
+      if (
+        !rawState ||
+        typeof rawState !== "object"
+      ) {
         return;
       }
 
@@ -733,9 +889,10 @@
         msg.data?.clientId ??
         msg.data?.playerId;
 
-      let remoteId = id != null
-        ? String(id)
-        : null;
+      let remoteId =
+        id != null
+          ? String(id)
+          : null;
 
       if (!remoteId) {
         const remoteName =
@@ -746,7 +903,8 @@
 
         if (
           remoteName &&
-          String(remoteName) === String(State.name)
+          String(remoteName) ===
+            String(State.name)
         ) {
           return;
         }
@@ -761,7 +919,10 @@
         return;
       }
 
-      let remote = State.remotes.get(remoteId);
+      let remote =
+        State.remotes.get(
+          remoteId
+        );
 
       if (!remote) {
         remote = {
@@ -776,35 +937,60 @@
             rawState.team ??
             null,
 
-          x: Number(rawState.x) || 0,
-          y: Number(rawState.y) || 0,
-          z: Number(rawState.z) || 0,
+          x:
+            Number(rawState.x) || 0,
 
-          yaw: Number(rawState.yaw) || 0,
-          pitch: Number(rawState.pitch) || 0,
+          y:
+            Number(rawState.y) || 0,
 
-          targetX: Number(rawState.x) || 0,
-          targetY: Number(rawState.y) || 0,
-          targetZ: Number(rawState.z) || 0,
+          z:
+            Number(rawState.z) || 0,
 
-          targetYaw: Number(rawState.yaw) || 0,
-          targetPitch: Number(rawState.pitch) || 0,
+          yaw:
+            Number(rawState.yaw) || 0,
+
+          pitch:
+            Number(rawState.pitch) || 0,
+
+          targetX:
+            Number(rawState.x) || 0,
+
+          targetY:
+            Number(rawState.y) || 0,
+
+          targetZ:
+            Number(rawState.z) || 0,
+
+          targetYaw:
+            Number(rawState.yaw) || 0,
+
+          targetPitch:
+            Number(rawState.pitch) || 0,
 
           alive: true,
           dead: false,
           health: 100,
 
-          avatar: rawState.avatar || null,
+          avatar:
+            rawState.avatar ||
+            null,
 
           bot: null,
           spawned: false,
 
-          lastUpdate: performance.now()
+          lastUpdate:
+            performance.now()
         };
 
-        State.remotes.set(remoteId, remote);
+        State.remotes.set(
+          remoteId,
+          remote
+        );
 
-        log("Remote player detected:", remote.name);
+        log(
+          "Remote player detected:",
+          remote.name
+        );
       }
 
       remote.name =
@@ -830,8 +1016,12 @@
       remote.targetPitch =
         Number(rawState.pitch) || 0;
 
-      if (typeof rawState.health === "number") {
-        remote.health = rawState.health;
+      if (
+        typeof rawState.health ===
+        "number"
+      ) {
+        remote.health =
+          rawState.health;
       }
 
       remote.avatar =
@@ -843,10 +1033,14 @@
         rawState.dead !== true &&
         remote.health > 0;
 
-      remote.alive = reportedAlive;
-      remote.dead = !reportedAlive;
+      remote.alive =
+        reportedAlive;
 
-      remote.lastUpdate = performance.now();
+      remote.dead =
+        !reportedAlive;
+
+      remote.lastUpdate =
+        performance.now();
 
       if (remote.dead) {
         BotSystem.kill(remote);
@@ -862,23 +1056,37 @@
   function sendLocalState() {
     checkLocalDeath();
 
-    if (!State.confirmedMatch) return;
+    if (!State.confirmedMatch) {
+      return;
+    }
+
+    if (!State.joinedRoom) {
+      return;
+    }
 
     if (
       !State.ws ||
-      State.ws.readyState !== WebSocket.OPEN
+      State.ws.readyState !==
+        WebSocket.OPEN
     ) {
       return;
     }
 
-    const player = getLocalPlayer();
+    const player =
+      getLocalPlayer();
 
-    if (!player && !State.dead) {
+    if (
+      !player &&
+      !State.dead
+    ) {
       return;
     }
 
-    const pos = getPosition(player);
-    const rot = getRotation(player);
+    const pos =
+      getPosition(player);
+
+    const rot =
+      getRotation(player);
 
     const alive =
       !State.dead &&
@@ -888,7 +1096,8 @@
       State.dead
         ? 0
         : (
-          typeof player?.health === "number"
+          typeof player?.health ===
+          "number"
             ? player.health
             : 100
         );
@@ -909,7 +1118,8 @@
         player?.team ??
         null,
 
-      name: State.name,
+      name:
+        State.name,
 
       avatar:
         State.localAvatar ||
@@ -923,9 +1133,12 @@
       state.health = 0;
     }
 
-    NetworkSend("state", {
-      state
-    });
+    NetworkSend(
+      "state",
+      {
+        state
+      }
+    );
 
     if (State.dead) {
       State.deathSent = true;
@@ -935,24 +1148,39 @@
   function startStateLoop() {
     stopStateLoop();
 
-    State.sendTimer = setInterval(
-      sendLocalState,
-      50
-    );
+    if (!State.confirmedMatch) {
+      return;
+    }
+
+    if (!State.joinedRoom) {
+      return;
+    }
+
+    State.sendTimer =
+      setInterval(
+        sendLocalState,
+        50
+      );
   }
 
   function stopStateLoop() {
     if (State.sendTimer) {
-      clearInterval(State.sendTimer);
+      clearInterval(
+        State.sendTimer
+      );
+
       State.sendTimer = null;
     }
   }
 
   const BotSystem = {
     findManager() {
-      const game = getGame();
+      const game =
+        getGame();
 
-      if (!game) return null;
+      if (!game) {
+        return null;
+      }
 
       const candidates = [
         game.botManager,
@@ -962,22 +1190,37 @@
         game.entities?.botManager
       ];
 
-      for (const manager of candidates) {
-        if (!manager) continue;
+      for (
+        const manager of candidates
+      ) {
+        if (!manager) {
+          continue;
+        }
 
-        if (Array.isArray(manager)) {
+        if (
+          Array.isArray(manager)
+        ) {
           return {
             bots: manager
           };
         }
 
-        if (Array.isArray(manager.bots)) {
+        if (
+          Array.isArray(
+            manager.bots
+          )
+        ) {
           return manager;
         }
 
-        if (Array.isArray(manager.entities)) {
+        if (
+          Array.isArray(
+            manager.entities
+          )
+        ) {
           return {
-            bots: manager.entities
+            bots:
+              manager.entities
           };
         }
       }
@@ -986,19 +1229,26 @@
     },
 
     preparePool() {
-      if (State.preparingBots) return;
+      if (State.preparingBots) {
+        return;
+      }
 
       State.preparingBots = true;
 
-      const manager = this.findManager();
+      const manager =
+        this.findManager();
 
       if (!manager) {
-        warn("Could not find native bot manager.");
+        warn(
+          "Could not find native bot manager."
+        );
+
         State.preparingBots = false;
         return;
       }
 
-      State.botManager = manager;
+      State.botManager =
+        manager;
 
       const bots =
         Array.isArray(manager)
@@ -1010,26 +1260,37 @@
         return;
       }
 
-      State.originalBots = bots.slice();
+      State.originalBots =
+        bots.slice();
 
       if (
         State.originalBots.length &&
         State.originalBots[0]
       ) {
         State.botConstructor =
-          State.originalBots[0].constructor;
+          State.originalBots[0]
+            .constructor;
 
         State.botTemplate =
           State.originalBots[0];
       }
 
-      for (const bot of State.originalBots) {
+      for (
+        const bot of
+        State.originalBots
+      ) {
         try {
-          bot.__connectionsNative = true;
-          bot.__connectionsPooled = true;
+          bot.__connectionsNative =
+            true;
+
+          bot.__connectionsPooled =
+            true;
         } catch {}
 
-        setVisible(bot, false);
+        setVisible(
+          bot,
+          false
+        );
 
         try {
           if ("enabled" in bot) {
@@ -1049,9 +1310,14 @@
     },
 
     create(remote) {
-      if (!remote) return null;
+      if (!remote) {
+        return null;
+      }
 
-      if (remote.dead || remote.alive === false) {
+      if (
+        remote.dead ||
+        remote.alive === false
+      ) {
         return null;
       }
 
@@ -1065,7 +1331,8 @@
 
       remote.spawned = true;
 
-      const manager = State.botManager;
+      const manager =
+        State.botManager;
 
       if (!manager) {
         remote.spawned = false;
@@ -1085,15 +1352,20 @@
       let bot = null;
 
       try {
-        if (typeof State.botConstructor === "function") {
-          const game = getGame();
+        if (
+          typeof State.botConstructor ===
+          "function"
+        ) {
+          const game =
+            getGame();
 
-          bot = new State.botConstructor(
-            game,
-            remote.team,
-            remote.name,
-            3
-          );
+          bot =
+            new State.botConstructor(
+              game,
+              remote.team,
+              remote.name,
+              3
+            );
         }
       } catch (e) {
         warn(
@@ -1107,8 +1379,11 @@
         return null;
       }
 
-      bot.__connectionsRemote = true;
-      bot.__connectionsRemoteId = remote.id;
+      bot.__connectionsRemote =
+        true;
+
+      bot.__connectionsRemoteId =
+        remote.id;
 
       try {
         bot.__connectionsOriginalName =
@@ -1116,12 +1391,15 @@
       } catch {}
 
       try {
-        bot.name = remote.name;
+        bot.name =
+          remote.name;
       } catch {}
 
       try {
         bot.health =
-          Number.isFinite(remote.health)
+          Number.isFinite(
+            remote.health
+          )
             ? remote.health
             : 100;
       } catch {}
@@ -1138,7 +1416,10 @@
         bot.dead = false;
       } catch {}
 
-      setVisible(bot, true);
+      setVisible(
+        bot,
+        true
+      );
 
       setPosition(
         bot,
@@ -1148,14 +1429,18 @@
       );
 
       try {
-        if (typeof bot.spawn === "function") {
+        if (
+          typeof bot.spawn ===
+          "function"
+        ) {
           bot.spawn();
         }
       } catch {}
 
       bots.push(bot);
 
-      remote.bot = bot;
+      remote.bot =
+        bot;
 
       State.avatarDirty = true;
 
@@ -1169,13 +1454,16 @@
     },
 
     kill(remote) {
-      if (!remote) return;
+      if (!remote) {
+        return;
+      }
 
       remote.alive = false;
       remote.dead = true;
       remote.health = 0;
 
-      const bot = remote.bot;
+      const bot =
+        remote.bot;
 
       if (!bot) {
         return;
@@ -1205,9 +1493,14 @@
         "handleDeath"
       ];
 
-      for (const fn of funcs) {
+      for (
+        const fn of funcs
+      ) {
         try {
-          if (typeof bot[fn] === "function") {
+          if (
+            typeof bot[fn] ===
+            "function"
+          ) {
             bot[fn]();
             break;
           }
@@ -1217,19 +1510,29 @@
       try {
         if (
           bot.agent &&
-          typeof bot.agent.die === "function"
+          typeof bot.agent.die ===
+          "function"
         ) {
           bot.agent.die();
         }
       } catch {}
 
-      setVisible(bot, false);
+      setVisible(
+        bot,
+        false
+      );
     },
 
     update(remote, dt) {
-      if (!remote || !remote.bot) return;
+      if (
+        !remote ||
+        !remote.bot
+      ) {
+        return;
+      }
 
-      const bot = remote.bot;
+      const bot =
+        remote.bot;
 
       if (
         remote.dead ||
@@ -1240,36 +1543,55 @@
         return;
       }
 
-      const smooth = Math.min(
-        1,
-        Math.max(
-          0.05,
-          dt * 12
-        )
-      );
+      const smooth =
+        Math.min(
+          1,
+          Math.max(
+            0.05,
+            dt * 12
+          )
+        );
 
       remote.x +=
-        (remote.targetX - remote.x) *
+        (
+          remote.targetX -
+          remote.x
+        ) *
         smooth;
 
       remote.y +=
-        (remote.targetY - remote.y) *
+        (
+          remote.targetY -
+          remote.y
+        ) *
         smooth;
 
       remote.z +=
-        (remote.targetZ - remote.z) *
+        (
+          remote.targetZ -
+          remote.z
+        ) *
         smooth;
 
       remote.yaw +=
-        (remote.targetYaw - remote.yaw) *
+        (
+          remote.targetYaw -
+          remote.yaw
+        ) *
         smooth;
 
       remote.pitch +=
-        (remote.targetPitch - remote.pitch) *
+        (
+          remote.targetPitch -
+          remote.pitch
+        ) *
         smooth;
 
-      const oldX = getPosition(bot).x;
-      const oldZ = getPosition(bot).z;
+      const oldX =
+        getPosition(bot).x;
+
+      const oldZ =
+        getPosition(bot).z;
 
       setPosition(
         bot,
@@ -1280,7 +1602,9 @@
 
       try {
         bot.health =
-          Number.isFinite(remote.health)
+          Number.isFinite(
+            remote.health
+          )
             ? remote.health
             : bot.health;
       } catch {}
@@ -1300,15 +1624,28 @@
       try {
         if (
           bot.cs2Agent &&
-          typeof bot.cs2Agent.update === "function"
+          typeof bot.cs2Agent.update ===
+          "function"
         ) {
           const vx =
-            (remote.x - oldX) /
-            Math.max(dt, 0.001);
+            (
+              remote.x -
+              oldX
+            ) /
+            Math.max(
+              dt,
+              0.001
+            );
 
           const vz =
-            (remote.z - oldZ) /
-            Math.max(dt, 0.001);
+            (
+              remote.z -
+              oldZ
+            ) /
+            Math.max(
+              dt,
+              0.001
+            );
 
           bot.cs2Agent.update(
             dt,
@@ -1317,7 +1654,8 @@
               vz,
               airborne: false,
               crouch: 0,
-              pitch: remote.pitch
+              pitch:
+                remote.pitch
             }
           );
         }
@@ -1325,7 +1663,10 @@
     },
 
     updateAll(dt) {
-      for (const remote of State.remotes.values()) {
+      for (
+        const remote of
+        State.remotes.values()
+      ) {
         if (
           remote.dead ||
           remote.alive === false
@@ -1339,21 +1680,34 @@
           continue;
         }
 
-        this.update(remote, dt);
+        this.update(
+          remote,
+          dt
+        );
       }
     },
 
     remove(id) {
       const remote =
-        State.remotes.get(String(id));
+        State.remotes.get(
+          String(id)
+        );
 
-      if (!remote) return;
+      if (!remote) {
+        return;
+      }
 
-      const bot = remote.bot;
+      const bot =
+        remote.bot;
 
-      if (bot && State.botManager) {
+      if (
+        bot &&
+        State.botManager
+      ) {
         const bots =
-          Array.isArray(State.botManager)
+          Array.isArray(
+            State.botManager
+          )
             ? State.botManager
             : State.botManager.bots;
 
@@ -1362,32 +1716,45 @@
             bots.indexOf(bot);
 
           if (index !== -1) {
-            bots.splice(index, 1);
+            bots.splice(
+              index,
+              1
+            );
           }
         }
       }
 
-      State.remotes.delete(String(id));
+      State.remotes.delete(
+        String(id)
+      );
 
-      State.avatarDirty = true;
+      State.avatarDirty =
+        true;
 
-      log("Remote removed:", id);
+      log(
+        "Remote removed:",
+        id
+      );
     },
 
     clear() {
       if (State.botManager) {
         const bots =
-          Array.isArray(State.botManager)
+          Array.isArray(
+            State.botManager
+          )
             ? State.botManager
             : State.botManager.bots;
 
         if (Array.isArray(bots)) {
           for (
-            let i = bots.length - 1;
+            let i =
+              bots.length - 1;
             i >= 0;
             i--
           ) {
-            const bot = bots[i];
+            const bot =
+              bots[i];
 
             if (
               bot &&
@@ -1395,13 +1762,17 @@
             ) {
               try {
                 if (
-                  typeof bot.die === "function"
+                  typeof bot.die ===
+                  "function"
                 ) {
                   bot.die();
                 }
               } catch {}
 
-              bots.splice(i, 1);
+              bots.splice(
+                i,
+                1
+              );
             }
           }
 
@@ -1409,35 +1780,53 @@
             State.originalBots.length &&
             State.leavingRoom
           ) {
-            for (const original of State.originalBots) {
-              if (!bots.includes(original)) {
+            for (
+              const original of
+              State.originalBots
+            ) {
+              if (
+                !bots.includes(
+                  original
+                )
+              ) {
                 try {
-                  original.__connectionsPooled = false;
+                  original.__connectionsPooled =
+                    false;
                 } catch {}
 
                 try {
-                  original.__connectionsNative = true;
+                  original.__connectionsNative =
+                    true;
                 } catch {}
 
                 try {
-                  original.health = 100;
+                  original.health =
+                    100;
                 } catch {}
 
                 try {
-                  original.alive = true;
+                  original.alive =
+                    true;
                 } catch {}
 
                 try {
-                  original.isAlive = true;
+                  original.isAlive =
+                    true;
                 } catch {}
 
                 try {
-                  original.dead = false;
+                  original.dead =
+                    false;
                 } catch {}
 
-                setVisible(original, true);
+                setVisible(
+                  original,
+                  true
+                );
 
-                bots.push(original);
+                bots.push(
+                  original
+                );
               }
             }
           }
@@ -1445,15 +1834,18 @@
       }
 
       State.remotes.clear();
-      State.avatarDirty = true;
+      State.avatarDirty =
+        true;
     }
   };
 
   function updateRemoteBots() {
-    const now = performance.now();
+    const now =
+      performance.now();
 
     if (!State.lastBotUpdate) {
-      State.lastBotUpdate = now;
+      State.lastBotUpdate =
+        now;
     }
 
     const dt =
@@ -1461,43 +1853,59 @@
         0.1,
         Math.max(
           0.001,
-          (now - State.lastBotUpdate) / 1000
+          (
+            now -
+            State.lastBotUpdate
+          ) / 1000
         )
       );
 
-    State.lastBotUpdate = now;
+    State.lastBotUpdate =
+      now;
 
     if (
       State.confirmedMatch &&
-      State.connected
+      State.connected &&
+      State.joinedRoom
     ) {
-      BotSystem.updateAll(dt);
+      BotSystem.updateAll(
+        dt
+      );
     }
   }
 
   function startBotLoop() {
     if (State.botTimer) {
-      clearInterval(State.botTimer);
+      clearInterval(
+        State.botTimer
+      );
     }
 
-    State.botTimer = setInterval(
-      updateRemoteBots,
-      100
-    );
+    State.botTimer =
+      setInterval(
+        updateRemoteBots,
+        100
+      );
   }
 
   function stopBotLoop() {
     if (State.botTimer) {
-      clearInterval(State.botTimer);
+      clearInterval(
+        State.botTimer
+      );
+
       State.botTimer = null;
     }
   }
 
   const RemoteAvatars = {
     getElements() {
-      const game = getGame();
+      const game =
+        getGame();
 
-      if (!game) return [];
+      if (!game) {
+        return [];
+      }
 
       const result = [];
 
@@ -1506,17 +1914,29 @@
         game._avatars
       ];
 
-      for (const list of sources) {
-        if (!Array.isArray(list)) continue;
+      for (
+        const list of sources
+      ) {
+        if (
+          !Array.isArray(list)
+        ) {
+          continue;
+        }
 
-        for (const item of list) {
-          if (!item) continue;
+        for (
+          const item of list
+        ) {
+          if (!item) {
+            continue;
+          }
 
           if (
             item.ent &&
             item.el
           ) {
-            result.push(item);
+            result.push(
+              item
+            );
           }
         }
       }
@@ -1528,20 +1948,34 @@
       const elements =
         this.getElements();
 
-      if (!elements.length) return;
+      if (!elements.length) {
+        return;
+      }
 
       const remoteList =
         Array.from(
           State.remotes.values()
         );
 
-      for (const item of elements) {
-        const ent = item.ent;
-        const el = item.el;
+      for (
+        const item of elements
+      ) {
+        const ent =
+          item.ent;
 
-        if (!ent || !el) continue;
+        const el =
+          item.el;
 
-        if (!ent.__connectionsRemote) {
+        if (
+          !ent ||
+          !el
+        ) {
+          continue;
+        }
+
+        if (
+          !ent.__connectionsRemote
+        ) {
           continue;
         }
 
@@ -1549,24 +1983,41 @@
           ent.__connectionsRemoteId;
 
         const remote =
-          State.remotes.get(String(id));
+          State.remotes.get(
+            String(id)
+          );
 
-        if (!remote) continue;
+        if (!remote) {
+          continue;
+        }
 
-        if (!remote.avatar) continue;
+        if (!remote.avatar) {
+          continue;
+        }
 
         try {
-          el.src = remote.avatar;
-          el.style.display = "";
+          el.src =
+            remote.avatar;
+
+          el.style.display =
+            "";
         } catch {}
       }
 
-      for (const remote of remoteList) {
-        if (!remote.avatar) continue;
+      for (
+        const remote of
+        remoteList
+      ) {
+        if (!remote.avatar) {
+          continue;
+        }
 
-        const bot = remote.bot;
+        const bot =
+          remote.bot;
 
-        if (!bot) continue;
+        if (!bot) {
+          continue;
+        }
 
         try {
           bot.__connectionsAvatar =
@@ -1578,28 +2029,41 @@
 
   function startAvatarLoop() {
     if (State.avatarTimer) {
-      clearInterval(State.avatarTimer);
+      clearInterval(
+        State.avatarTimer
+      );
     }
 
-    State.avatarTimer = setInterval(
-      () => RemoteAvatars.apply(),
-      250
-    );
+    State.avatarTimer =
+      setInterval(
+        () => {
+          RemoteAvatars.apply();
+        },
+        250
+      );
   }
 
   function stopAvatarLoop() {
     if (State.avatarTimer) {
-      clearInterval(State.avatarTimer);
+      clearInterval(
+        State.avatarTimer
+      );
+
       State.avatarTimer = null;
     }
   }
 
   function keepGameUnpaused() {
-    if (!State.confirmedMatch) return;
+    if (!State.confirmedMatch) {
+      return;
+    }
 
-    const game = getGame();
+    const game =
+      getGame();
 
-    if (!game) return;
+    if (!game) {
+      return;
+    }
 
     try {
       game.paused = false;
@@ -1618,20 +2082,25 @@
     } catch {}
 
     try {
-      game.shouldPauseOnBlur = false;
+      game.shouldPauseOnBlur =
+        false;
     } catch {}
 
     try {
-      game.shouldPauseOnVisibility = false;
+      game.shouldPauseOnVisibility =
+        false;
     } catch {}
   }
 
   function installTabGuard() {
-    if (unsafeWindow.__connectionsTabGuard) {
+    if (
+      unsafeWindow.__connectionsTabGuard
+    ) {
       return;
     }
 
-    unsafeWindow.__connectionsTabGuard = true;
+    unsafeWindow.__connectionsTabGuard =
+      true;
 
     try {
       Object.defineProperty(
@@ -1639,6 +2108,7 @@
         "hidden",
         {
           configurable: true,
+
           get() {
             return false;
           }
@@ -1652,6 +2122,7 @@
         "visibilityState",
         {
           configurable: true,
+
           get() {
             return "visible";
           }
@@ -1659,38 +2130,45 @@
       );
     } catch {}
 
-    const stop = event => {
-      if (!unsafeWindow.__connectionsTabGuard) {
-        return;
-      }
+    const stop =
+      event => {
+        if (
+          !unsafeWindow.__connectionsTabGuard
+        ) {
+          return;
+        }
 
-      if (!State.confirmedMatch) {
-        return;
-      }
+        if (
+          !State.confirmedMatch
+        ) {
+          return;
+        }
 
-      try {
-        event.stopImmediatePropagation();
-      } catch {}
-    };
+        try {
+          event.stopImmediatePropagation();
+        } catch {}
+      };
 
     [
       "blur",
       "pagehide",
       "visibilitychange",
       "webkitvisibilitychange"
-    ].forEach(type => {
-      window.addEventListener(
-        type,
-        stop,
-        true
-      );
+    ].forEach(
+      type => {
+        window.addEventListener(
+          type,
+          stop,
+          true
+        );
 
-      document.addEventListener(
-        type,
-        stop,
-        true
-      );
-    });
+        document.addEventListener(
+          type,
+          stop,
+          true
+        );
+      }
+    );
 
     setInterval(
       keepGameUnpaused,
@@ -1698,14 +2176,13 @@
     );
   }
 
-  function findBotManagerForScan() {
-    return BotSystem.findManager();
-  }
-
   async function prepareMatch() {
-    if (State.preparingBots) return;
+    if (State.preparingBots) {
+      return;
+    }
 
-    State.preparingBots = true;
+    State.preparingBots =
+      true;
 
     updateStatus(
       "Scanning engine..."
@@ -1713,10 +2190,12 @@
 
     await sleep(150);
 
-    State.game = getGame();
+    State.game =
+      getGame();
 
     if (!State.game) {
-      State.preparingBots = false;
+      State.preparingBots =
+        false;
 
       updateStatus(
         "Engine not found."
@@ -1730,10 +2209,17 @@
     State.localAvatar =
       getAvatar();
 
-    State.confirmedMatch = true;
-    State.matchEnding = false;
-    State.dead = false;
-    State.deathSent = false;
+    State.confirmedMatch =
+      true;
+
+    State.matchEnding =
+      false;
+
+    State.dead =
+      false;
+
+    State.deathSent =
+      false;
 
     installTabGuard();
 
@@ -1741,9 +2227,17 @@
       "Ready"
     );
 
-    State.preparingBots = false;
+    State.preparingBots =
+      false;
 
     Network.connect();
+
+    if (
+      State.connected &&
+      State.joinedRoom
+    ) {
+      startStateLoop();
+    }
 
     startBotLoop();
     startAvatarLoop();
@@ -1754,23 +2248,35 @@
   }
 
   function endMatch() {
-    if (!State.confirmedMatch) return;
+    if (!State.confirmedMatch) {
+      return;
+    }
 
-    State.confirmedMatch = false;
-    State.matchEnding = true;
+    State.confirmedMatch =
+      false;
+
+    State.matchEnding =
+      true;
 
     stopStateLoop();
 
     BotSystem.clear();
 
-    State.dead = false;
-    State.deathSent = false;
+    State.dead =
+      false;
 
-    log("Match ended.");
+    State.deathSent =
+      false;
+
+    log(
+      "Match ended."
+    );
   }
 
   function createUI() {
-    if (State.UI.root) return;
+    if (State.UI.root) {
+      return;
+    }
 
     GM_addStyle(`
       #connections-root {
@@ -1905,7 +2411,9 @@
     `);
 
     const root =
-      document.createElement("div");
+      document.createElement(
+        "div"
+      );
 
     root.id =
       "connections-root";
@@ -2010,9 +2518,12 @@
       <div id="connections-debug"></div>
     `;
 
-    document.body.appendChild(root);
+    document.body.appendChild(
+      root
+    );
 
-    State.UI.root = root;
+    State.UI.root =
+      root;
 
     State.UI.name =
       root.querySelector(
@@ -2115,8 +2626,18 @@
     State.UI.room.addEventListener(
       "input",
       () => {
-        State.room =
+        const value =
           State.UI.room.value.trim();
+
+        if (
+          State.connected &&
+          State.joinedRoom
+        ) {
+          return;
+        }
+
+        State.room =
+          value;
 
         localStorage.setItem(
           "connections_room",
@@ -2128,11 +2649,25 @@
     State.UI.random.addEventListener(
       "click",
       () => {
+        if (
+          State.connected &&
+          State.joinedRoom
+        ) {
+          updateStatus(
+            "Leave the current room first."
+          );
+
+          return;
+        }
+
         const room =
           randomRoom();
 
-        State.room = room;
-        State.UI.room.value = room;
+        State.room =
+          room;
+
+        State.UI.room.value =
+          room;
 
         localStorage.setItem(
           "connections_room",
@@ -2160,16 +2695,32 @@
           State.UI.name.value.trim() ||
           "Player";
 
-        State.room =
+        const selectedRoom =
           State.UI.room.value.trim();
 
-        if (!State.room) {
+        if (!selectedRoom) {
           updateStatus(
             "Enter a room ID."
           );
 
           return;
         }
+
+        if (
+          State.connected &&
+          State.joinedRoom &&
+          String(State.room) !==
+            String(selectedRoom)
+        ) {
+          updateStatus(
+            "Leave the current room first."
+          );
+
+          return;
+        }
+
+        State.room =
+          selectedRoom;
 
         localStorage.setItem(
           "connections_name",
@@ -2188,22 +2739,7 @@
     State.UI.leave.addEventListener(
       "click",
       () => {
-        if (
-          !State.ws ||
-          State.ws.readyState !== WebSocket.OPEN
-        ) {
-          return;
-        }
-
-        State.leavingRoom = true;
-
-        NetworkSend(
-          "leave_room"
-        );
-
-        updateStatus(
-          "Leaving room..."
-        );
+        Network.leaveRoom();
       }
     );
 
@@ -2228,11 +2764,15 @@
         const file =
           event.target.files?.[0];
 
-        if (!file) return;
+        if (!file) {
+          return;
+        }
 
         try {
           const data =
-            await compressAvatar(file);
+            await compressAvatar(
+              file
+            );
 
           saveAvatar(data);
           updateAvatarPreview();
@@ -2243,7 +2783,8 @@
           );
         }
 
-        event.target.value = "";
+        event.target.value =
+          "";
       }
     );
 
@@ -2257,91 +2798,107 @@
           new FileReader();
 
         reader.onerror =
-          () => reject(
-            new Error(
-              "Could not read image."
-            )
-          );
-
-        reader.onload = () => {
-          const img =
-            new Image();
-
-          img.onerror =
-            () => reject(
+          () =>
+            reject(
               new Error(
-                "Could not load image."
+                "Could not read image."
               )
             );
 
-          img.onload = () => {
-            const canvas =
-              document.createElement(
-                "canvas"
-              );
+        reader.onload =
+          () => {
+            const img =
+              new Image();
 
-            const size = 128;
+            img.onerror =
+              () =>
+                reject(
+                  new Error(
+                    "Could not load image."
+                  )
+                );
 
-            canvas.width = size;
-            canvas.height = size;
+            img.onload =
+              () => {
+                const canvas =
+                  document.createElement(
+                    "canvas"
+                  );
 
-            const ctx =
-              canvas.getContext(
-                "2d"
-              );
+                const size =
+                  128;
 
-            ctx.clearRect(
-              0,
-              0,
-              size,
-              size
-            );
+                canvas.width =
+                  size;
 
-            const scale =
-              Math.max(
-                size / img.width,
-                size / img.height
-              );
+                canvas.height =
+                  size;
 
-            const width =
-              img.width * scale;
+                const ctx =
+                  canvas.getContext(
+                    "2d"
+                  );
 
-            const height =
-              img.height * scale;
+                ctx.clearRect(
+                  0,
+                  0,
+                  size,
+                  size
+                );
 
-            const x =
-              (size - width) / 2;
+                const scale =
+                  Math.max(
+                    size / img.width,
+                    size / img.height
+                  );
 
-            const y =
-              (size - height) / 2;
+                const width =
+                  img.width *
+                  scale;
 
-            ctx.drawImage(
-              img,
-              x,
-              y,
-              width,
-              height
-            );
+                const height =
+                  img.height *
+                  scale;
 
-            resolve(
-              canvas.toDataURL(
-                "image/webp",
-                0.82
-              )
-            );
+                const x =
+                  (size - width) /
+                  2;
+
+                const y =
+                  (size - height) /
+                  2;
+
+                ctx.drawImage(
+                  img,
+                  x,
+                  y,
+                  width,
+                  height
+                );
+
+                resolve(
+                  canvas.toDataURL(
+                    "image/webp",
+                    0.82
+                  )
+                );
+              };
+
+            img.src =
+              reader.result;
           };
 
-          img.src =
-            reader.result;
-        };
-
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(
+          file
+        );
       }
     );
   }
 
   function updateAvatarPreview() {
-    if (!State.UI.avatarPreview) {
+    if (
+      !State.UI.avatarPreview
+    ) {
       return;
     }
 
@@ -2360,21 +2917,41 @@
   }
 
   function updateRoomUI() {
-    if (!State.UI.status) return;
+    if (!State.UI.status) {
+      return;
+    }
 
-    if (State.connected) {
+    if (
+      State.connected &&
+      State.joinedRoom
+    ) {
       updateStatus(
         State.room
           ? `Connected • ${State.room}`
           : "Connected"
       );
-    } else {
+
+      return;
+    }
+
+    if (
+      State.connected &&
+      !State.joinedRoom
+    ) {
       updateStatus(
         State.room
-          ? `Ready • ${State.room}`
-          : "No room"
+          ? `Connected • waiting for room`
+          : "Connected"
       );
+
+      return;
     }
+
+    updateStatus(
+      State.room
+        ? `Ready • ${State.room}`
+        : "No room"
+    );
   }
 
   function updateStatus(text) {
@@ -2385,32 +2962,58 @@
   }
 
   function updateDebug() {
-    if (!State.UI.debug) return;
+    if (!State.UI.debug) {
+      return;
+    }
 
-    const game = getGame();
+    const game =
+      getGame();
 
     State.UI.debug.textContent =
       [
         `connected=${State.connected}`,
+
+        `joinedRoom=${State.joinedRoom}`,
+
         `confirmedMatch=${State.confirmedMatch}`,
-        `room=${State.room || "null"}`,
-        `id=${State.id || "null"}`,
-        `remotePlayers=${State.remotes.size}`,
+
+        `room=${
+          State.room ||
+          "null"
+        }`,
+
+        `id=${
+          State.id ||
+          "null"
+        }`,
+
+        `remotePlayers=${
+          State.remotes.size
+        }`,
+
         `remoteBots=${
           Array.from(
             State.remotes.values()
-          ).filter(r => r.bot).length
+          ).filter(
+            r => !!r.bot
+          ).length
         }`,
+
         `dead=${State.dead}`,
+
         `gameState=${
           game?.gameState ??
           "undefined"
         }`
-      ].join(" | ");
+      ].join(
+        " | "
+      );
   }
 
   function toggleUI() {
-    if (!State.UI.root) return;
+    if (!State.UI.root) {
+      return;
+    }
 
     const visible =
       State.UI.root.style.display !==
@@ -2432,7 +3035,8 @@
       "keydown",
       event => {
         if (
-          event.key === "Backspace" &&
+          event.key ===
+            "Backspace" &&
           !event.repeat
         ) {
           const target =
@@ -2441,12 +3045,16 @@
           const typing =
             target &&
             (
-              target.tagName === "INPUT" ||
-              target.tagName === "TEXTAREA" ||
+              target.tagName ===
+                "INPUT" ||
+              target.tagName ===
+                "TEXTAREA" ||
               target.isContentEditable
             );
 
-          if (typing) return;
+          if (typing) {
+            return;
+          }
 
           event.preventDefault();
 
@@ -2474,6 +3082,7 @@
             inside &&
             !State.confirmedMatch
           ) {
+            updateDebug();
             return;
           }
 
@@ -2484,7 +3093,9 @@
             endMatch();
           }
 
-          if (State.confirmedMatch) {
+          if (
+            State.confirmedMatch
+          ) {
             checkLocalDeath();
             enforceLocalDeath();
             keepGameUnpaused();
@@ -2497,127 +3108,152 @@
   }
 
   function exposeDebug() {
-    unsafeWindow.__connections_multiplayer = {
-      version: VERSION,
+    unsafeWindow.__connections_multiplayer =
+      {
+        version: VERSION,
 
-      get connected() {
-        return State.connected;
-      },
+        get connected() {
+          return State.connected;
+        },
 
-      get confirmedMatch() {
-        return State.confirmedMatch;
-      },
+        get joinedRoom() {
+          return State.joinedRoom;
+        },
 
-      get room() {
-        return State.room;
-      },
+        get confirmedMatch() {
+          return State.confirmedMatch;
+        },
 
-      get id() {
-        return State.id;
-      },
+        get room() {
+          return State.room;
+        },
 
-      get name() {
-        return State.name;
-      },
+        get id() {
+          return State.id;
+        },
 
-      get remoteCount() {
-        return State.remotes.size;
-      },
+        get name() {
+          return State.name;
+        },
 
-      get remoteBots() {
-        return Array.from(
-          State.remotes.values()
-        ).filter(
-          remote => !!remote.bot
-        ).length;
-      },
+        get remoteCount() {
+          return State.remotes.size;
+        },
 
-      get botCount() {
-        if (!State.botManager) {
-          return 0;
-        }
+        get remoteBots() {
+          return Array.from(
+            State.remotes.values()
+          ).filter(
+            remote =>
+              !!remote.bot
+          ).length;
+        },
 
-        const bots =
-          Array.isArray(
-            State.botManager
+        get botCount() {
+          if (
+            !State.botManager
+          ) {
+            return 0;
+          }
+
+          const bots =
+            Array.isArray(
+              State.botManager
+            )
+              ? State.botManager
+              : State.botManager.bots;
+
+          return Array.isArray(
+            bots
           )
-            ? State.botManager
-            : State.botManager.bots;
+            ? bots.length
+            : 0;
+        },
 
-        return Array.isArray(bots)
-          ? bots.length
-          : 0;
-      },
+        get dead() {
+          return State.dead;
+        },
 
-      get dead() {
-        return State.dead;
-      },
+        get localAvatar() {
+          return State.localAvatar;
+        },
 
-      get localAvatar() {
-        return State.localAvatar;
-      },
+        get gameState() {
+          return getGame()?.gameState;
+        },
 
-      get gameState() {
-        return getGame()?.gameState;
-      },
+        get gameGameState() {
+          return getGame()?.gameState;
+        },
 
-      get gameGameState() {
-        return getGame()?.gameState;
-      },
+        get localAvatarExists() {
+          return !!getAvatar();
+        },
 
-      get localAvatarExists() {
-        return !!getAvatar();
-      },
-
-      forceDeath() {
-        forceLocalDeath(
-          "debug"
-        );
-      },
-
-      connect() {
-        Network.connect();
-      },
-
-      leave() {
-        if (
-          State.ws &&
-          State.ws.readyState === WebSocket.OPEN
-        ) {
-          State.leavingRoom = true;
-          NetworkSend(
-            "leave_room"
+        forceDeath() {
+          forceLocalDeath(
+            "debug"
           );
-        }
-      },
+        },
 
-      dump() {
-        return {
-          version: VERSION,
-          connected: State.connected,
-          confirmedMatch:
-            State.confirmedMatch,
-          room: State.room,
-          id: State.id,
-          name: State.name,
-          dead: State.dead,
-          remoteCount:
-            State.remotes.size,
-          remoteBots:
-            Array.from(
-              State.remotes.values()
-            ).filter(
-              r => !!r.bot
-            ).length,
-          botCount:
-            this.botCount,
-          gameState:
-            getGame()?.gameState,
-          localAvatar:
-            !!getAvatar()
-        };
-      }
-    };
+        connect() {
+          Network.connect();
+        },
+
+        join() {
+          Network.joinRoom();
+        },
+
+        leave() {
+          Network.leaveRoom();
+        },
+
+        dump() {
+          return {
+            version: VERSION,
+
+            connected:
+              State.connected,
+
+            joinedRoom:
+              State.joinedRoom,
+
+            confirmedMatch:
+              State.confirmedMatch,
+
+            room:
+              State.room,
+
+            id:
+              State.id,
+
+            name:
+              State.name,
+
+            dead:
+              State.dead,
+
+            remoteCount:
+              State.remotes.size,
+
+            remoteBots:
+              Array.from(
+                State.remotes.values()
+              ).filter(
+                r => !!r.bot
+              ).length,
+
+            botCount:
+              this.botCount,
+
+            gameState:
+              getGame()?.gameState,
+
+            localAvatar:
+              !!getAvatar()
+          };
+        }
+      };
 
     log(
       "Debug:",
@@ -2627,8 +3263,11 @@
 
   function boot() {
     createUI();
+
     installKeyboard();
+
     installMatchMonitor();
+
     installTabGuard();
 
     State.localAvatar =
