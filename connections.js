@@ -2816,12 +2816,12 @@
       pro;
 
     addSegment(
-      "HVH SERVER",
+      "MY SERVER",
       "#ff3030"
     );
 
     addSegment(
-      "18+ only",
+      "pros only",
       "#ff4fd8"
     );
 
