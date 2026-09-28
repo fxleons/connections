@@ -14,15 +14,24 @@
   "use strict";
 
   const VERSION = "1.0.0";
-  const WS_URL = "wss://able-vpn-star-constitutional.trycloudflare.com";
+
+  const WS_URL =
+    "wss://able-vpn-star-constitutional.trycloudflare.com";
+
+  const RAFIT_LOGO =
+    "https://raw.githubusercontent.com/fxleons/connections/main/rafit_logo.png";
 
   const State = {
     ws: null,
+
     connected: false,
     connecting: false,
 
     id: null,
-    name: "Player",
+    name:
+      localStorage.getItem(
+        "connections_name"
+      ) || "Player",
 
     room: null,
     rooms: [],
@@ -30,58 +39,57 @@
     joinedRoom: false,
     leavingRoom: false,
 
+    roomData: null,
+
+    confirmedMatch: false,
+
     remotes: new Map(),
 
     game: null,
 
-    confirmedMatch: false,
-    preparingBots: false,
-
-    matchEnding: false,
-
-    dead: false,
-    deathSent: false,
-    deathTime: 0,
-
-    originalBots: [],
     botManager: null,
     botConstructor: null,
-    botTemplate: null,
+
+    originalBots: [],
+
+    dead: false,
+
+    localAvatar:
+      localStorage.getItem(
+        "pp-avatar"
+      ) || null,
 
     UI: {},
 
-    sendTimer: null,
+    stateTimer: null,
     monitorTimer: null,
     botTimer: null,
-    avatarTimer: null,
 
-    localAvatar: null,
-    avatarDirty: true,
-
-    lastBotUpdate: 0
+    lastPosition: null
   };
 
-  const log = (...a) => console.log("[Connections]", ...a);
-  const warn = (...a) => console.warn("[Connections]", ...a);
-  const error = (...a) => console.error("[Connections]", ...a);
+  const log = (...a) =>
+    console.log(
+      "[Connections]",
+      ...a
+    );
 
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  const warn = (...a) =>
+    console.warn(
+      "[Connections]",
+      ...a
+    );
 
-  function randomRoom() {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let out = "";
-
-    for (let i = 0; i < 14; i++) {
-      out += chars[Math.floor(Math.random() * chars.length)];
-    }
-
-    return out;
-  }
+  const error = (...a) =>
+    console.error(
+      "[Connections]",
+      ...a
+    );
 
   function getGame() {
-    if (State.game) return State.game;
+    if (State.game) {
+      return State.game;
+    }
 
     const w = unsafeWindow;
 
@@ -94,10 +102,13 @@
       w.engine
     ];
 
-    for (const candidate of candidates) {
-      if (candidate && typeof candidate === "object") {
-        State.game = candidate;
-        return candidate;
+    for (const game of candidates) {
+      if (
+        game &&
+        typeof game === "object"
+      ) {
+        State.game = game;
+        return game;
       }
     }
 
@@ -107,7 +118,9 @@
   function getLocalPlayer() {
     const game = getGame();
 
-    if (!game) return null;
+    if (!game) {
+      return null;
+    }
 
     const candidates = [
       game.player,
@@ -120,7 +133,10 @@
     ];
 
     for (const p of candidates) {
-      if (p && typeof p === "object") {
+      if (
+        p &&
+        typeof p === "object"
+      ) {
         return p;
       }
     }
@@ -131,25 +147,48 @@
   function isInsideMatch() {
     const game = getGame();
 
-    if (!game) return false;
+    if (!game) {
+      return false;
+    }
 
     try {
-      if (typeof game.isInMatch === "function") {
+      if (
+        typeof game.isInMatch ===
+        "function"
+      ) {
         if (game.isInMatch()) {
           return true;
         }
       }
     } catch {}
 
-    if (game.gameState === "playing") return true;
-    if (game.state === "playing") return true;
-    if (game.inMatch === true) return true;
+    if (
+      game.gameState ===
+      "playing"
+    ) {
+      return true;
+    }
+
+    if (
+      game.state ===
+      "playing"
+    ) {
+      return true;
+    }
+
+    if (
+      game.inMatch === true
+    ) {
+      return true;
+    }
 
     if (
       game.match &&
       (
-        game.match.isStarted === true ||
-        game.match.started === true
+        game.match.isStarted ===
+          true ||
+        game.match.started ===
+          true
       )
     ) {
       return true;
@@ -158,7 +197,7 @@
     return false;
   }
 
-  function getPosition(obj) {
+  function positionOf(obj) {
     if (!obj) {
       return {
         x: 0,
@@ -188,7 +227,7 @@
     };
   }
 
-  function getRotation(obj) {
+  function rotationOf(obj) {
     if (!obj) {
       return {
         yaw: 0,
@@ -196,15 +235,15 @@
       };
     }
 
-    const rot =
+    const r =
       obj.rotation ||
       obj.eulerAngles ||
       obj.transform?.rotation;
 
-    if (rot) {
+    if (r) {
       return {
-        yaw: Number(rot.y) || 0,
-        pitch: Number(rot.x) || 0
+        yaw: Number(r.y) || 0,
+        pitch: Number(r.x) || 0
       };
     }
 
@@ -214,249 +253,50 @@
     };
   }
 
-  function setPosition(obj, x, y, z) {
-    if (!obj) return;
+  function getAlive(player) {
+    if (!player) {
+      return !State.dead;
+    }
 
-    try {
-      if (obj.position) {
-        obj.position.x = x;
-        obj.position.y = y;
-        obj.position.z = z;
-        return;
-      }
-
-      if (obj.transform?.position) {
-        obj.transform.position.x = x;
-        obj.transform.position.y = y;
-        obj.transform.position.z = z;
-        return;
-      }
-
-      obj.x = x;
-      obj.y = y;
-      obj.z = z;
-    } catch {}
-  }
-
-  function setVisible(obj, visible) {
-    if (!obj) return;
-
-    try {
-      if ("visible" in obj) {
-        obj.visible = visible;
-      }
-    } catch {}
-
-    try {
-      if ("enabled" in obj) {
-        obj.enabled = visible;
-      }
-    } catch {}
-
-    try {
-      if (obj.gameObject && "active" in obj.gameObject) {
-        obj.gameObject.active = visible;
-      }
-    } catch {}
-
-    try {
-      if (obj.root) {
-        obj.root.visible = visible;
-      }
-    } catch {}
-
-    try {
-      if (obj.mesh) {
-        obj.mesh.visible = visible;
-      }
-    } catch {}
-  }
-
-  function getAliveValue(player) {
-    if (!player) return true;
-
-    if (typeof player.alive === "boolean") {
+    if (
+      typeof player.alive ===
+      "boolean"
+    ) {
       return player.alive;
     }
 
-    if (typeof player.isAlive === "boolean") {
+    if (
+      typeof player.isAlive ===
+      "boolean"
+    ) {
       return player.isAlive;
     }
 
-    if (typeof player.dead === "boolean") {
+    if (
+      typeof player.dead ===
+      "boolean"
+    ) {
       return !player.dead;
     }
 
-    if (typeof player.health === "number") {
+    if (
+      typeof player.health ===
+      "number"
+    ) {
       return player.health > 0;
     }
 
     return true;
   }
 
-  function readLocalAlive() {
-    const player = getLocalPlayer();
-
-    if (!player) {
-      return !State.dead;
-    }
-
-    if (State.dead) {
-      return false;
-    }
-
-    if (
-      typeof player.alive === "boolean" &&
-      !player.alive
-    ) {
-      return false;
-    }
-
-    if (
-      typeof player.isAlive === "boolean" &&
-      !player.isAlive
-    ) {
-      return false;
-    }
-
-    if (
-      typeof player.dead === "boolean" &&
-      player.dead
-    ) {
-      return false;
-    }
-
-    if (
-      typeof player.health === "number" &&
-      player.health <= 0
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  function forceLocalDeath(reason = "unknown") {
-    if (State.dead) return;
-
-    State.dead = true;
-    State.deathSent = false;
-    State.deathTime = performance.now();
-
-    log("Local player died:", reason);
-
-    const player = getLocalPlayer();
-
-    if (!player) return;
-
-    try {
-      player.health = 0;
-    } catch {}
-
-    try {
-      player.alive = false;
-    } catch {}
-
-    try {
-      player.isAlive = false;
-    } catch {}
-
-    try {
-      player.dead = true;
-    } catch {}
-
-    const funcs = [
-      "die",
-      "kill",
-      "onDeath",
-      "death",
-      "handleDeath"
-    ];
-
-    for (const fn of funcs) {
-      try {
-        if (typeof player[fn] === "function") {
-          player[fn]();
-          break;
-        }
-      } catch {}
-    }
-  }
-
-  function checkLocalDeath() {
-    if (State.dead) return;
-
-    if (!readLocalAlive()) {
-      forceLocalDeath("engine reported dead");
-    }
-  }
-
-  function enforceLocalDeath() {
-    if (!State.dead) return;
-
-    const player = getLocalPlayer();
-
-    if (!player) return;
-
-    try {
-      player.health = 0;
-    } catch {}
-
-    try {
-      player.alive = false;
-    } catch {}
-
-    try {
-      player.isAlive = false;
-    } catch {}
-
-    try {
-      player.dead = true;
-    } catch {}
-  }
-
-  function getAvatar() {
-    try {
-      if (
-        localStorage.getItem("pp-avatar-on") === "0"
-      ) {
-        return null;
-      }
-
-      return localStorage.getItem("pp-avatar") || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function saveAvatar(data) {
-    try {
-      localStorage.setItem("pp-avatar", data);
-      localStorage.setItem("pp-avatar-on", "1");
-
-      State.localAvatar = data;
-      State.avatarDirty = true;
-
-      log("Avatar saved.");
-    } catch (e) {
-      error("Could not save avatar.", e);
-    }
-  }
-
-  function resetAvatar() {
-    try {
-      localStorage.removeItem("pp-avatar");
-      localStorage.setItem("pp-avatar-on", "0");
-
-      State.localAvatar = null;
-      State.avatarDirty = true;
-    } catch {}
-  }
-
-  function NetworkSend(type, data = {}) {
+  function NetworkSend(
+    type,
+    data = {}
+  ) {
     if (
       !State.ws ||
-      State.ws.readyState !== WebSocket.OPEN
+      State.ws.readyState !==
+        WebSocket.OPEN
     ) {
       return false;
     }
@@ -471,72 +311,83 @@
 
       return true;
     } catch (e) {
-      error("NetworkSend failed:", e);
+      error(
+        "NetworkSend failed:",
+        e
+      );
+
       return false;
     }
   }
 
   const Network = {
     connect() {
-      if (State.connecting) {
-        return;
-      }
-
-      if (!State.room) {
-        warn("No room selected.");
-        updateStatus("Enter a room ID.");
-        return;
-      }
-
       if (
-        State.ws &&
-        State.ws.readyState === WebSocket.OPEN
+        State.connecting ||
+        (
+          State.ws &&
+          State.ws.readyState ===
+            WebSocket.OPEN
+        )
       ) {
-        if (!State.joinedRoom && !State.leavingRoom) {
-          this.joinRoom();
-        }
-
         return;
       }
 
       State.connecting = true;
 
-      log("Connecting to multiplayer server...");
+      updateStatus(
+        "Connecting..."
+      );
 
       let ws;
 
       try {
-        ws = new WebSocket(WS_URL);
+        ws = new WebSocket(
+          WS_URL
+        );
       } catch (e) {
         State.connecting = false;
-        error("WebSocket creation failed:", e);
+
+        error(
+          "WebSocket failed:",
+          e
+        );
+
+        updateStatus(
+          "WebSocket error"
+        );
+
         return;
       }
 
       State.ws = ws;
 
       ws.onopen = () => {
-        State.connecting = false;
         State.connected = true;
-        State.joinedRoom = false;
-        State.leavingRoom = false;
+        State.connecting = false;
 
-        log("Network connected.");
+        log(
+          "Multiplayer connected."
+        );
 
-        NetworkSend("hello", {
-          name: State.name
-        });
+        updateStatus(
+          "Connected"
+        );
 
-        this.joinRoom();
+        NetworkSend(
+          "list_rooms"
+        );
 
-        updateRoomUI();
+        updateUI();
       };
 
       ws.onmessage = event => {
         let msg;
 
         try {
-          msg = JSON.parse(event.data);
+          msg = JSON.parse(
+            event.data
+          );
         } catch {
           return;
         }
@@ -544,530 +395,996 @@
         Network.handle(msg);
       };
 
-      ws.onerror = e => {
-        warn("WebSocket error.", e);
+      ws.onerror = () => {
+        updateStatus(
+          "Connection error"
+        );
       };
 
       ws.onclose = () => {
         State.connected = false;
         State.connecting = false;
         State.joinedRoom = false;
+
         State.ws = null;
 
         stopStateLoop();
 
-        BotSystem.clear();
+        clearRemoteBots();
 
-        log("Network disconnected.");
+        updateStatus(
+          "Disconnected"
+        );
 
-        if (State.leavingRoom) {
-          State.room = null;
-          State.leavingRoom = false;
-
-          try {
-            localStorage.removeItem(
-              "connections_room"
-            );
-          } catch {}
-        }
-
-        updateRoomUI();
+        updateUI();
       };
     },
 
-    joinRoom() {
-      if (!State.room) {
-        warn("Cannot join: no room selected.");
-        return false;
+    createRoom(data) {
+      if (!State.connected) {
+        this.connect();
+
+        setTimeout(
+          () => {
+            this.createRoom(
+              data
+            );
+          },
+          500
+        );
+
+        return;
       }
 
-      if (
-        !State.ws ||
-        State.ws.readyState !== WebSocket.OPEN
-      ) {
-        return false;
-      }
-
-      State.leavingRoom = false;
-
-      const sent = NetworkSend(
-        "join_room",
+      NetworkSend(
+        "create_room",
         {
-          room: State.room,
-          roomId: State.room,
-          id: State.id,
+          ...data,
           name: State.name
         }
       );
+    },
 
-      if (sent) {
-        log("Joining room:", State.room);
-        updateStatus(
-          `Joining • ${State.room}`
-        );
+    joinRoom(roomId) {
+      if (!roomId) {
+        return;
       }
 
-      return sent;
+      if (!State.connected) {
+        this.connect();
+
+        setTimeout(
+          () => {
+            this.joinRoom(
+              roomId
+            );
+          },
+          500
+        );
+
+        return;
+      }
+
+      NetworkSend(
+        "join_room",
+        {
+          roomId,
+          name: State.name,
+          avatar: State.localAvatar
+        }
+      );
+
+      updateStatus(
+        "Joining room..."
+      );
     },
 
     leaveRoom() {
-      if (
-        !State.ws ||
-        State.ws.readyState !== WebSocket.OPEN
-      ) {
-        return false;
-      }
-
-      if (!State.joinedRoom && !State.confirmedMatch) {
-        return false;
+      if (!State.joinedRoom) {
+        return;
       }
 
       State.leavingRoom = true;
-
-      stopStateLoop();
-
       State.confirmedMatch = false;
 
-      BotSystem.clear();
+      stopStateLoop();
+      clearRemoteBots();
 
-      const sent = NetworkSend(
+      NetworkSend(
         "leave_room"
       );
+    },
 
-      if (sent) {
-        log("Leaving room:", State.room);
-
-        updateStatus(
-          "Leaving room..."
-        );
-      }
-
-      return sent;
+    kick(id) {
+      NetworkSend(
+        "kick",
+        {
+          targetId: id
+        }
+      );
     },
 
     handle(msg) {
-      if (!msg || !msg.type) {
+      if (!msg) {
         return;
       }
 
       switch (msg.type) {
-        case "connected": {
-          const id =
-            msg.id ??
-            msg.clientId ??
-            msg.playerId ??
-            msg.data?.id ??
-            msg.data?.clientId ??
-            msg.data?.playerId;
-
-          if (id != null) {
-            State.id = String(id);
+        case "connected":
+          if (msg.id) {
+            State.id =
+              String(msg.id);
           }
-
           break;
-        }
 
-        case "hello": {
-          const id =
-            msg.id ??
-            msg.clientId ??
-            msg.playerId ??
-            msg.client?.id ??
-            msg.player?.id ??
-            msg.data?.id ??
-            msg.data?.clientId ??
-            msg.data?.playerId;
-
-          if (id != null) {
-            State.id = String(id);
+        case "hello":
+          if (msg.id) {
+            State.id =
+              String(msg.id);
           }
-
           break;
-        }
 
-        case "rooms": {
-          const rooms =
-            msg.rooms ??
-            msg.data?.rooms ??
-            [];
+        case "rooms":
+          State.rooms =
+            Array.isArray(
+              msg.rooms
+            )
+              ? msg.rooms
+              : [];
 
-          if (Array.isArray(rooms)) {
-            State.rooms = rooms;
-          }
-
+          updateRoomList();
+          updateUI();
           break;
-        }
 
-        case "room_joined": {
-          const room =
-            msg.room ??
-            msg.roomId ??
-            msg.data?.room ??
-            msg.data?.roomId;
-
-          if (room) {
-            State.room = String(room);
-
-            try {
-              localStorage.setItem(
-                "connections_room",
-                State.room
-              );
-            } catch {}
-          }
-
-          const id =
-            msg.id ??
-            msg.clientId ??
-            msg.playerId ??
-            msg.data?.id ??
-            msg.data?.clientId ??
-            msg.data?.playerId;
-
-          if (id != null) {
-            State.id = String(id);
-          }
-
-          State.joinedRoom = true;
-          State.leavingRoom = false;
-
-          log(
-            "Joined room:",
-            State.room
-          );
-
-          updateRoomUI();
-
-          if (
-            State.confirmedMatch &&
-            !State.sendTimer
-          ) {
-            startStateLoop();
-          }
-
-          break;
-        }
-
-        case "player_joined": {
-          State.avatarDirty = true;
-
-          log(
-            "Player joined:",
-            msg.name ||
-            msg.player?.name ||
-            msg.data?.name ||
-            "unknown"
-          );
-
-          break;
-        }
-
-        case "player_left": {
-          const id =
-            msg.id ??
-            msg.clientId ??
-            msg.playerId ??
-            msg.player?.id ??
-            msg.data?.id ??
-            msg.data?.clientId ??
-            msg.data?.playerId;
-
-          if (id != null) {
-            BotSystem.remove(
-              String(id)
-            );
-          }
-
-          break;
-        }
-
-        case "state": {
-          Network.handleState(msg);
-          break;
-        }
-
-        case "left_room": {
-          State.joinedRoom = false;
-
-          stopStateLoop();
-
-          State.confirmedMatch = false;
-
-          BotSystem.clear();
-
-          if (State.leavingRoom) {
-            State.room = null;
-            State.leavingRoom = false;
-
-            try {
-              localStorage.removeItem(
-                "connections_room"
-              );
-            } catch {}
-
-            updateRoomUI();
-
-            log("Left room.");
-          } else {
-            updateRoomUI();
-
-            log(
-              "Server confirmed room leave."
-            );
-          }
-
-          break;
-        }
-
-        case "room_deleted": {
-          State.joinedRoom = false;
-          State.leavingRoom = false;
-
-          stopStateLoop();
-
-          State.confirmedMatch = false;
-
-          State.room = null;
-
-          BotSystem.clear();
-
-          try {
-            localStorage.removeItem(
-              "connections_room"
-            );
-          } catch {}
-
-          updateRoomUI();
-
-          log(
-            "Room deleted by server."
-          );
-
-          break;
-        }
-
-        case "error": {
-          console.error(
-            "[Connections] Server error:",
-            msg.error ||
-            msg.message ||
-            msg.data ||
+        case "room_joined":
+          this.handleRoomJoined(
             msg
           );
-
           break;
-        }
+
+        case "roster":
+          if (msg.room) {
+            State.roomData =
+              msg.room;
+          }
+
+          updateRoomList();
+          updateUI();
+          break;
+
+        case "join":
+          updateRoomList();
+          break;
+
+        case "leave":
+          if (msg.id) {
+            removeRemote(
+              String(msg.id)
+            );
+          }
+
+          updateRoomList();
+          break;
+
+        case "host_changed":
+          updateRoomList();
+          break;
+
+        case "kicked":
+          State.joinedRoom = false;
+          State.room = null;
+          State.roomData = null;
+
+          stopStateLoop();
+          clearRemoteBots();
+
+          updateStatus(
+            "You were kicked."
+          );
+
+          updateUI();
+          break;
+
+        case "left_room":
+          State.joinedRoom = false;
+          State.room = null;
+          State.roomData = null;
+          State.leavingRoom = false;
+
+          stopStateLoop();
+          clearRemoteBots();
+
+          updateStatus(
+            "Left room."
+          );
+
+          updateUI();
+          break;
+
+        case "state":
+          handleStateMessage(
+            msg
+          );
+          break;
+
+        case "rafit_warning":
+          updateStatus(
+            "RAFIT warning: " +
+              msg.type +
+              " | RTP " +
+              msg.rtp
+          );
+          break;
+
+        case "rafit_banned":
+          updateStatus(
+            "RAFIT: banned."
+          );
+          break;
+
+        case "error":
+          handleServerError(
+            msg
+          );
+          break;
 
         case "pong":
           break;
       }
     },
 
-    handleState(msg) {
-      const rawState =
-        msg.state ||
-        msg.player ||
-        msg.data;
+    handleRoomJoined(msg) {
+      State.room =
+        msg.room?.id ||
+        msg.roomId ||
+        null;
 
-      if (
-        !rawState ||
-        typeof rawState !== "object"
-      ) {
-        return;
+      State.roomData =
+        msg.room || null;
+
+      if (msg.id) {
+        State.id =
+          String(msg.id);
+      }
+
+      State.joinedRoom = true;
+      State.leavingRoom = false;
+
+      log(
+        "Joined:",
+        State.room
+      );
+
+      updateStatus(
+        "Room joined"
+      );
+
+      updateRoomList();
+      updateUI();
+    }
+  };
+
+  function handleServerError(
+    msg
+  ) {
+    const code =
+      msg.code ||
+      msg.message ||
+      "Unknown error";
+
+    const names = {
+      ROOM_NOT_FOUND:
+        "Room not found.",
+      ROOM_FULL:
+        "Room is full.",
+      HOST_ONLY:
+        "Only the host can do that.",
+      CANNOT_KICK_HOST:
+        "You cannot kick yourself.",
+      PLAYER_NOT_FOUND:
+        "Player not found.",
+      RAFIT_BANNED:
+        "You are currently RAFIT banned.",
+      RAFIT_2000_REQUIRED:
+        "You need 2000+ RTP for this server."
+    };
+
+    updateStatus(
+      names[code] || code
+    );
+
+    warn(
+      "Server error:",
+      msg
+    );
+  }
+
+  function handleStateMessage(
+    msg
+  ) {
+    const list =
+      Array.isArray(
+        msg.players
+      )
+        ? msg.players
+        : [];
+
+    for (
+      const data of list
+    ) {
+      if (!data?.id) {
+        continue;
       }
 
       const id =
-        msg.id ??
-        msg.clientId ??
-        msg.playerId ??
-        msg.client?.id ??
-        msg.player?.id ??
-        rawState.id ??
-        rawState.clientId ??
-        rawState.playerId ??
-        msg.data?.id ??
-        msg.data?.clientId ??
-        msg.data?.playerId;
-
-      let remoteId =
-        id != null
-          ? String(id)
-          : null;
-
-      if (!remoteId) {
-        const remoteName =
-          rawState.name ||
-          msg.name ||
-          msg.player?.name ||
-          msg.data?.name;
-
-        if (
-          remoteName &&
-          String(remoteName) ===
-            String(State.name)
-        ) {
-          return;
-        }
-
-        return;
-      }
+        String(data.id);
 
       if (
-        State.id != null &&
-        remoteId === String(State.id)
+        State.id &&
+        id ===
+          String(State.id)
       ) {
-        return;
+        continue;
       }
 
       let remote =
-        State.remotes.get(
-          remoteId
-        );
+        State.remotes.get(id);
 
       if (!remote) {
         remote = {
-          id: remoteId,
+          id,
 
           name:
-            rawState.name ||
-            msg.name ||
+            data.name ||
             "Player",
 
           team:
-            rawState.team ??
+            data.team ||
             null,
 
-          x:
-            Number(rawState.x) || 0,
-
-          y:
-            Number(rawState.y) || 0,
-
-          z:
-            Number(rawState.z) || 0,
-
-          yaw:
-            Number(rawState.yaw) || 0,
-
-          pitch:
-            Number(rawState.pitch) || 0,
+          x: Number(data.x) || 0,
+          y: Number(data.y) || 0,
+          z: Number(data.z) || 0,
 
           targetX:
-            Number(rawState.x) || 0,
-
+            Number(data.x) || 0,
           targetY:
-            Number(rawState.y) || 0,
-
+            Number(data.y) || 0,
           targetZ:
-            Number(rawState.z) || 0,
+            Number(data.z) || 0,
+
+          yaw:
+            Number(data.yaw) || 0,
+
+          pitch:
+            Number(data.pitch) || 0,
 
           targetYaw:
-            Number(rawState.yaw) || 0,
+            Number(data.yaw) || 0,
 
           targetPitch:
-            Number(rawState.pitch) || 0,
+            Number(data.pitch) || 0,
 
-          alive: true,
-          dead: false,
-          health: 100,
+          health:
+            typeof data.health ===
+            "number"
+              ? data.health
+              : 100,
+
+          alive:
+            data.alive !== false,
+
+          dead:
+            data.dead === true,
 
           avatar:
-            rawState.avatar ||
+            data.avatar ||
             null,
 
-          bot: null,
-          spawned: false,
-
-          lastUpdate:
-            performance.now()
+          bot: null
         };
 
         State.remotes.set(
-          remoteId,
+          id,
           remote
-        );
-
-        log(
-          "Remote player detected:",
-          remote.name
         );
       }
 
       remote.name =
-        rawState.name ||
+        data.name ||
         remote.name;
 
       remote.team =
-        rawState.team ??
+        data.team ||
         remote.team;
 
       remote.targetX =
-        Number(rawState.x) || 0;
+        Number(data.x) || 0;
 
       remote.targetY =
-        Number(rawState.y) || 0;
+        Number(data.y) || 0;
 
       remote.targetZ =
-        Number(rawState.z) || 0;
+        Number(data.z) || 0;
 
       remote.targetYaw =
-        Number(rawState.yaw) || 0;
+        Number(data.yaw) || 0;
 
       remote.targetPitch =
-        Number(rawState.pitch) || 0;
+        Number(data.pitch) || 0;
 
-      if (
-        typeof rawState.health ===
+      remote.health =
+        typeof data.health ===
         "number"
-      ) {
-        remote.health =
-          rawState.health;
-      }
-
-      remote.avatar =
-        rawState.avatar ||
-        null;
-
-      const reportedAlive =
-        rawState.alive !== false &&
-        rawState.dead !== true &&
-        remote.health > 0;
+          ? data.health
+          : remote.health;
 
       remote.alive =
-        reportedAlive;
+        data.alive !== false &&
+        data.dead !== true &&
+        remote.health > 0;
 
       remote.dead =
-        !reportedAlive;
+        !remote.alive;
 
-      remote.lastUpdate =
-        performance.now();
+      remote.avatar =
+        data.avatar ||
+        null;
 
-      if (remote.dead) {
-        BotSystem.kill(remote);
-        return;
-      }
-
-      if (!remote.bot) {
-        BotSystem.create(remote);
+      if (
+        remote.dead
+      ) {
+        killRemote(
+          remote
+        );
+      } else {
+        if (
+          !remote.bot
+        ) {
+          createRemoteBot(
+            remote
+          );
+        }
       }
     }
-  };
 
-  function sendLocalState() {
-    checkLocalDeath();
+    updateBots();
+  }
 
-    if (!State.confirmedMatch) {
+  function getBotManager() {
+    if (
+      State.botManager
+    ) {
+      return State.botManager;
+    }
+
+    const game =
+      getGame();
+
+    if (!game) {
+      return null;
+    }
+
+    const candidates = [
+      game.botManager,
+      game.bots,
+      game.ai,
+      game.botSystem,
+      game.enemyManager,
+      game.agents
+    ];
+
+    for (
+      const manager of candidates
+    ) {
+      if (
+        manager &&
+        typeof manager ===
+          "object"
+      ) {
+        State.botManager =
+          manager;
+
+        return manager;
+      }
+    }
+
+    return null;
+  }
+
+  function findBotConstructor() {
+    const manager =
+      getBotManager();
+
+    if (!manager) {
+      return null;
+    }
+
+    const candidates = [
+      manager.Bot,
+      manager.botConstructor,
+      manager.BotClass,
+      manager.constructor
+    ];
+
+    for (
+      const c of candidates
+    ) {
+      if (
+        typeof c ===
+        "function"
+      ) {
+        return c;
+      }
+    }
+
+    return null;
+  }
+
+  function hideBot(bot) {
+    if (!bot) {
       return;
     }
 
-    if (!State.joinedRoom) {
+    try {
+      bot.visible = false;
+    } catch {}
+
+    try {
+      bot.enabled = false;
+    } catch {}
+
+    try {
+      bot.gameObject.active =
+        false;
+    } catch {}
+
+    try {
+      bot.root.visible =
+        false;
+    } catch {}
+  }
+
+  function showBot(bot) {
+    if (!bot) {
+      return;
+    }
+
+    try {
+      bot.visible = true;
+    } catch {}
+
+    try {
+      bot.enabled = true;
+    } catch {}
+
+    try {
+      bot.gameObject.active =
+        true;
+    } catch {}
+
+    try {
+      bot.root.visible =
+        true;
+    } catch {}
+  }
+
+  function prepareBots() {
+    const manager =
+      getBotManager();
+
+    if (!manager) {
       return;
     }
 
     if (
-      !State.ws ||
-      State.ws.readyState !==
-        WebSocket.OPEN
+      State.originalBots.length
+    ) {
+      return;
+    }
+
+    const arrays = [
+      manager.bots,
+      manager.agents,
+      manager.entities,
+      manager.players
+    ];
+
+    for (
+      const arr of arrays
+    ) {
+      if (
+        Array.isArray(arr)
+      ) {
+        for (
+          const bot of arr
+        ) {
+          if (
+            bot &&
+            !bot.__connectionsRemote
+          ) {
+            State.originalBots.push(
+              bot
+            );
+
+            hideBot(bot);
+          }
+        }
+
+        try {
+          arr.length = 0;
+        } catch {}
+
+        break;
+      }
+    }
+
+    State.botConstructor =
+      findBotConstructor();
+  }
+
+  function createRemoteBot(
+    remote
+  ) {
+    if (
+      remote.bot ||
+      remote.dead
+    ) {
+      return;
+    }
+
+    prepareBots();
+
+    const manager =
+      getBotManager();
+
+    const Constructor =
+      State.botConstructor;
+
+    if (
+      !manager ||
+      typeof Constructor !==
+        "function"
+    ) {
+      return;
+    }
+
+    try {
+      let bot;
+
+      try {
+        bot = new Constructor(
+          State.game,
+          remote.team,
+          remote.name,
+          3
+        );
+      } catch {
+        try {
+          bot = new Constructor(
+            State.game
+          );
+        } catch {
+          bot = null;
+        }
+      }
+
+      if (!bot) {
+        return;
+      }
+
+      bot.__connectionsRemote =
+        true;
+
+      bot.__connectionsId =
+        remote.id;
+
+      remote.bot =
+        bot;
+
+      try {
+        if (
+          Array.isArray(
+            manager.bots
+          )
+        ) {
+          manager.bots.push(
+            bot
+          );
+        } else if (
+          Array.isArray(
+            manager.agents
+          )
+        ) {
+          manager.agents.push(
+            bot
+          );
+        }
+      } catch {}
+
+      showBot(bot);
+
+      setBotPosition(
+        bot,
+        remote.x,
+        remote.y,
+        remote.z
+      );
+    } catch (e) {
+      warn(
+        "Remote bot creation failed:",
+        e
+      );
+    }
+  }
+
+  function setBotPosition(
+    bot,
+    x,
+    y,
+    z
+  ) {
+    if (!bot) {
+      return;
+    }
+
+    try {
+      if (
+        bot.position
+      ) {
+        bot.position.x = x;
+        bot.position.y = y;
+        bot.position.z = z;
+        return;
+      }
+    } catch {}
+
+    try {
+      if (
+        bot.transform?.position
+      ) {
+        bot.transform.position.x =
+          x;
+
+        bot.transform.position.y =
+          y;
+
+        bot.transform.position.z =
+          z;
+
+        return;
+      }
+    } catch {}
+
+    try {
+      bot.x = x;
+      bot.y = y;
+      bot.z = z;
+    } catch {}
+  }
+
+  function setBotRotation(
+    bot,
+    yaw,
+    pitch
+  ) {
+    if (!bot) {
+      return;
+    }
+
+    try {
+      if (
+        bot.rotation
+      ) {
+        bot.rotation.y =
+          yaw;
+
+        bot.rotation.x =
+          pitch;
+
+        return;
+      }
+    } catch {}
+
+    try {
+      bot.yaw = yaw;
+      bot.pitch = pitch;
+    } catch {}
+  }
+
+  function updateBots() {
+    for (
+      const remote of
+      State.remotes.values()
+    ) {
+      if (
+        !remote.bot ||
+        remote.dead
+      ) {
+        continue;
+      }
+
+      remote.x +=
+        (
+          remote.targetX -
+          remote.x
+        ) * 0.35;
+
+      remote.y +=
+        (
+          remote.targetY -
+          remote.y
+        ) * 0.35;
+
+      remote.z +=
+        (
+          remote.targetZ -
+          remote.z
+        ) * 0.35;
+
+      remote.yaw =
+        remote.targetYaw;
+
+      remote.pitch =
+        remote.targetPitch;
+
+      setBotPosition(
+        remote.bot,
+        remote.x,
+        remote.y,
+        remote.z
+      );
+
+      setBotRotation(
+        remote.bot,
+        remote.yaw,
+        remote.pitch
+      );
+
+      try {
+        remote.bot.health =
+          remote.health;
+      } catch {}
+    }
+  }
+
+  function killRemote(
+    remote
+  ) {
+    if (!remote.bot) {
+      return;
+    }
+
+    try {
+      remote.bot.health =
+        0;
+    } catch {}
+
+    try {
+      remote.bot.alive =
+        false;
+    } catch {}
+
+    try {
+      remote.bot.dead =
+        true;
+    } catch {}
+
+    const funcs = [
+      "die",
+      "kill",
+      "onDeath",
+      "death",
+      "handleDeath"
+    ];
+
+    for (
+      const fn of funcs
+    ) {
+      try {
+        if (
+          typeof remote.bot[fn] ===
+          "function"
+        ) {
+          remote.bot[fn]();
+          break;
+        }
+      } catch {}
+    }
+
+    hideBot(
+      remote.bot
+    );
+  }
+
+  function removeRemote(
+    id
+  ) {
+    const remote =
+      State.remotes.get(id);
+
+    if (!remote) {
+      return;
+    }
+
+    if (remote.bot) {
+      hideBot(
+        remote.bot
+      );
+
+      try {
+        const manager =
+          getBotManager();
+
+        for (
+          const key of [
+            "bots",
+            "agents",
+            "entities",
+            "players"
+          ]
+        ) {
+          const arr =
+            manager?.[key];
+
+          if (
+            Array.isArray(arr)
+          ) {
+            const index =
+              arr.indexOf(
+                remote.bot
+              );
+
+            if (
+              index >= 0
+            ) {
+              arr.splice(
+                index,
+                1
+              );
+            }
+          }
+        }
+      } catch {}
+    }
+
+    State.remotes.delete(
+      id
+    );
+  }
+
+  function clearRemoteBots() {
+    for (
+      const remote of
+      State.remotes.values()
+    ) {
+      if (remote.bot) {
+        hideBot(
+          remote.bot
+        );
+      }
+    }
+
+    State.remotes.clear();
+
+    if (
+      State.originalBots.length
+    ) {
+      for (
+        const bot of
+        State.originalBots
+      ) {
+        showBot(bot);
+      }
+    }
+
+    State.originalBots = [];
+  }
+
+  function sendLocalState() {
+    if (
+      !State.joinedRoom ||
+      !State.confirmedMatch
     ) {
       return;
     }
@@ -1083,14 +1400,14 @@
     }
 
     const pos =
-      getPosition(player);
+      positionOf(player);
 
     const rot =
-      getRotation(player);
+      rotationOf(player);
 
     const alive =
       !State.dead &&
-      readLocalAlive();
+      getAlive(player);
 
     const health =
       State.dead
@@ -1102,61 +1419,39 @@
             : 100
         );
 
-    const state = {
-      x: pos.x,
-      y: pos.y,
-      z: pos.z,
-
-      yaw: rot.yaw,
-      pitch: rot.pitch,
-
-      alive,
-      dead: State.dead,
-      health,
-
-      team:
-        player?.team ??
-        null,
-
-      name:
-        State.name,
-
-      avatar:
-        State.localAvatar ||
-        getAvatar() ||
-        null
-    };
-
-    if (State.dead) {
-      state.alive = false;
-      state.dead = true;
-      state.health = 0;
-    }
-
     NetworkSend(
       "state",
       {
-        state
+        state: {
+          x: pos.x,
+          y: pos.y,
+          z: pos.z,
+
+          yaw: rot.yaw,
+          pitch: rot.pitch,
+
+          alive,
+          dead: !alive,
+
+          health,
+
+          name: State.name,
+
+          avatar:
+            State.localAvatar
+        }
       }
     );
-
-    if (State.dead) {
-      State.deathSent = true;
-    }
   }
 
   function startStateLoop() {
-    stopStateLoop();
-
-    if (!State.confirmedMatch) {
+    if (
+      State.stateTimer
+    ) {
       return;
     }
 
-    if (!State.joinedRoom) {
-      return;
-    }
-
-    State.sendTimer =
+    State.stateTimer =
       setInterval(
         sendLocalState,
         50
@@ -1164,1885 +1459,1414 @@
   }
 
   function stopStateLoop() {
-    if (State.sendTimer) {
+    if (
+      State.stateTimer
+    ) {
       clearInterval(
-        State.sendTimer
+        State.stateTimer
       );
 
-      State.sendTimer = null;
+      State.stateTimer =
+        null;
     }
   }
 
-  const BotSystem = {
-    findManager() {
-      const game =
-        getGame();
+  function updateRoomList() {
+    const box =
+      State.UI.roomList;
 
-      if (!game) {
-        return null;
-      }
+    if (!box) {
+      return;
+    }
 
-      const candidates = [
-        game.botManager,
-        game.bots,
-        game.botMgr,
-        game.aiManager,
-        game.entities?.botManager
-      ];
+    box.innerHTML = "";
+
+    if (
+      !State.rooms.length
+    ) {
+      const empty =
+        document.createElement(
+          "div"
+        );
+
+      empty.className =
+        "conn-empty";
+
+      empty.textContent =
+        "No rooms yet. Create the first one.";
+
+      box.appendChild(
+        empty
+      );
+
+      return;
+    }
+
+    for (
+      const room of
+      State.rooms
+    ) {
+      const card =
+        document.createElement(
+          "div"
+        );
+
+      card.className =
+        "conn-room";
+
+      const title =
+        document.createElement(
+          "div"
+        );
+
+      title.className =
+        "conn-room-title";
 
       for (
-        const manager of candidates
+        const segment of
+        room.segments || []
       ) {
-        if (!manager) {
-          continue;
-        }
-
-        if (
-          Array.isArray(manager)
-        ) {
-          return {
-            bots: manager
-          };
-        }
-
-        if (
-          Array.isArray(
-            manager.bots
-          )
-        ) {
-          return manager;
-        }
-
-        if (
-          Array.isArray(
-            manager.entities
-          )
-        ) {
-          return {
-            bots:
-              manager.entities
-          };
-        }
-      }
-
-      return null;
-    },
-
-    preparePool() {
-      if (State.preparingBots) {
-        return;
-      }
-
-      State.preparingBots = true;
-
-      const manager =
-        this.findManager();
-
-      if (!manager) {
-        warn(
-          "Could not find native bot manager."
-        );
-
-        State.preparingBots = false;
-        return;
-      }
-
-      State.botManager =
-        manager;
-
-      const bots =
-        Array.isArray(manager)
-          ? manager
-          : manager.bots;
-
-      if (!Array.isArray(bots)) {
-        State.preparingBots = false;
-        return;
-      }
-
-      State.originalBots =
-        bots.slice();
-
-      if (
-        State.originalBots.length &&
-        State.originalBots[0]
-      ) {
-        State.botConstructor =
-          State.originalBots[0]
-            .constructor;
-
-        State.botTemplate =
-          State.originalBots[0];
-      }
-
-      for (
-        const bot of
-        State.originalBots
-      ) {
-        try {
-          bot.__connectionsNative =
-            true;
-
-          bot.__connectionsPooled =
-            true;
-        } catch {}
-
-        setVisible(
-          bot,
-          false
-        );
-
-        try {
-          if ("enabled" in bot) {
-            bot.enabled = false;
-          }
-        } catch {}
-      }
-
-      bots.length = 0;
-
-      log(
-        "Native bots removed from manager:",
-        State.originalBots.length
-      );
-
-      State.preparingBots = false;
-    },
-
-    create(remote) {
-      if (!remote) {
-        return null;
-      }
-
-      if (
-        remote.dead ||
-        remote.alive === false
-      ) {
-        return null;
-      }
-
-      if (remote.bot) {
-        return remote.bot;
-      }
-
-      if (remote.spawned) {
-        return remote.bot || null;
-      }
-
-      remote.spawned = true;
-
-      const manager =
-        State.botManager;
-
-      if (!manager) {
-        remote.spawned = false;
-        return null;
-      }
-
-      const bots =
-        Array.isArray(manager)
-          ? manager
-          : manager.bots;
-
-      if (!Array.isArray(bots)) {
-        remote.spawned = false;
-        return null;
-      }
-
-      let bot = null;
-
-      try {
-        if (
-          typeof State.botConstructor ===
-          "function"
-        ) {
-          const game =
-            getGame();
-
-          bot =
-            new State.botConstructor(
-              game,
-              remote.team,
-              remote.name,
-              3
-            );
-        }
-      } catch (e) {
-        warn(
-          "Native bot constructor failed:",
-          e
-        );
-      }
-
-      if (!bot) {
-        remote.spawned = false;
-        return null;
-      }
-
-      bot.__connectionsRemote =
-        true;
-
-      bot.__connectionsRemoteId =
-        remote.id;
-
-      try {
-        bot.__connectionsOriginalName =
-          bot.name;
-      } catch {}
-
-      try {
-        bot.name =
-          remote.name;
-      } catch {}
-
-      try {
-        bot.health =
-          Number.isFinite(
-            remote.health
-          )
-            ? remote.health
-            : 100;
-      } catch {}
-
-      try {
-        bot.alive = true;
-      } catch {}
-
-      try {
-        bot.isAlive = true;
-      } catch {}
-
-      try {
-        bot.dead = false;
-      } catch {}
-
-      setVisible(
-        bot,
-        true
-      );
-
-      setPosition(
-        bot,
-        remote.targetX,
-        remote.targetY,
-        remote.targetZ
-      );
-
-      try {
-        if (
-          typeof bot.spawn ===
-          "function"
-        ) {
-          bot.spawn();
-        }
-      } catch {}
-
-      bots.push(bot);
-
-      remote.bot =
-        bot;
-
-      State.avatarDirty = true;
-
-      log(
-        "Remote bot created:",
-        remote.name,
-        remote.id
-      );
-
-      return bot;
-    },
-
-    kill(remote) {
-      if (!remote) {
-        return;
-      }
-
-      remote.alive = false;
-      remote.dead = true;
-      remote.health = 0;
-
-      const bot =
-        remote.bot;
-
-      if (!bot) {
-        return;
-      }
-
-      try {
-        bot.health = 0;
-      } catch {}
-
-      try {
-        bot.alive = false;
-      } catch {}
-
-      try {
-        bot.isAlive = false;
-      } catch {}
-
-      try {
-        bot.dead = true;
-      } catch {}
-
-      const funcs = [
-        "die",
-        "kill",
-        "onDeath",
-        "death",
-        "handleDeath"
-      ];
-
-      for (
-        const fn of funcs
-      ) {
-        try {
-          if (
-            typeof bot[fn] ===
-            "function"
-          ) {
-            bot[fn]();
-            break;
-          }
-        } catch {}
-      }
-
-      try {
-        if (
-          bot.agent &&
-          typeof bot.agent.die ===
-          "function"
-        ) {
-          bot.agent.die();
-        }
-      } catch {}
-
-      setVisible(
-        bot,
-        false
-      );
-    },
-
-    update(remote, dt) {
-      if (
-        !remote ||
-        !remote.bot
-      ) {
-        return;
-      }
-
-      const bot =
-        remote.bot;
-
-      if (
-        remote.dead ||
-        remote.alive === false ||
-        remote.health <= 0
-      ) {
-        this.kill(remote);
-        return;
-      }
-
-      const smooth =
-        Math.min(
-          1,
-          Math.max(
-            0.05,
-            dt * 12
-          )
-        );
-
-      remote.x +=
-        (
-          remote.targetX -
-          remote.x
-        ) *
-        smooth;
-
-      remote.y +=
-        (
-          remote.targetY -
-          remote.y
-        ) *
-        smooth;
-
-      remote.z +=
-        (
-          remote.targetZ -
-          remote.z
-        ) *
-        smooth;
-
-      remote.yaw +=
-        (
-          remote.targetYaw -
-          remote.yaw
-        ) *
-        smooth;
-
-      remote.pitch +=
-        (
-          remote.targetPitch -
-          remote.pitch
-        ) *
-        smooth;
-
-      const oldX =
-        getPosition(bot).x;
-
-      const oldZ =
-        getPosition(bot).z;
-
-      setPosition(
-        bot,
-        remote.x,
-        remote.y,
-        remote.z
-      );
-
-      try {
-        bot.health =
-          Number.isFinite(
-            remote.health
-          )
-            ? remote.health
-            : bot.health;
-      } catch {}
-
-      try {
-        bot.alive = true;
-      } catch {}
-
-      try {
-        bot.isAlive = true;
-      } catch {}
-
-      try {
-        bot.dead = false;
-      } catch {}
-
-      try {
-        if (
-          bot.cs2Agent &&
-          typeof bot.cs2Agent.update ===
-          "function"
-        ) {
-          const vx =
-            (
-              remote.x -
-              oldX
-            ) /
-            Math.max(
-              dt,
-              0.001
-            );
-
-          const vz =
-            (
-              remote.z -
-              oldZ
-            ) /
-            Math.max(
-              dt,
-              0.001
-            );
-
-          bot.cs2Agent.update(
-            dt,
-            {
-              vx,
-              vz,
-              airborne: false,
-              crouch: 0,
-              pitch:
-                remote.pitch
-            }
+        const span =
+          document.createElement(
+            "span"
           );
-        }
-      } catch {}
-    },
 
-    updateAll(dt) {
-      for (
-        const remote of
-        State.remotes.values()
-      ) {
-        if (
-          remote.dead ||
-          remote.alive === false
-        ) {
-          this.kill(remote);
-          continue;
-        }
+        span.textContent =
+          segment.text;
 
-        if (!remote.bot) {
-          this.create(remote);
-          continue;
-        }
+        span.style.color =
+          segment.color;
 
-        this.update(
-          remote,
-          dt
+        span.style.marginRight =
+          "7px";
+
+        title.appendChild(
+          span
         );
       }
-    },
 
-    remove(id) {
-      const remote =
-        State.remotes.get(
-          String(id)
+      const meta =
+        document.createElement(
+          "div"
         );
 
-      if (!remote) {
-        return;
-      }
+      meta.className =
+        "conn-room-meta";
 
-      const bot =
-        remote.bot;
+      meta.textContent =
+        `${room.playerCount || 0}/${(room.ctSlots || 0) + (room.tSlots || 0)} players`;
 
       if (
-        bot &&
-        State.botManager
+        room.rafit
       ) {
-        const bots =
-          Array.isArray(
-            State.botManager
-          )
-            ? State.botManager
-            : State.botManager.bots;
+        const rafit =
+          document.createElement(
+            "span"
+          );
 
-        if (Array.isArray(bots)) {
-          const index =
-            bots.indexOf(bot);
+        rafit.className =
+          "conn-room-rafit";
 
-          if (index !== -1) {
-            bots.splice(
-              index,
-              1
-            );
-          }
-        }
+        rafit.textContent =
+          "RAFIT";
+
+        meta.appendChild(
+          rafit
+        );
       }
 
-      State.remotes.delete(
-        String(id)
-      );
+      if (
+        room.professional
+      ) {
+        const pro =
+          document.createElement(
+            "span"
+          );
 
-      State.avatarDirty =
-        true;
+        pro.className =
+          "conn-room-pro";
 
-      log(
-        "Remote removed:",
-        id
-      );
-    },
+        pro.textContent =
+          "PRO 2000+";
 
-    clear() {
-      if (State.botManager) {
-        const bots =
-          Array.isArray(
-            State.botManager
-          )
-            ? State.botManager
-            : State.botManager.bots;
-
-        if (Array.isArray(bots)) {
-          for (
-            let i =
-              bots.length - 1;
-            i >= 0;
-            i--
-          ) {
-            const bot =
-              bots[i];
-
-            if (
-              bot &&
-              bot.__connectionsRemote
-            ) {
-              try {
-                if (
-                  typeof bot.die ===
-                  "function"
-                ) {
-                  bot.die();
-                }
-              } catch {}
-
-              bots.splice(
-                i,
-                1
-              );
-            }
-          }
-
-          if (
-            State.originalBots.length &&
-            State.leavingRoom
-          ) {
-            for (
-              const original of
-              State.originalBots
-            ) {
-              if (
-                !bots.includes(
-                  original
-                )
-              ) {
-                try {
-                  original.__connectionsPooled =
-                    false;
-                } catch {}
-
-                try {
-                  original.__connectionsNative =
-                    true;
-                } catch {}
-
-                try {
-                  original.health =
-                    100;
-                } catch {}
-
-                try {
-                  original.alive =
-                    true;
-                } catch {}
-
-                try {
-                  original.isAlive =
-                    true;
-                } catch {}
-
-                try {
-                  original.dead =
-                    false;
-                } catch {}
-
-                setVisible(
-                  original,
-                  true
-                );
-
-                bots.push(
-                  original
-                );
-              }
-            }
-          }
-        }
+        meta.appendChild(
+          pro
+        );
       }
 
-      State.remotes.clear();
-      State.avatarDirty =
-        true;
-    }
-  };
+      const players =
+        document.createElement(
+          "div"
+        );
 
-  function updateRemoteBots() {
-    const now =
-      performance.now();
+      players.className =
+        "conn-players";
 
-    if (!State.lastBotUpdate) {
-      State.lastBotUpdate =
-        now;
-    }
+      for (
+        const p of
+        room.players || []
+      ) {
+        const row =
+          document.createElement(
+            "div"
+          );
 
-    const dt =
-      Math.min(
-        0.1,
-        Math.max(
-          0.001,
+        row.className =
+          "conn-player";
+
+        const left =
+          document.createElement(
+            "span"
+          );
+
+        left.textContent =
           (
-            now -
-            State.lastBotUpdate
-          ) / 1000
-        )
-      );
+            p.host
+              ? "👑 "
+              : ""
+          ) +
+          p.name;
 
-    State.lastBotUpdate =
-      now;
-
-    if (
-      State.confirmedMatch &&
-      State.connected &&
-      State.joinedRoom
-    ) {
-      BotSystem.updateAll(
-        dt
-      );
-    }
-  }
-
-  function startBotLoop() {
-    if (State.botTimer) {
-      clearInterval(
-        State.botTimer
-      );
-    }
-
-    State.botTimer =
-      setInterval(
-        updateRemoteBots,
-        100
-      );
-  }
-
-  function stopBotLoop() {
-    if (State.botTimer) {
-      clearInterval(
-        State.botTimer
-      );
-
-      State.botTimer = null;
-    }
-  }
-
-  const RemoteAvatars = {
-    getElements() {
-      const game =
-        getGame();
-
-      if (!game) {
-        return [];
-      }
-
-      const result = [];
-
-      const sources = [
-        game.hud?._avatars,
-        game._avatars
-      ];
-
-      for (
-        const list of sources
-      ) {
-        if (
-          !Array.isArray(list)
-        ) {
-          continue;
-        }
-
-        for (
-          const item of list
-        ) {
-          if (!item) {
-            continue;
-          }
-
-          if (
-            item.ent &&
-            item.el
-          ) {
-            result.push(
-              item
-            );
-          }
-        }
-      }
-
-      return result;
-    },
-
-    apply() {
-      const elements =
-        this.getElements();
-
-      if (!elements.length) {
-        return;
-      }
-
-      const remoteList =
-        Array.from(
-          State.remotes.values()
-        );
-
-      for (
-        const item of elements
-      ) {
-        const ent =
-          item.ent;
-
-        const el =
-          item.el;
-
-        if (
-          !ent ||
-          !el
-        ) {
-          continue;
-        }
-
-        if (
-          !ent.__connectionsRemote
-        ) {
-          continue;
-        }
-
-        const id =
-          ent.__connectionsRemoteId;
-
-        const remote =
-          State.remotes.get(
-            String(id)
+        const rtp =
+          document.createElement(
+            "span"
           );
 
-        if (!remote) {
-          continue;
-        }
+        rtp.className =
+          "conn-rtp";
 
-        if (!remote.avatar) {
-          continue;
-        }
+        rtp.textContent =
+          room.rafit
+            ? `${p.rtp} RTP`
+            : "";
 
-        try {
-          el.src =
-            remote.avatar;
+        row.appendChild(
+          left
+        );
 
-          el.style.display =
-            "";
-        } catch {}
+        row.appendChild(
+          rtp
+        );
+
+        players.appendChild(
+          row
+        );
       }
 
-      for (
-        const remote of
-        remoteList
-      ) {
-        if (!remote.avatar) {
-          continue;
-        }
+      const buttons =
+        document.createElement(
+          "div"
+        );
 
-        const bot =
-          remote.bot;
+      buttons.className =
+        "conn-room-buttons";
 
-        if (!bot) {
-          continue;
-        }
+      const join =
+        document.createElement(
+          "button"
+        );
 
-        try {
-          bot.__connectionsAvatar =
-            remote.avatar;
-        } catch {}
-      }
-    }
-  };
+      join.className =
+        "conn-btn conn-join";
 
-  function startAvatarLoop() {
-    if (State.avatarTimer) {
-      clearInterval(
-        State.avatarTimer
-      );
-    }
+      join.textContent =
+        State.room === room.id
+          ? "JOINED"
+          : "JOIN";
 
-    State.avatarTimer =
-      setInterval(
-        () => {
-          RemoteAvatars.apply();
-        },
-        250
-      );
-  }
+      join.disabled =
+        State.room === room.id;
 
-  function stopAvatarLoop() {
-    if (State.avatarTimer) {
-      clearInterval(
-        State.avatarTimer
-      );
-
-      State.avatarTimer = null;
-    }
-  }
-
-  function keepGameUnpaused() {
-    if (!State.confirmedMatch) {
-      return;
-    }
-
-    const game =
-      getGame();
-
-    if (!game) {
-      return;
-    }
-
-    try {
-      game.paused = false;
-    } catch {}
-
-    try {
-      game.isPaused = false;
-    } catch {}
-
-    try {
-      game.pauseOnBlur = false;
-    } catch {}
-
-    try {
-      game.pauseOnHidden = false;
-    } catch {}
-
-    try {
-      game.shouldPauseOnBlur =
-        false;
-    } catch {}
-
-    try {
-      game.shouldPauseOnVisibility =
-        false;
-    } catch {}
-  }
-
-  function installTabGuard() {
-    if (
-      unsafeWindow.__connectionsTabGuard
-    ) {
-      return;
-    }
-
-    unsafeWindow.__connectionsTabGuard =
-      true;
-
-    try {
-      Object.defineProperty(
-        document,
-        "hidden",
-        {
-          configurable: true,
-
-          get() {
-            return false;
-          }
-        }
-      );
-    } catch {}
-
-    try {
-      Object.defineProperty(
-        document,
-        "visibilityState",
-        {
-          configurable: true,
-
-          get() {
-            return "visible";
-          }
-        }
-      );
-    } catch {}
-
-    const stop =
-      event => {
-        if (
-          !unsafeWindow.__connectionsTabGuard
-        ) {
-          return;
-        }
-
-        if (
-          !State.confirmedMatch
-        ) {
-          return;
-        }
-
-        try {
-          event.stopImmediatePropagation();
-        } catch {}
+      join.onclick = () => {
+        Network.joinRoom(
+          room.id
+        );
       };
 
-    [
-      "blur",
-      "pagehide",
-      "visibilitychange",
-      "webkitvisibilitychange"
-    ].forEach(
-      type => {
-        window.addEventListener(
-          type,
-          stop,
-          true
-        );
-
-        document.addEventListener(
-          type,
-          stop,
-          true
-        );
-      }
-    );
-
-    setInterval(
-      keepGameUnpaused,
-      250
-    );
-  }
-
-  async function prepareMatch() {
-    if (State.preparingBots) {
-      return;
-    }
-
-    State.preparingBots =
-      true;
-
-    updateStatus(
-      "Scanning engine..."
-    );
-
-    await sleep(150);
-
-    State.game =
-      getGame();
-
-    if (!State.game) {
-      State.preparingBots =
-        false;
-
-      updateStatus(
-        "Engine not found."
+      buttons.appendChild(
+        join
       );
 
+      card.appendChild(
+        title
+      );
+
+      card.appendChild(
+        meta
+      );
+
+      card.appendChild(
+        players
+      );
+
+      card.appendChild(
+        buttons
+      );
+
+      box.appendChild(
+        card
+      );
+    }
+  }
+
+  function renderSegmentsPreview() {
+    const preview =
+      State.UI.preview;
+
+    if (!preview) {
       return;
     }
 
-    BotSystem.preparePool();
+    preview.innerHTML = "";
 
-    State.localAvatar =
-      getAvatar();
+    const rows =
+      State.UI.segmentRows
+        || [];
 
-    State.confirmedMatch =
-      true;
-
-    State.matchEnding =
-      false;
-
-    State.dead =
-      false;
-
-    State.deathSent =
-      false;
-
-    installTabGuard();
-
-    updateStatus(
-      "Ready"
-    );
-
-    State.preparingBots =
-      false;
-
-    Network.connect();
-
-    if (
-      State.connected &&
-      State.joinedRoom
+    for (
+      const row of rows
     ) {
-      startStateLoop();
+      const text =
+        row.querySelector(
+          ".conn-segment-text"
+        )?.value || "";
+
+      const color =
+        row.querySelector(
+          ".conn-segment-color"
+        )?.value || "#ffffff";
+
+      if (!text.trim()) {
+        continue;
+      }
+
+      const span =
+        document.createElement(
+          "span"
+        );
+
+      span.textContent =
+        text.trim();
+
+      span.style.color =
+        color;
+
+      span.style.marginRight =
+        "7px";
+
+      preview.appendChild(
+        span
+      );
     }
-
-    startBotLoop();
-    startAvatarLoop();
-
-    log(
-      "Match confirmed. Multiplayer enabled."
-    );
   }
 
-  function endMatch() {
-    if (!State.confirmedMatch) {
-      return;
-    }
-
-    State.confirmedMatch =
-      false;
-
-    State.matchEnding =
-      true;
-
-    stopStateLoop();
-
-    BotSystem.clear();
-
-    State.dead =
-      false;
-
-    State.deathSent =
-      false;
-
-    log(
-      "Match ended."
-    );
-  }
-
-  function createUI() {
-    if (State.UI.root) {
-      return;
-    }
-
-    GM_addStyle(`
-      #connections-root {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 430px;
-        max-width: calc(100vw - 30px);
-        background: rgba(12,12,16,.97);
-        border: 1px solid #34343d;
-        border-radius: 14px;
-        padding: 16px;
-        z-index: 2147483647;
-        color: #eee;
-        font-family: Arial, sans-serif;
-        box-shadow: 0 20px 80px rgba(0,0,0,.6);
-        display: none;
-      }
-
-      #connections-root * {
-        box-sizing: border-box;
-      }
-
-      #connections-title {
-        font-size: 20px;
-        font-weight: 700;
-        margin-bottom: 4px;
-      }
-
-      #connections-version {
-        color: #777;
-        font-size: 11px;
-        margin-bottom: 15px;
-      }
-
-      .connections-label {
-        display: block;
-        color: #999;
-        font-size: 11px;
-        margin-bottom: 5px;
-      }
-
-      .connections-input {
-        width: 100%;
-        background: #18181e;
-        border: 1px solid #33333c;
-        color: #eee;
-        border-radius: 8px;
-        padding: 10px;
-        outline: none;
-        margin-bottom: 10px;
-      }
-
-      .connections-input:focus {
-        border-color: #666675;
-      }
-
-      .connections-row {
-        display: flex;
-        gap: 8px;
-      }
-
-      .connections-btn {
-        flex: 1;
-        border: 1px solid #35353e;
-        background: #1b1b22;
-        color: #eee;
-        border-radius: 8px;
-        padding: 10px;
-        cursor: pointer;
-        font-weight: 600;
-      }
-
-      .connections-btn:hover {
-        background: #25252e;
-      }
-
-      .connections-btn.primary {
-        background: #5b45ff;
-        border-color: #725fff;
-      }
-
-      .connections-btn.primary:hover {
-        background: #6a55ff;
-      }
-
-      .connections-btn.danger {
-        background: #35191c;
-        border-color: #5b282d;
-      }
-
-      #connections-status {
-        margin-top: 12px;
-        padding: 9px;
-        border-radius: 8px;
-        background: #15151a;
-        color: #999;
-        font-size: 12px;
-      }
-
-      #connections-match {
-        margin-top: 12px;
-        padding: 12px;
-        border-radius: 9px;
-        background: #17171d;
-        border: 1px solid #292932;
-      }
-
-      #connections-avatar-preview {
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        object-fit: cover;
-        background: #222;
-        border: 1px solid #3a3a44;
-      }
-
-      #connections-avatar-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 12px;
-      }
-
-      #connections-debug {
-        margin-top: 10px;
-        color: #666;
-        font-size: 10px;
-        word-break: break-all;
-      }
-    `);
-
-    const root =
+  function addSegment(
+    text = "",
+    color = "#ffffff"
+  ) {
+    const row =
       document.createElement(
         "div"
       );
 
-    root.id =
-      "connections-root";
+    row.className =
+      "conn-segment";
 
-    root.innerHTML = `
-      <div id="connections-title">
-        Connections
-      </div>
+    const input =
+      document.createElement(
+        "input"
+      );
 
-      <div id="connections-version">
-        v${VERSION}
-      </div>
+    input.className =
+      "conn-segment-text";
 
-      <label class="connections-label">
-        Name
-      </label>
+    input.placeholder =
+      "Text";
 
-      <input
-        id="connections-name"
-        class="connections-input"
-        placeholder="Player"
-        maxlength="24"
-      >
+    input.value =
+      text;
 
-      <label class="connections-label">
-        Room
-      </label>
+    const picker =
+      document.createElement(
+        "input"
+      );
 
-      <div class="connections-row">
-        <input
-          id="connections-room"
-          class="connections-input"
-          style="margin-bottom:0"
-          placeholder="Room ID"
-        >
+    picker.className =
+      "conn-segment-color";
 
-        <button
-          id="connections-random"
-          class="connections-btn"
-          style="max-width:110px"
-        >
-          Random
-        </button>
-      </div>
+    picker.type =
+      "color";
 
-      <div id="connections-match">
-        <button
-          id="connections-confirm"
-          class="connections-btn primary"
-        >
-          I AM IN A MATCH
-        </button>
+    picker.value =
+      /^#[0-9a-fA-F]{6}$/.test(
+        color
+      )
+        ? color
+        : "#ffffff";
 
-        <button
-          id="connections-leave"
-          class="connections-btn danger"
-          style="margin-top:8px"
-        >
-          Leave Room
-        </button>
-      </div>
+    const remove =
+      document.createElement(
+        "button"
+      );
 
-      <div id="connections-avatar-row">
-        <img
-          id="connections-avatar-preview"
-        >
+    remove.textContent =
+      "×";
 
-        <div style="flex:1">
-          <div class="connections-label">
-            Avatar
-          </div>
+    remove.className =
+      "conn-small";
 
-          <div class="connections-row">
-            <button
-              id="connections-avatar"
-              class="connections-btn"
-            >
-              Choose
-            </button>
+    remove.onclick = () => {
+      row.remove();
 
-            <button
-              id="connections-avatar-reset"
-              class="connections-btn"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-      </div>
+      renderSegmentsPreview();
+    };
 
-      <input
-        id="connections-avatar-file"
-        type="file"
-        accept="image/*"
-        style="display:none"
-      >
+    input.oninput =
+      renderSegmentsPreview;
 
-      <div id="connections-status">
-        Disconnected
-      </div>
+    picker.oninput =
+      renderSegmentsPreview;
 
-      <div id="connections-debug"></div>
-    `;
-
-    document.body.appendChild(
-      root
+    row.appendChild(
+      input
     );
 
-    State.UI.root =
-      root;
-
-    State.UI.name =
-      root.querySelector(
-        "#connections-name"
-      );
-
-    State.UI.room =
-      root.querySelector(
-        "#connections-room"
-      );
-
-    State.UI.random =
-      root.querySelector(
-        "#connections-random"
-      );
-
-    State.UI.confirm =
-      root.querySelector(
-        "#connections-confirm"
-      );
-
-    State.UI.leave =
-      root.querySelector(
-        "#connections-leave"
-      );
-
-    State.UI.status =
-      root.querySelector(
-        "#connections-status"
-      );
-
-    State.UI.avatar =
-      root.querySelector(
-        "#connections-avatar"
-      );
-
-    State.UI.avatarReset =
-      root.querySelector(
-        "#connections-avatar-reset"
-      );
-
-    State.UI.avatarFile =
-      root.querySelector(
-        "#connections-avatar-file"
-      );
-
-    State.UI.avatarPreview =
-      root.querySelector(
-        "#connections-avatar-preview"
-      );
-
-    State.UI.debug =
-      root.querySelector(
-        "#connections-debug"
-      );
-
-    const savedName =
-      localStorage.getItem(
-        "connections_name"
-      );
-
-    const savedRoom =
-      localStorage.getItem(
-        "connections_room"
-      );
-
-    State.name =
-      savedName ||
-      State.name;
-
-    State.room =
-      savedRoom ||
-      randomRoom();
-
-    State.UI.name.value =
-      State.name;
-
-    State.UI.room.value =
-      State.room;
-
-    State.localAvatar =
-      getAvatar();
-
-    updateAvatarPreview();
-
-    State.UI.name.addEventListener(
-      "input",
-      () => {
-        State.name =
-          State.UI.name.value.trim() ||
-          "Player";
-
-        localStorage.setItem(
-          "connections_name",
-          State.name
-        );
-      }
+    row.appendChild(
+      picker
     );
 
-    State.UI.room.addEventListener(
-      "input",
-      () => {
-        const value =
-          State.UI.room.value.trim();
-
-        if (
-          State.connected &&
-          State.joinedRoom
-        ) {
-          return;
-        }
-
-        State.room =
-          value;
-
-        localStorage.setItem(
-          "connections_room",
-          State.room
-        );
-      }
+    row.appendChild(
+      remove
     );
 
-    State.UI.random.addEventListener(
-      "click",
-      () => {
-        if (
-          State.connected &&
-          State.joinedRoom
-        ) {
-          updateStatus(
-            "Leave the current room first."
-          );
-
-          return;
-        }
-
-        const room =
-          randomRoom();
-
-        State.room =
-          room;
-
-        State.UI.room.value =
-          room;
-
-        localStorage.setItem(
-          "connections_room",
-          room
-        );
-
-        updateStatus(
-          "New room generated."
-        );
-      }
+    State.UI.segmentBox.appendChild(
+      row
     );
 
-    State.UI.confirm.addEventListener(
-      "click",
-      async () => {
-        if (!isInsideMatch()) {
-          updateStatus(
-            "You must already be inside a match."
-          );
-
-          return;
-        }
-
-        State.name =
-          State.UI.name.value.trim() ||
-          "Player";
-
-        const selectedRoom =
-          State.UI.room.value.trim();
-
-        if (!selectedRoom) {
-          updateStatus(
-            "Enter a room ID."
-          );
-
-          return;
-        }
-
-        if (
-          State.connected &&
-          State.joinedRoom &&
-          String(State.room) !==
-            String(selectedRoom)
-        ) {
-          updateStatus(
-            "Leave the current room first."
-          );
-
-          return;
-        }
-
-        State.room =
-          selectedRoom;
-
-        localStorage.setItem(
-          "connections_name",
-          State.name
-        );
-
-        localStorage.setItem(
-          "connections_room",
-          State.room
-        );
-
-        await prepareMatch();
-      }
+    State.UI.segmentRows.push(
+      row
     );
 
-    State.UI.leave.addEventListener(
-      "click",
-      () => {
-        Network.leaveRoom();
-      }
-    );
-
-    State.UI.avatar.addEventListener(
-      "click",
-      () => {
-        State.UI.avatarFile.click();
-      }
-    );
-
-    State.UI.avatarReset.addEventListener(
-      "click",
-      () => {
-        resetAvatar();
-        updateAvatarPreview();
-      }
-    );
-
-    State.UI.avatarFile.addEventListener(
-      "change",
-      async event => {
-        const file =
-          event.target.files?.[0];
-
-        if (!file) {
-          return;
-        }
-
-        try {
-          const data =
-            await compressAvatar(
-              file
-            );
-
-          saveAvatar(data);
-          updateAvatarPreview();
-        } catch (e) {
-          error(
-            "Avatar processing failed:",
-            e
-          );
-        }
-
-        event.target.value =
-          "";
-      }
-    );
-
-    updateRoomUI();
+    renderSegmentsPreview();
   }
 
-  function compressAvatar(file) {
-    return new Promise(
-      (resolve, reject) => {
-        const reader =
-          new FileReader();
+  function collectSegments() {
+    return (
+      State.UI.segmentRows
+        || []
+    )
+      .map(row => ({
+        text:
+          row.querySelector(
+            ".conn-segment-text"
+          )?.value
+            ?.trim() || "",
 
-        reader.onerror =
-          () =>
-            reject(
-              new Error(
-                "Could not read image."
-              )
-            );
-
-        reader.onload =
-          () => {
-            const img =
-              new Image();
-
-            img.onerror =
-              () =>
-                reject(
-                  new Error(
-                    "Could not load image."
-                  )
-                );
-
-            img.onload =
-              () => {
-                const canvas =
-                  document.createElement(
-                    "canvas"
-                  );
-
-                const size =
-                  128;
-
-                canvas.width =
-                  size;
-
-                canvas.height =
-                  size;
-
-                const ctx =
-                  canvas.getContext(
-                    "2d"
-                  );
-
-                ctx.clearRect(
-                  0,
-                  0,
-                  size,
-                  size
-                );
-
-                const scale =
-                  Math.max(
-                    size / img.width,
-                    size / img.height
-                  );
-
-                const width =
-                  img.width *
-                  scale;
-
-                const height =
-                  img.height *
-                  scale;
-
-                const x =
-                  (size - width) /
-                  2;
-
-                const y =
-                  (size - height) /
-                  2;
-
-                ctx.drawImage(
-                  img,
-                  x,
-                  y,
-                  width,
-                  height
-                );
-
-                resolve(
-                  canvas.toDataURL(
-                    "image/webp",
-                    0.82
-                  )
-                );
-              };
-
-            img.src =
-              reader.result;
-          };
-
-        reader.readAsDataURL(
-          file
-        );
-      }
-    );
-  }
-
-  function updateAvatarPreview() {
-    if (
-      !State.UI.avatarPreview
-    ) {
-      return;
-    }
-
-    const avatar =
-      State.localAvatar ||
-      getAvatar();
-
-    if (avatar) {
-      State.UI.avatarPreview.src =
-        avatar;
-    } else {
-      State.UI.avatarPreview.removeAttribute(
-        "src"
+        color:
+          row.querySelector(
+            ".conn-segment-color"
+          )?.value ||
+          "#ffffff"
+      }))
+      .filter(
+        x =>
+          x.text.length > 0
       );
-    }
   }
 
-  function updateRoomUI() {
-    if (!State.UI.status) {
-      return;
-    }
+  function createRoomFromUI() {
+    const segments =
+      collectSegments();
 
     if (
-      State.connected &&
-      State.joinedRoom
+      !segments.length
     ) {
       updateStatus(
-        State.room
-          ? `Connected • ${State.room}`
-          : "Connected"
+        "Give the room a name."
       );
 
       return;
     }
 
-    if (
-      State.connected &&
-      !State.joinedRoom
-    ) {
-      updateStatus(
-        State.room
-          ? `Connected • waiting for room`
-          : "Connected"
-      );
+    const ctSlots =
+      Number(
+        State.UI.ctSlots.value
+      ) || 5;
 
-      return;
-    }
+    const tSlots =
+      Number(
+        State.UI.tSlots.value
+      ) || 5;
 
-    updateStatus(
-      State.room
-        ? `Ready • ${State.room}`
-        : "No room"
-    );
+    Network.createRoom({
+      segments,
+
+      ctSlots,
+
+      tSlots,
+
+      rafit:
+        State.UI.rafit.checked,
+
+      professional:
+        State.UI.professional.checked,
+
+      team: "ct"
+    });
   }
 
   function updateStatus(text) {
-    if (State.UI.status) {
+    if (
+      State.UI.status
+    ) {
       State.UI.status.textContent =
         text;
     }
   }
 
-  function updateDebug() {
-    if (!State.UI.debug) {
+  function updateUI() {
+    updateRoomList();
+
+    const connected =
+      State.connected;
+
+    if (
+      State.UI.connection
+    ) {
+      State.UI.connection.textContent =
+        connected
+          ? "ONLINE"
+          : "OFFLINE";
+
+      State.UI.connection.className =
+        connected
+          ? "conn-online"
+          : "conn-offline";
+    }
+
+    if (
+      State.UI.current
+    ) {
+      if (
+        State.roomData
+      ) {
+        State.UI.current.textContent =
+          State.roomData.title ||
+          "Room";
+      } else {
+        State.UI.current.textContent =
+          "No room";
+      }
+    }
+
+    if (
+      State.UI.kickList
+    ) {
+      renderKickList();
+    }
+  }
+
+  function renderKickList() {
+    const box =
+      State.UI.kickList;
+
+    if (!box) {
       return;
     }
 
-    const game =
-      getGame();
+    box.innerHTML = "";
 
-    State.UI.debug.textContent =
-      [
-        `connected=${State.connected}`,
+    if (
+      !State.roomData ||
+      !Array.isArray(
+        State.roomData.players
+      )
+    ) {
+      return;
+    }
 
-        `joinedRoom=${State.joinedRoom}`,
-
-        `confirmedMatch=${State.confirmedMatch}`,
-
-        `room=${
-          State.room ||
-          "null"
-        }`,
-
-        `id=${
-          State.id ||
-          "null"
-        }`,
-
-        `remotePlayers=${
-          State.remotes.size
-        }`,
-
-        `remoteBots=${
-          Array.from(
-            State.remotes.values()
-          ).filter(
-            r => !!r.bot
-          ).length
-        }`,
-
-        `dead=${State.dead}`,
-
-        `gameState=${
-          game?.gameState ??
-          "undefined"
-        }`
-      ].join(
-        " | "
+    const me =
+      State.roomData.players.find(
+        p =>
+          String(p.id) ===
+          String(State.id)
       );
+
+    if (
+      !me?.host
+    ) {
+      return;
+    }
+
+    for (
+      const player of
+      State.roomData.players
+    ) {
+      if (
+        String(player.id) ===
+        String(State.id)
+      ) {
+        continue;
+      }
+
+      const row =
+        document.createElement(
+          "div"
+        );
+
+      row.className =
+        "conn-kick-row";
+
+      const name =
+        document.createElement(
+          "span"
+        );
+
+      name.textContent =
+        `${player.name} ${State.roomData.rafit ? "(" + player.rtp + " RTP)" : ""}`;
+
+      const button =
+        document.createElement(
+          "button"
+        );
+
+      button.className =
+        "conn-small conn-danger";
+
+      button.textContent =
+        "KICK";
+
+      button.onclick = () => {
+        Network.kick(
+          player.id
+        );
+      };
+
+      row.appendChild(
+        name
+      );
+
+      row.appendChild(
+        button
+      );
+
+      box.appendChild(
+        row
+      );
+    }
+  }
+
+  function openUI() {
+    State.UI.panel.style.display =
+      "block";
+
+    updateUI();
+  }
+
+  function closeUI() {
+    State.UI.panel.style.display =
+      "none";
   }
 
   function toggleUI() {
-    if (!State.UI.root) {
-      return;
-    }
-
-    const visible =
-      State.UI.root.style.display !==
-      "none";
-
-    State.UI.root.style.display =
-      visible
-        ? "none"
-        : "block";
-
-    if (!visible) {
-      updateAvatarPreview();
-      updateRoomUI();
+    if (
+      State.UI.panel.style.display ===
+      "none"
+    ) {
+      openUI();
+    } else {
+      closeUI();
     }
   }
 
-  function installKeyboard() {
-    window.addEventListener(
+  function buildUI() {
+    GM_addStyle(`
+      #connections-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 780px;
+        max-width: calc(100vw - 30px);
+        max-height: calc(100vh - 30px);
+        overflow: auto;
+        z-index: 999999;
+        background: #101116;
+        color: #eee;
+        border: 1px solid #2c2f3a;
+        border-radius: 16px;
+        box-shadow: 0 20px 80px rgba(0,0,0,.65);
+        font-family: Arial, sans-serif;
+        padding: 18px;
+        display: none;
+      }
+
+      #connections-panel * {
+        box-sizing: border-box;
+      }
+
+      .conn-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 15px;
+      }
+
+      .conn-logo {
+        width: 38px;
+        height: 38px;
+        object-fit: contain;
+        border-radius: 8px;
+      }
+
+      .conn-title {
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .conn-subtitle {
+        color: #858b9a;
+        font-size: 12px;
+      }
+
+      .conn-close {
+        margin-left: auto;
+        background: #252833;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      .conn-section {
+        background: #17191f;
+        border: 1px solid #252833;
+        border-radius: 12px;
+        padding: 13px;
+        margin-top: 12px;
+      }
+
+      .conn-section-title {
+        font-size: 13px;
+        font-weight: 800;
+        margin-bottom: 10px;
+        color: #b9becb;
+      }
+
+      .conn-input {
+        width: 100%;
+        background: #0d0f13;
+        color: #fff;
+        border: 1px solid #303440;
+        border-radius: 8px;
+        padding: 9px;
+        outline: none;
+      }
+
+      .conn-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .conn-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 9px;
+        color: #c9cdd7;
+        font-size: 13px;
+      }
+
+      .conn-segment {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+
+      .conn-segment input[type=text] {
+        flex: 1;
+      }
+
+      .conn-segment-text {
+        flex: 1;
+        background: #0d0f13;
+        color: #fff;
+        border: 1px solid #303440;
+        border-radius: 8px;
+        padding: 8px;
+      }
+
+      .conn-segment-color {
+        width: 42px;
+        height: 34px;
+        border: 0;
+        padding: 2px;
+        background: #0d0f13;
+        border-radius: 8px;
+      }
+
+      .conn-preview {
+        min-height: 28px;
+        padding: 7px;
+        background: #0d0f13;
+        border-radius: 8px;
+        margin: 8px 0;
+        font-weight: 800;
+      }
+
+      .conn-btn {
+        background: #5865f2;
+        color: white;
+        border: 0;
+        border-radius: 8px;
+        padding: 9px 13px;
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .conn-btn:disabled {
+        opacity: .45;
+        cursor: default;
+      }
+
+      .conn-small {
+        background: #292c35;
+        color: #fff;
+        border: 0;
+        border-radius: 7px;
+        padding: 7px 9px;
+        cursor: pointer;
+      }
+
+      .conn-danger {
+        background: #a32d3a;
+      }
+
+      .conn-room {
+        background: #0e1014;
+        border: 1px solid #282c36;
+        border-radius: 11px;
+        padding: 11px;
+        margin-bottom: 8px;
+      }
+
+      .conn-room-title {
+        font-size: 16px;
+        font-weight: 800;
+        margin-bottom: 5px;
+      }
+
+      .conn-room-meta {
+        color: #8d93a2;
+        font-size: 12px;
+        margin-bottom: 7px;
+      }
+
+      .conn-room-rafit {
+        display: inline-block;
+        margin-left: 7px;
+        color: #ff4fd8;
+        font-weight: 800;
+      }
+
+      .conn-room-pro {
+        display: inline-block;
+        margin-left: 7px;
+        color: #ffd35a;
+        font-weight: 800;
+      }
+
+      .conn-players {
+        display: grid;
+        gap: 3px;
+        margin-bottom: 8px;
+      }
+
+      .conn-player {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 6px;
+        border-radius: 6px;
+        background: #15171d;
+        font-size: 12px;
+      }
+
+      .conn-rtp {
+        color: #ff4fd8;
+        font-weight: 800;
+      }
+
+      .conn-room-buttons {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .conn-empty {
+        color: #777d8b;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .conn-status {
+        color: #9298a7;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+
+      .conn-online {
+        color: #5cff8d;
+        font-weight: 800;
+      }
+
+      .conn-offline {
+        color: #ff6262;
+        font-weight: 800;
+      }
+
+      .conn-kick-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #0d0f13;
+        border-radius: 7px;
+        padding: 7px;
+        margin-bottom: 5px;
+        font-size: 12px;
+      }
+
+      .conn-hotkey {
+        color: #747a89;
+        font-size: 11px;
+      }
+    `);
+
+    const panel =
+      document.createElement(
+        "div"
+      );
+
+    panel.id =
+      "connections-panel";
+
+    const header =
+      document.createElement(
+        "div"
+      );
+
+    header.className =
+      "conn-header";
+
+    const logo =
+      document.createElement(
+        "img"
+      );
+
+    logo.className =
+      "conn-logo";
+
+    logo.src =
+      RAFIT_LOGO;
+
+    logo.onerror = () => {
+      logo.style.display =
+        "none";
+    };
+
+    const title =
+      document.createElement(
+        "div"
+      );
+
+    title.innerHTML =
+      `
+        <div class="conn-title">
+          Connections
+        </div>
+        <div class="conn-subtitle">
+          Multiplayer
+        </div>
+      `;
+
+    const close =
+      document.createElement(
+        "button"
+      );
+
+    close.className =
+      "conn-close";
+
+    close.textContent =
+      "×";
+
+    close.onclick =
+      closeUI;
+
+    header.appendChild(
+      logo
+    );
+
+    header.appendChild(
+      title
+    );
+
+    header.appendChild(
+      close
+    );
+
+    panel.appendChild(
+      header
+    );
+
+    const profile =
+      document.createElement(
+        "div"
+      );
+
+    profile.className =
+      "conn-section";
+
+    profile.innerHTML =
+      `
+        <div class="conn-section-title">
+          PLAYER
+        </div>
+      `;
+
+    const name =
+      document.createElement(
+        "input"
+      );
+
+    name.className =
+      "conn-input";
+
+    name.placeholder =
+      "Player name";
+
+    name.value =
+      State.name;
+
+    name.onchange = () => {
+      State.name =
+        name.value.trim()
+          .slice(0, 24)
+        || "Player";
+
+      localStorage.setItem(
+        "connections_name",
+        State.name
+      );
+    };
+
+    profile.appendChild(
+      name
+    );
+
+    panel.appendChild(
+      profile
+    );
+
+    const create =
+      document.createElement(
+        "div"
+      );
+
+    create.className =
+      "conn-section";
+
+    create.innerHTML =
+      `
+        <div class="conn-section-title">
+          CREATE ROOM
+        </div>
+      `;
+
+    const segmentBox =
+      document.createElement(
+        "div"
+      );
+
+    const preview =
+      document.createElement(
+        "div"
+      );
+
+    preview.className =
+      "conn-preview";
+
+    const add =
+      document.createElement(
+        "button"
+      );
+
+    add.className =
+      "conn-small";
+
+    add.textContent =
+      "+ Add color segment";
+
+    add.onclick = () =>
+      addSegment();
+
+    const slots =
+      document.createElement(
+        "div"
+      );
+
+    slots.className =
+      "conn-grid";
+
+    const ct =
+      document.createElement(
+        "input"
+      );
+
+    ct.className =
+      "conn-input";
+
+    ct.type =
+      "number";
+
+    ct.min = "1";
+    ct.max = "32";
+    ct.value = "5";
+
+    const tt =
+      document.createElement(
+        "input"
+      );
+
+    tt.className =
+      "conn-input";
+
+    tt.type =
+      "number";
+
+    tt.min = "1";
+    tt.max = "32";
+    tt.value = "5";
+
+    slots.appendChild(
+      ct
+    );
+
+    slots.appendChild(
+      tt
+    );
+
+    const rafitLabel =
+      document.createElement(
+        "label"
+      );
+
+    rafitLabel.className =
+      "conn-check";
+
+    const rafit =
+      document.createElement(
+        "input"
+      );
+
+    rafit.type =
+      "checkbox";
+
+    rafitLabel.appendChild(
+      rafit
+    );
+
+    rafitLabel.append(
+      " Enable RAFIT"
+    );
+
+    const proLabel =
+      document.createElement(
+        "label"
+      );
+
+    proLabel.className =
+      "conn-check";
+
+    const pro =
+      document.createElement(
+        "input"
+      );
+
+    pro.type =
+      "checkbox";
+
+    proLabel.appendChild(
+      pro
+    );
+
+    proLabel.append(
+      " Professional Server (2000+ RTP)"
+    );
+
+    const createButton =
+      document.createElement(
+        "button"
+      );
+
+    createButton.className =
+      "conn-btn";
+
+    createButton.textContent =
+      "Create Room";
+
+    createButton.onclick =
+      createRoomFromUI;
+
+    create.appendChild(
+      segmentBox
+    );
+
+    create.appendChild(
+      preview
+    );
+
+    create.appendChild(
+      add
+    );
+
+    create.appendChild(
+      slots
+    );
+
+    create.appendChild(
+      rafitLabel
+    );
+
+    create.appendChild(
+      proLabel
+    );
+
+    create.appendChild(
+      createButton
+    );
+
+    panel.appendChild(
+      create
+    );
+
+    const rooms =
+      document.createElement(
+        "div"
+      );
+
+    rooms.className =
+      "conn-section";
+
+    rooms.innerHTML =
+      `
+        <div class="conn-section-title">
+          ROOMS
+        </div>
+      `;
+
+    const roomList =
+      document.createElement(
+        "div"
+      );
+
+    rooms.appendChild(
+      roomList
+    );
+
+    panel.appendChild(
+      rooms
+    );
+
+    const current =
+      document.createElement(
+        "div"
+      );
+
+    current.className =
+      "conn-section";
+
+    current.innerHTML =
+      `
+        <div class="conn-section-title">
+          CURRENT ROOM
+        </div>
+      `;
+
+    const currentName =
+      document.createElement(
+        "div"
+      );
+
+    currentName.textContent =
+      "No room";
+
+    current.appendChild(
+      currentName
+    );
+
+    const leave =
+      document.createElement(
+        "button"
+      );
+
+    leave.className =
+      "conn-small";
+
+    leave.style.marginTop =
+      "8px";
+
+    leave.textContent =
+      "Leave Room";
+
+    leave.onclick =
+      () => Network.leaveRoom();
+
+    current.appendChild(
+      leave
+    );
+
+    const kickList =
+      document.createElement(
+        "div"
+      );
+
+    kickList.style.marginTop =
+      "10px";
+
+    current.appendChild(
+      kickList
+    );
+
+    panel.appendChild(
+      current
+    );
+
+    const status =
+      document.createElement(
+        "div"
+      );
+
+    status.className =
+      "conn-status";
+
+    status.textContent =
+      "Offline";
+
+    panel.appendChild(
+      status
+    );
+
+    const hotkey =
+      document.createElement(
+        "div"
+      );
+
+    hotkey.className =
+      "conn-hotkey";
+
+    hotkey.textContent =
+      "Backspace = open/close";
+
+    panel.appendChild(
+      hotkey
+    );
+
+    document.body.appendChild(
+      panel
+    );
+
+    State.UI.panel =
+      panel;
+
+    State.UI.roomList =
+      roomList;
+
+    State.UI.current =
+      currentName;
+
+    State.UI.status =
+      status;
+
+    State.UI.connection =
+      status;
+
+    State.UI.kickList =
+      kickList;
+
+    State.UI.segmentBox =
+      segmentBox;
+
+    State.UI.preview =
+      preview;
+
+    State.UI.segmentRows =
+      [];
+
+    State.UI.ctSlots =
+      ct;
+
+    State.UI.tSlots =
+      tt;
+
+    State.UI.rafit =
+      rafit;
+
+    State.UI.professional =
+      pro;
+
+    addSegment(
+      "HVH SERVER",
+      "#ff3030"
+    );
+
+    addSegment(
+      "18+ only",
+      "#ff4fd8"
+    );
+
+    renderSegmentsPreview();
+  }
+
+  function confirmMatch() {
+    if (
+      !isInsideMatch()
+    ) {
+      updateStatus(
+        "Enter a match first."
+      );
+
+      return;
+    }
+
+    State.confirmedMatch =
+      true;
+
+    prepareBots();
+
+    startStateLoop();
+
+    updateStatus(
+      "Match confirmed."
+    );
+
+    log(
+      "Match confirmed."
+    );
+  }
+
+  function installHotkeys() {
+    document.addEventListener(
       "keydown",
       event => {
         if (
-          event.key ===
-            "Backspace" &&
-          !event.repeat
+          event.code ===
+          "Backspace"
         ) {
           const target =
             event.target;
 
-          const typing =
+          if (
             target &&
             (
               target.tagName ===
@@ -3050,9 +2874,8 @@
               target.tagName ===
                 "TEXTAREA" ||
               target.isContentEditable
-            );
-
-          if (typing) {
+            )
+          ) {
             return;
           }
 
@@ -3060,227 +2883,129 @@
 
           toggleUI();
         }
+
+        if (
+          event.code ===
+          "KeyC" &&
+          event.ctrlKey &&
+          event.shiftKey
+        ) {
+          confirmMatch();
+        }
       },
       true
     );
   }
 
-  function installMatchMonitor() {
-    if (State.monitorTimer) {
-      clearInterval(
-        State.monitorTimer
-      );
-    }
-
+  function installMonitor() {
     State.monitorTimer =
-      setInterval(
-        () => {
-          const inside =
-            isInsideMatch();
-
+      setInterval(() => {
+        if (
+          State.confirmedMatch
+        ) {
           if (
-            inside &&
-            !State.confirmedMatch
+            !isInsideMatch()
           ) {
-            updateDebug();
-            return;
-          }
+            State.confirmedMatch =
+              false;
 
-          if (
-            !inside &&
-            State.confirmedMatch
-          ) {
-            endMatch();
+            stopStateLoop();
           }
+        }
 
-          if (
-            State.confirmedMatch
-          ) {
-            checkLocalDeath();
-            enforceLocalDeath();
-            keepGameUnpaused();
-          }
-
-          updateDebug();
-        },
-        250
-      );
+        updateBots();
+      }, 100);
   }
 
-  function exposeDebug() {
+  function installDebug() {
     unsafeWindow.__connections_multiplayer =
       {
         version: VERSION,
 
-        get connected() {
-          return State.connected;
-        },
+        connected:
+          () =>
+            State.connected,
 
-        get joinedRoom() {
-          return State.joinedRoom;
-        },
+        room:
+          () =>
+            State.room,
 
-        get confirmedMatch() {
-          return State.confirmedMatch;
-        },
+        rooms:
+          () =>
+            State.rooms,
 
-        get room() {
-          return State.room;
-        },
+        confirm:
+          confirmMatch,
 
-        get id() {
-          return State.id;
-        },
+        connect:
+          () =>
+            Network.connect(),
 
-        get name() {
-          return State.name;
-        },
+        createRoom:
+          data =>
+            Network.createRoom(
+              data
+            ),
 
-        get remoteCount() {
-          return State.remotes.size;
-        },
+        joinRoom:
+          id =>
+            Network.joinRoom(
+              id
+            ),
 
-        get remoteBots() {
-          return Array.from(
-            State.remotes.values()
-          ).filter(
-            remote =>
-              !!remote.bot
-          ).length;
-        },
+        leave:
+          () =>
+            Network.leaveRoom(),
 
-        get botCount() {
-          if (
-            !State.botManager
-          ) {
-            return 0;
-          }
+        kick:
+          id =>
+            Network.kick(id),
 
-          const bots =
-            Array.isArray(
-              State.botManager
-            )
-              ? State.botManager
-              : State.botManager.bots;
+        state:
+          () => ({
+            id: State.id,
 
-          return Array.isArray(
-            bots
-          )
-            ? bots.length
-            : 0;
-        },
+            name: State.name,
 
-        get dead() {
-          return State.dead;
-        },
-
-        get localAvatar() {
-          return State.localAvatar;
-        },
-
-        get gameState() {
-          return getGame()?.gameState;
-        },
-
-        get gameGameState() {
-          return getGame()?.gameState;
-        },
-
-        get localAvatarExists() {
-          return !!getAvatar();
-        },
-
-        forceDeath() {
-          forceLocalDeath(
-            "debug"
-          );
-        },
-
-        connect() {
-          Network.connect();
-        },
-
-        join() {
-          Network.joinRoom();
-        },
-
-        leave() {
-          Network.leaveRoom();
-        },
-
-        dump() {
-          return {
-            version: VERSION,
+            room: State.room,
 
             connected:
               State.connected,
 
-            joinedRoom:
+            joined:
               State.joinedRoom,
 
             confirmedMatch:
               State.confirmedMatch,
 
-            room:
-              State.room,
-
-            id:
-              State.id,
-
-            name:
-              State.name,
-
-            dead:
-              State.dead,
-
-            remoteCount:
+            remotes:
               State.remotes.size,
 
-            remoteBots:
-              Array.from(
-                State.remotes.values()
-              ).filter(
-                r => !!r.bot
-              ).length,
-
-            botCount:
-              this.botCount,
-
-            gameState:
-              getGame()?.gameState,
-
-            localAvatar:
-              !!getAvatar()
-          };
-        }
+            roomData:
+              State.roomData
+          })
       };
-
-    log(
-      "Debug:",
-      "window.__connections_multiplayer"
-    );
   }
 
   function boot() {
-    createUI();
+    buildUI();
 
-    installKeyboard();
+    installHotkeys();
 
-    installMatchMonitor();
+    installMonitor();
 
-    installTabGuard();
+    installDebug();
 
-    State.localAvatar =
-      getAvatar();
-
-    startAvatarLoop();
-
-    exposeDebug();
+    Network.connect();
 
     log(
       "Connections",
       VERSION,
-      "loaded. Press [Backspace] to open."
+      "loaded."
+    );
+
+    log(
+      "Press Backspace to open."
     );
   }
 
