@@ -1,455 +1,791 @@
-'use strict';
+"use strict";
 
-const http = require('http');
-const crypto = require('crypto');
-const { WebSocketServer } = require('ws');
+const http = require("http");
+const crypto = require("crypto");
+const { WebSocketServer, WebSocket } = require("ws");
 
-const CONFIG = {
-  port: 8090,
-  maxRooms: 100,
-  maxPlayersPerRoom: 18,
-  tickMs: 33,
-  maxName: 16,
-  maxRoomName: 32,
-  maxChat: 140,
-  maxAvatar: 30 * 1024,
-  maxMessage: 256 * 1024,
-  maxSpeed: 40,
-  shotCooldown: 90,
-  shotCastCooldown: 90,
-  shotRange: 60,
-  inputGap: 15,
-  chatCooldown: 1000,
-  roundPause: 3500,
-  maxRoomTitleParts: 8
-};
+const RAFIT = require("./rafit");
 
-const MAX_HP = 100;
+const PORT = 8090;
 
-const rooms = new Map();
+const server = http.createServer((req, res) => {
+  if (req.url === "/") {
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
 
-function randomId(length = 10) {
-  return crypto
-    .randomBytes(16)
-    .toString('hex')
-    .slice(0, length);
-}
+    res.end(
+      JSON.stringify({
+        name: "Connections Multiplayer Server",
+        status: "online",
+        rooms: rooms.size,
+        players: clients.size
+      })
+    );
 
-function cleanText(value, max) {
-  return String(value || '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
-    .trim()
-    .slice(0, max);
-}
-
-function cleanColor(value) {
-  const allowed = [
-    'white',
-    'red',
-    'pink',
-    'blue',
-    'cyan',
-    'green',
-    'yellow',
-    'orange',
-    'purple',
-    'gray'
-  ];
-
-  return allowed.includes(value) ? value : 'white';
-}
-
-function cleanTitleParts(parts) {
-  if (!Array.isArray(parts)) return [];
-
-  return parts
-    .slice(0, CONFIG.maxRoomTitleParts)
-    .map(part => ({
-      text: cleanText(part && part.text, 24),
-      color: cleanColor(part && part.color)
-    }))
-    .filter(part => part.text);
-}
-
-function makeRoomId() {
-  let id;
-
-  do {
-    id = randomId(10);
-  } while (rooms.has(id));
-
-  return id;
-}
-
-function createRoom(options = {}) {
-  if (rooms.size >= CONFIG.maxRooms) {
-    return null;
+    return;
   }
 
-  const id = makeRoomId();
+  res.writeHead(404);
+  res.end("Not Found");
+});
 
-  const ctSlots = Math.max(
-    1,
-    Math.min(9, Number(options.ctSlots) || 5)
-  );
+const wss = new WebSocketServer({
+  server
+});
 
-  const tSlots = Math.max(
-    1,
-    Math.min(9, Number(options.tSlots) || 5)
-  );
+const clients = new Map();
+const rooms = new Map();
 
+function id() {
+  return crypto.randomBytes(10).toString("hex");
+}
+
+function roomId() {
+  return crypto.randomBytes(8).toString("hex");
+}
+
+function safeName(name) {
+  name = String(name || "Player")
+    .replace(/[<>]/g, "")
+    .trim();
+
+  if (!name) {
+    name = "Player";
+  }
+
+  return name.slice(0, 24);
+}
+
+function safeSegmentText(text) {
+  return String(text || "")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, 30);
+}
+
+function safeColor(color) {
+  color = String(color || "#ffffff");
+
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
+    return "#ffffff";
+  }
+
+  return color;
+}
+
+function sanitizeSegments(segments) {
+  if (!Array.isArray(segments)) {
+    return [
+      {
+        text: "ROOM",
+        color: "#ffffff"
+      }
+    ];
+  }
+
+  return segments
+    .slice(0, 6)
+    .map(s => ({
+      text: safeSegmentText(s.text),
+      color: safeColor(s.color)
+    }))
+    .filter(s => s.text.length > 0);
+}
+
+function makeRoom(options) {
   const room = {
-    id,
+    id: roomId(),
 
-    name: cleanText(
-      options.name || 'New Room',
-      CONFIG.maxRoomName
-    ) || 'New Room',
+    segments: sanitizeSegments(
+      options.segments
+    ),
 
-    titleParts: cleanTitleParts(options.titleParts),
+    ctSlots: Math.max(
+      1,
+      Math.min(
+        32,
+        Number(options.ctSlots) || 5
+      )
+    ),
 
-    ctSlots,
-    tSlots,
+    tSlots: Math.max(
+      1,
+      Math.min(
+        32,
+        Number(options.tSlots) || 5
+      )
+    ),
 
-    players: new Map(),
+    rafit: !!options.rafit,
 
-    nextPlayerId: 1,
+    professional: !!options.professional,
 
     hostId: null,
 
-    tick: 0,
+    players: new Map(),
 
-    score: {
-      CT: 0,
-      T: 0
-    },
-
-    round: {
-      id: 1,
-      phase: 'live'
-    },
-
-    roundTimer: null,
-
-    nades: new Map(),
-    nextNadeId: 1
+    createdAt: Date.now()
   };
 
-  rooms.set(id, room);
+  rooms.set(room.id, room);
 
   return room;
 }
 
-function roomPlayerCount(room) {
-  return room.players.size;
+function roomTitle(room) {
+  return room.segments
+    .map(s => s.text)
+    .join(" ");
+}
+
+function publicPlayer(player) {
+  const profile = RAFIT.getProfile(
+    player.id,
+    player.name
+  );
+
+  return {
+    id: player.id,
+    name: player.name,
+    host: player.id === player.room.hostId,
+    team: player.team,
+    rtp: profile.rtp,
+    rafit: player.room.rafit
+  };
 }
 
 function publicRoom(room) {
   return {
     id: room.id,
-    name: room.name,
-    titleParts: room.titleParts,
 
-    players: room.players.size,
-
-    maxPlayers: room.ctSlots + room.tSlots,
+    segments: room.segments,
 
     ctSlots: room.ctSlots,
     tSlots: room.tSlots,
 
+    rafit: room.rafit,
+    professional: room.professional,
+
     hostId: room.hostId,
 
-    hostName:
-      room.hostId && room.players.get(room.hostId)
-        ? room.players.get(room.hostId).name
-        : null
+    players: Array.from(
+      room.players.values()
+    ).map(publicPlayer),
+
+    playerCount: room.players.size,
+
+    title: roomTitle(room)
   };
 }
 
-function send(ws, data) {
-  if (!ws || ws.readyState !== 1) return;
-
-  try {
-    ws.send(JSON.stringify(data));
-  } catch {}
-}
-
-function broadcast(room, data, exceptId = null) {
-  for (const [id, player] of room.players) {
-    if (id === exceptId) continue;
-    send(player.ws, data);
-  }
-}
-
-function sendRoomList(ws) {
-  send(ws, {
-    type: 'rooms',
-    rooms: [...rooms.values()].map(publicRoom)
-  });
-}
-
-function broadcastRoomList() {
-  const packet = {
-    type: 'rooms',
-    rooms: [...rooms.values()].map(publicRoom)
-  };
-
-  for (const ws of wss.clients) {
-    send(ws, packet);
-  }
-}
-
-function freeSlot(room, team) {
-  const max = team === 'T'
-    ? room.tSlots
-    : room.ctSlots;
-
-  const used = new Set();
-
-  for (const player of room.players.values()) {
-    if (player.team === team) {
-      used.add(player.slot);
-    }
-  }
-
-  for (let slot = 0; slot < max; slot++) {
-    if (!used.has(slot)) {
-      return slot;
-    }
-  }
-
-  return -1;
-}
-
-function teamAliveCount(room, team) {
-  let count = 0;
-
-  for (const player of room.players.values()) {
-    if (
-      player.team === team &&
-      player.alive
-    ) {
-      count++;
-    }
-  }
-
-  return count;
-}
-
-function pubPlayer(player) {
-  return {
-    id: player.id,
-    slot: player.slot,
-
-    name: player.name,
-    team: player.team,
-
-    x: round2(player.x),
-    y: round2(player.y),
-    z: round2(player.z),
-
-    yaw: round4(player.yaw),
-    pitch: round4(player.pitch),
-
-    vx: round2(player.vx),
-    vy: round2(player.vy),
-    vz: round2(player.vz),
-
-    hp: player.hp,
-    alive: player.alive,
-
-    weapon: player.weapon,
-    firing: player.firing,
-    crouch: player.crouch,
-    reloading: player.reloading,
-
-    avatar: player.avatar || null,
-
-    host: player.id === player.roomHost
-  };
-}
-
-function round2(value) {
-  value = Number(value) || 0;
-  return Math.round(value * 100) / 100;
-}
-
-function round4(value) {
-  value = Number(value) || 0;
-  return Math.round(value * 10000) / 10000;
-}
-
-function checkRoundEnd(room, reason) {
-  if (room.round.phase !== 'live') return;
-
-  if (room.players.size < 2) return;
-
-  const ctPlayers = [...room.players.values()]
-    .filter(p => p.team === 'CT');
-
-  const tPlayers = [...room.players.values()]
-    .filter(p => p.team === 'T');
-
-  if (!ctPlayers.length || !tPlayers.length) {
+function send(ws, type, data = {}) {
+  if (
+    !ws ||
+    ws.readyState !== WebSocket.OPEN
+  ) {
     return;
   }
 
-  const ctAlive = teamAliveCount(room, 'CT');
-  const tAlive = teamAliveCount(room, 'T');
-
-  let winner = null;
-
-  if (ctAlive === 0 && tAlive > 0) {
-    winner = 'T';
-  }
-
-  if (tAlive === 0 && ctAlive > 0) {
-    winner = 'CT';
-  }
-
-  if (!winner) return;
-
-  room.round.phase = 'end';
-
-  room.score[winner]++;
-
-  broadcast(room, {
-    type: 'round_end',
-
-    round: room.round.id,
-
-    winner,
-
-    reason,
-
-    score: {
-      CT: room.score.CT,
-      T: room.score.T
-    }
-  });
-
-  if (room.roundTimer) {
-    clearTimeout(room.roundTimer);
-  }
-
-  room.roundTimer = setTimeout(() => {
-    startNextRound(room);
-  }, CONFIG.roundPause);
+  try {
+    ws.send(
+      JSON.stringify({
+        type,
+        ...data
+      })
+    );
+  } catch {}
 }
 
-function startNextRound(room) {
-  room.roundTimer = null;
-
-  room.round.id++;
-  room.round.phase = 'live';
-
+function broadcastRoom(room, type, data = {}) {
   for (const player of room.players.values()) {
-    player.hp = MAX_HP;
-    player.alive = true;
-
-    player.vx = 0;
-    player.vy = 0;
-    player.vz = 0;
-
-    player.lastMove = 0;
+    send(player.ws, type, data);
   }
+}
 
-  room.nades.clear();
+function broadcastRooms() {
+  const list = Array.from(
+    rooms.values()
+  ).map(publicRoom);
 
-  broadcast(room, {
-    type: 'round_start',
+  for (const client of clients.values()) {
+    send(client.ws, "rooms", {
+      rooms: list
+    });
+  }
+}
 
-    round: room.round.id,
-
-    score: {
-      CT: room.score.CT,
-      T: room.score.T
-    }
+function sendRoster(room) {
+  broadcastRoom(room, "roster", {
+    room: publicRoom(room),
+    players: Array.from(
+      room.players.values()
+    ).map(publicPlayer)
   });
 }
 
-function removePlayer(room, playerId) {
-  const player = room.players.get(playerId);
+function sendRoomJoined(player) {
+  send(player.ws, "room_joined", {
+    room: publicRoom(player.room),
+    id: player.id,
+    host: player.room.hostId === player.id,
 
-  if (!player) return;
+    rafit: player.room.rafit,
 
-  room.players.delete(playerId);
-
-  broadcast(room, {
-    type: 'leave',
-    id: playerId
+    rtp: RAFIT.getRtp(player.id)
   });
+}
 
-  if (room.hostId === playerId) {
-    const next = room.players.values().next();
+function chooseHost(room) {
+  if (room.players.size === 0) {
+    room.hostId = null;
+    return null;
+  }
 
-    if (!next.done) {
-      const newHost = next.value;
+  const first = room.players.values().next().value;
 
-      room.hostId = newHost.id;
+  room.hostId = first.id;
 
-      broadcast(room, {
-        type: 'host_changed',
+  return first;
+}
+
+function removeFromRoom(player, reason) {
+  const room = player.room;
+
+  if (!room) {
+    return;
+  }
+
+  room.players.delete(player.id);
+
+  player.room = null;
+
+  if (room.hostId === player.id) {
+    const newHost = chooseHost(room);
+
+    if (newHost) {
+      broadcastRoom(room, "host_changed", {
         id: newHost.id
       });
-    } else {
-      room.hostId = null;
     }
   }
 
-  if (!room.players.size) {
-    if (room.roundTimer) {
-      clearTimeout(room.roundTimer);
-      room.roundTimer = null;
-    }
+  broadcastRoom(room, "leave", {
+    id: player.id,
+    name: player.name,
+    reason: reason || "left"
+  });
 
+  sendRoster(room);
+
+  if (room.players.size === 0) {
     rooms.delete(room.id);
-  } else {
-    checkRoundEnd(room, 'leave');
   }
 
-  broadcastRoomList();
+  broadcastRooms();
 }
 
-function joinRoom(room, ws, data) {
-  if (room.players.size >= room.ctSlots + room.tSlots) {
-    send(ws, {
-      type: 'error',
-      error: 'room-full'
-    });
+function closePlayer(player, code, reason) {
+  if (!player) return;
 
-    return null;
+  try {
+    player.ws.close(
+      code || 1000,
+      reason || ""
+    );
+  } catch {}
+}
+
+function joinRoom(player, requestedRoomId, data) {
+  const room = rooms.get(
+    String(requestedRoomId || "")
+  );
+
+  if (!room) {
+    send(player.ws, "error", {
+      code: "ROOM_NOT_FOUND",
+      message: "Room does not exist."
+    });
+    return;
   }
 
-  const team =
-    data.team === 'T'
-      ? 'T'
-      : 'CT';
-
-  const slot = freeSlot(room, team);
-
-  if (slot < 0) {
-    send(ws, {
-      type: 'error',
-      error: 'team-full'
-    });
-
-    return null;
+  if (room.players.has(player.id)) {
+    return;
   }
 
-  const id = room.nextPlayerId++;
+  const check = RAFIT.canJoinRoom(
+    player.id,
+    room.professional
+  );
+
+  if (!check.allowed) {
+    send(player.ws, "error", {
+      code: check.reason,
+      rtp: check.rtp,
+      bannedUntil: check.bannedUntil
+    });
+    return;
+  }
+
+  const maxPlayers =
+    room.ctSlots +
+    room.tSlots;
+
+  if (room.players.size >= maxPlayers) {
+    send(player.ws, "error", {
+      code: "ROOM_FULL",
+      message: "Room is full."
+    });
+    return;
+  }
+
+  if (player.room) {
+    removeFromRoom(
+      player,
+      "switch_room"
+    );
+  }
+
+  player.name = safeName(
+    data.name || player.name
+  );
+
+  player.team =
+    data.team === "t"
+      ? "t"
+      : "ct";
+
+  player.avatar =
+    typeof data.avatar === "string"
+      ? data.avatar.slice(0, 500000)
+      : null;
+
+  player.room = room;
+
+  room.players.set(
+    player.id,
+    player
+  );
+
+  if (!room.hostId) {
+    room.hostId = player.id;
+  }
+
+  send(player.ws, "room_joined", {
+    room: publicRoom(room),
+    id: player.id,
+    host: room.hostId === player.id,
+    rafit: room.rafit,
+    rtp: RAFIT.getRtp(player.id)
+  });
+
+  broadcastRoom(room, "join", {
+    player: publicPlayer(player)
+  });
+
+  sendRoster(room);
+  broadcastRooms();
+}
+
+function createRoom(player, data) {
+  const check = RAFIT.canJoinRoom(
+    player.id,
+    !!data.professional
+  );
+
+  if (!check.allowed) {
+    send(player.ws, "error", {
+      code: check.reason,
+      rtp: check.rtp,
+      bannedUntil: check.bannedUntil
+    });
+
+    return;
+  }
+
+  const room = makeRoom({
+    segments: data.segments,
+
+    ctSlots: data.ctSlots,
+    tSlots: data.tSlots,
+
+    rafit: data.rafit,
+    professional: data.professional
+  });
+
+  joinRoom(
+    player,
+    room.id,
+    data
+  );
+}
+
+function kickPlayer(host, targetId) {
+  const room = host.room;
+
+  if (!room) {
+    return;
+  }
+
+  if (room.hostId !== host.id) {
+    send(host.ws, "error", {
+      code: "HOST_ONLY",
+      message: "Only the host can kick players."
+    });
+
+    return;
+  }
+
+  const target =
+    room.players.get(
+      String(targetId)
+    );
+
+  if (!target) {
+    send(host.ws, "error", {
+      code: "PLAYER_NOT_FOUND"
+    });
+
+    return;
+  }
+
+  if (target.id === host.id) {
+    send(host.ws, "error", {
+      code: "CANNOT_KICK_HOST"
+    });
+
+    return;
+  }
+
+  send(target.ws, "kicked", {
+    roomId: room.id,
+    reason: "Kicked by host."
+  });
+
+  removeFromRoom(
+    target,
+    "kicked"
+  );
+
+  closePlayer(
+    target,
+    4003,
+    "Kicked"
+  );
+}
+
+function sendInitialRooms(player) {
+  send(player.ws, "rooms", {
+    rooms: Array.from(
+      rooms.values()
+    ).map(publicRoom)
+  });
+}
+
+function broadcastGameState(room) {
+  const players = [];
+
+  for (const p of room.players.values()) {
+    players.push({
+      id: p.id,
+      name: p.name,
+      team: p.team,
+      avatar: p.avatar,
+
+      x: p.x,
+      y: p.y,
+      z: p.z,
+
+      yaw: p.yaw,
+      pitch: p.pitch,
+
+      health: p.health,
+      alive: p.alive,
+      dead: !p.alive
+    });
+  }
+
+  broadcastRoom(room, "state", {
+    players
+  });
+}
+
+function updatePlayerState(player, state) {
+  if (!player.room) {
+    return;
+  }
+
+  const room = player.room;
+
+  const x = Number(state.x);
+  const y = Number(state.y);
+  const z = Number(state.z);
+
+  const yaw = Number(state.yaw);
+  const pitch = Number(state.pitch);
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(z)
+  ) {
+    return;
+  }
+
+  const currentTime = Date.now();
+
+  let dt =
+    (currentTime - player.lastState) /
+    1000;
+
+  dt = Math.max(
+    0.001,
+    Math.min(1, dt)
+  );
+
+  const check = RAFIT.inspectMovement(
+    player.id,
+    {
+      x,
+      y,
+      z,
+
+      lastX: player.x,
+      lastY: player.y,
+      lastZ: player.z,
+
+      dt
+    }
+  );
+
+  if (check.suspicious) {
+    const result = RAFIT.penalize(
+      player.id,
+      100,
+      check.type
+    );
+
+    send(player.ws, "rafit_warning", {
+      type: check.type,
+      rtp: result.rtp,
+      banned: result.banned
+    });
+
+    if (result.banned) {
+      send(player.ws, "rafit_banned", {
+        bannedUntil: result.bannedUntil
+      });
+
+      removeFromRoom(
+        player,
+        "rafit_ban"
+      );
+
+      closePlayer(
+        player,
+        4004,
+        "RAFIT ban"
+      );
+
+      return;
+    }
+
+    /*
+      Do not accept an obviously impossible
+      teleport sample.
+    */
+
+    return;
+  }
+
+  player.x = x;
+  player.y = y;
+  player.z = z;
+
+  if (Number.isFinite(yaw)) {
+    player.yaw = yaw;
+  }
+
+  if (Number.isFinite(pitch)) {
+    player.pitch = pitch;
+  }
+
+  if (
+    typeof state.health === "number"
+  ) {
+    player.health =
+      Math.max(
+        0,
+        Math.min(
+          100,
+          state.health
+        )
+      );
+  }
+
+  if (
+    typeof state.alive === "boolean"
+  ) {
+    player.alive = state.alive;
+  }
+
+  if (
+    typeof state.dead === "boolean"
+  ) {
+    player.alive = !state.dead;
+  }
+
+  if (
+    typeof state.avatar === "string"
+  ) {
+    player.avatar =
+      state.avatar.slice(0, 500000);
+  }
+
+  player.lastState =
+    currentTime;
+
+  if (
+    currentTime -
+      player.lastBroadcast >
+    30
+  ) {
+    player.lastBroadcast =
+      currentTime;
+
+    broadcastGameState(room);
+  }
+}
+
+function handleMessage(player, msg) {
+  if (!msg || !msg.type) {
+    return;
+  }
+
+  switch (msg.type) {
+    case "list_rooms":
+      sendInitialRooms(player);
+      break;
+
+    case "create_room":
+      createRoom(player, msg);
+      break;
+
+    case "join_room":
+      joinRoom(
+        player,
+        msg.roomId || msg.room,
+        msg
+      );
+      break;
+
+    case "leave_room":
+      if (player.room) {
+        removeFromRoom(
+          player,
+          "left"
+        );
+
+        send(
+          player.ws,
+          "left_room"
+        );
+      }
+      break;
+
+    case "kick":
+      kickPlayer(
+        player,
+        msg.targetId
+      );
+      break;
+
+    case "state":
+      updatePlayerState(
+        player,
+        msg.state || msg
+      );
+      break;
+
+    case "input":
+      /*
+        Reserved for future authoritative
+        input simulation.
+      */
+      break;
+
+    case "shot":
+      if (player.room) {
+        broadcastRoom(
+          player.room,
+          "shot",
+          {
+            id: player.id,
+            shot: msg.shot || {}
+          }
+        );
+      }
+      break;
+
+    case "hit":
+      if (player.room) {
+        broadcastRoom(
+          player.room,
+          "damage",
+          {
+            id: player.id,
+            targetId: msg.targetId,
+            damage: Number(msg.damage) || 0
+          }
+        );
+      }
+      break;
+
+    case "chat":
+      if (player.room) {
+        broadcastRoom(
+          player.room,
+          "chat",
+          {
+            id: player.id,
+            name: player.name,
+            text: String(
+              msg.text || ""
+            ).slice(0, 300)
+          }
+        );
+      }
+      break;
+
+    case "ping":
+      send(player.ws, "pong", {
+        time: Date.now()
+      });
+      break;
+
+    default:
+      send(player.ws, "error", {
+        code: "UNKNOWN_MESSAGE",
+        message:
+          "Unknown message type: " +
+          msg.type
+      });
+      break;
+  }
+}
+
+wss.on("connection", ws => {
+  const playerId = id();
 
   const player = {
-    id,
+    id: playerId,
+    ws,
 
-    name: cleanText(
-      data.name || 'Player',
-      CONFIG.maxName
-    ) || 'Player',
+    name: "Player",
+    room: null,
 
-    team,
-
-    slot,
+    team: "ct",
+    avatar: null,
 
     x: 0,
     y: 0,
@@ -458,751 +794,121 @@ function joinRoom(room, ws, data) {
     yaw: 0,
     pitch: 0,
 
-    vx: 0,
-    vy: 0,
-    vz: 0,
-
-    hp: MAX_HP,
+    health: 100,
     alive: true,
 
-    weapon: 'ak47',
-    firing: false,
-    crouch: false,
-    reloading: false,
-
-    avatar:
-      typeof data.avatar === 'string' &&
-      data.avatar.startsWith('data:image/') &&
-      data.avatar.length <= CONFIG.maxAvatar
-        ? data.avatar
-        : null,
-
-    ws,
-
-    roomHost: room.hostId,
-
-    lastInput: 0,
-    lastMove: 0,
-    lastShot: 0,
-    lastShotCast: 0,
-    lastChat: 0
+    lastState: Date.now(),
+    lastBroadcast: 0
   };
 
-  room.players.set(id, player);
-
-  if (!room.hostId) {
-    room.hostId = id;
-    player.roomHost = id;
-  }
-
-  send(ws, {
-    type: 'welcome',
-
-    id,
-
-    roomId: room.id,
-
-    hostId: room.hostId
-  });
-
-  send(ws, {
-    type: 'room_info',
-    room: publicRoom(room)
-  });
-
-  send(ws, {
-    type: 'roster',
-
-    players: [...room.players.values()].map(pubPlayer)
-  });
-
-  send(ws, {
-    type: 'round_start',
-
-    round: room.round.id,
-
-    score: {
-      CT: room.score.CT,
-      T: room.score.T
-    },
-
-    resumed: true
-  });
-
-  broadcast(
-    room,
-    {
-      type: 'join',
-      player: pubPlayer(player)
-    },
-    id
+  clients.set(
+    playerId,
+    player
   );
 
-  broadcastRoomList();
+  RAFIT.getPlayer(
+    player.id,
+    player.name
+  );
 
-  return player;
-}
-
-const httpServer = http.createServer((req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*'
+  send(ws, "connected", {
+    id: player.id,
+    version: "1.0.0"
   });
 
-  res.end(
-    JSON.stringify({
-      name: 'Connections Multiplayer Server',
-      status: 'online',
-      rooms: rooms.size,
-      players: [...rooms.values()]
-        .reduce((sum, room) => sum + room.players.size, 0)
-    })
-  );
-});
+  send(ws, "hello", {
+    id: player.id
+  });
 
-const wss = new WebSocketServer({
-  server: httpServer,
-  maxPayload: CONFIG.maxMessage
-});
+  sendInitialRooms(player);
 
-wss.on('connection', ws => {
-  try {
-    ws._socket.setNoDelay(true);
-  } catch {}
-
-  let room = null;
-  let player = null;
-
-  sendRoomList(ws);
-
-  ws.on('message', raw => {
+  ws.on("message", raw => {
     let msg;
 
     try {
-      msg = JSON.parse(raw.toString());
+      msg = JSON.parse(
+        raw.toString()
+      );
     } catch {
       return;
     }
 
-    if (!msg || typeof msg.type !== 'string') {
-      return;
-    }
-
-    if (msg.type === 'ping') {
-      send(ws, {
-        type: 'pong',
-        t: msg.t
-      });
-
-      return;
-    }
-
-    if (msg.type === 'rooms') {
-      sendRoomList(ws);
-      return;
-    }
-
-    if (msg.type === 'create_room') {
-      if (room) {
-        send(ws, {
-          type: 'error',
-          error: 'already-in-room'
-        });
-
-        return;
-      }
-
-      const newRoom = createRoom({
-        name: msg.name,
-        titleParts: msg.titleParts,
-        ctSlots: msg.ctSlots,
-        tSlots: msg.tSlots
-      });
-
-      if (!newRoom) {
-        send(ws, {
-          type: 'error',
-          error: 'room-limit'
-        });
-
-        return;
-      }
-
-      room = newRoom;
-
-      player = joinRoom(
-        room,
-        ws,
-        {
-          name: msg.playerName,
-          team: msg.team,
-          avatar: msg.avatar
-        }
-      );
-
-      if (!player) {
-        rooms.delete(newRoom.id);
-        room = null;
-        return;
-      }
-
-      send(ws, {
-        type: 'created',
-        room: publicRoom(room)
-      });
-
-      return;
-    }
-
-    if (msg.type === 'join_room') {
-      if (room) {
-        send(ws, {
-          type: 'error',
-          error: 'already-in-room'
-        });
-
-        return;
-      }
-
-      const roomId = String(
-        msg.roomId ||
-        msg.room ||
-        ''
-      );
-
-      const target = rooms.get(roomId);
-
-      if (!target) {
-        send(ws, {
-          type: 'error',
-          error: 'room-not-found'
-        });
-
-        return;
-      }
-
-      room = target;
-
-      player = joinRoom(
-        room,
-        ws,
-        {
-          name: msg.name,
-          team: msg.team,
-          avatar: msg.avatar
-        }
-      );
-
-      if (!player) {
-        room = null;
-      }
-
-      return;
-    }
-
-    if (msg.type === 'leave_room') {
-      if (room && player) {
-        const oldRoom = room;
-        const oldId = player.id;
-
-        room = null;
-        player = null;
-
-        removePlayer(oldRoom, oldId);
-      }
-
-      return;
-    }
-
-    if (!room || !player) {
-      return;
-    }
-
-    if (msg.type === 'kick') {
-      if (player.id !== room.hostId) {
-        send(ws, {
-          type: 'error',
-          error: 'not-host'
-        });
-
-        return;
-      }
-
-      const targetId = Number(msg.targetId);
-
-      if (!Number.isInteger(targetId)) {
-        return;
-      }
-
-      if (targetId === player.id) {
-        return;
-      }
-
-      const target = room.players.get(targetId);
-
-      if (!target) {
-        return;
-      }
-
-      send(target.ws, {
-        type: 'kicked',
-        reason: 'host'
-      });
-
-      const targetRoom = room;
-
-      removePlayer(targetRoom, targetId);
-
-      return;
-    }
-
-    if (msg.type === 'input') {
-      if (!msg.state || typeof msg.state !== 'object') {
-        return;
-      }
-
-      const now = Date.now();
-
-      if (
-        now - player.lastInput <
-        CONFIG.inputGap
-      ) {
-        return;
-      }
-
-      player.lastInput = now;
-
-      const state = msg.state;
-
-      let nx = player.x;
-      let ny = player.y;
-      let nz = player.z;
-
-      if (Number.isFinite(state.x)) nx = state.x;
-      if (Number.isFinite(state.y)) ny = state.y;
-      if (Number.isFinite(state.z)) nz = state.z;
-
-      const dx = nx - player.x;
-      const dy = ny - player.y;
-      const dz = nz - player.z;
-
-      const distance = Math.sqrt(
-        dx * dx +
-        dy * dy +
-        dz * dz
-      );
-
-      const dt = player.lastMove
-        ? Math.max(1, now - player.lastMove) / 1000
-        : 0;
-
-      if (
-        !dt ||
-        distance / dt <= CONFIG.maxSpeed
-      ) {
-        if (dt > 0 && dt < 1) {
-          player.vx = dx / dt;
-          player.vy = dy / dt;
-          player.vz = dz / dt;
-        }
-
-        player.x = nx;
-        player.y = ny;
-        player.z = nz;
-
-        player.lastMove = now;
-      }
-
-      if (Number.isFinite(state.yaw)) {
-        player.yaw = state.yaw;
-      }
-
-      if (Number.isFinite(state.pitch)) {
-        player.pitch = state.pitch;
-      }
-
-      if (typeof state.weapon === 'string') {
-        player.weapon = state.weapon.slice(0, 32);
-      }
-
-      if (typeof state.firing === 'boolean') {
-        player.firing = state.firing;
-      }
-
-      if (typeof state.crouch === 'boolean') {
-        player.crouch = state.crouch;
-      }
-
-      if (typeof state.reloading === 'boolean') {
-        player.reloading = state.reloading;
-      }
-
-      if (state.alive === false && player.alive) {
-        player.alive = false;
-        player.hp = 0;
-
-        broadcast(room, {
-          type: 'damage',
-
-          targetId: player.id,
-
-          hp: 0,
-
-          alive: false,
-
-          by: player.id,
-
-          self: true
-        });
-
-        checkRoundEnd(
-          room,
-          'elimination'
-        );
-      }
-
-      return;
-    }
-
-    if (msg.type === 'shot') {
-      const now = Date.now();
-
-      if (
-        now - player.lastShotCast <
-        CONFIG.shotCastCooldown
-      ) {
-        return;
-      }
-
-      player.lastShotCast = now;
-
-      if (!msg.origin || !msg.dir) {
-        return;
-      }
-
-      broadcast(
-        room,
-        {
-          type: 'shot',
-
-          by: player.id,
-
-          weapon:
-            String(
-              msg.weapon ||
-              player.weapon ||
-              ''
-            ).slice(0, 24),
-
-          origin: {
-            x: Number(msg.origin.x) || 0,
-            y: Number(msg.origin.y) || 0,
-            z: Number(msg.origin.z) || 0
-          },
-
-          dir: {
-            x: Number(msg.dir.x) || 0,
-            y: Number(msg.dir.y) || 0,
-            z: Number(msg.dir.z) || 0
-          },
-
-          t: now
-        },
-        player.id
-      );
-
-      return;
-    }
-
-    if (msg.type === 'hit') {
-      const targetId = Number(msg.targetId);
-
-      const victim =
-        room.players.get(targetId);
-
-      if (!victim) return;
-
-      if (!victim.alive) return;
-
-      if (!player.alive) return;
-
-      if (victim.team === player.team) {
-        return;
-      }
-
-      const dx = victim.x - player.x;
-      const dy = victim.y - player.y;
-      const dz = victim.z - player.z;
-
-      if (
-        dx * dx +
-        dy * dy +
-        dz * dz >
-        CONFIG.shotRange *
-        CONFIG.shotRange
-      ) {
-        return;
-      }
-
-      const now = Date.now();
-
-      if (
-        now - player.lastShot <
-        CONFIG.shotCooldown
-      ) {
-        return;
-      }
-
-      player.lastShot = now;
-
-      const damage = Math.max(
-        1,
-        Math.min(
-          150,
-          Number(msg.damage) || 1
-        )
-      );
-
-      victim.hp -= damage;
-
-      if (victim.hp <= 0) {
-        victim.hp = 0;
-        victim.alive = false;
-      }
-
-      broadcast(room, {
-        type: 'damage',
-
-        targetId: victim.id,
-
-        hp: victim.hp,
-
-        alive: victim.alive,
-
-        by: player.id,
-
-        head: !!msg.head,
-
-        weapon: player.weapon
-      });
-
-      if (!victim.alive) {
-        checkRoundEnd(
-          room,
-          'elimination'
-        );
-      }
-
-      return;
-    }
-
-    if (msg.type === 'respawn') {
-      player.hp = MAX_HP;
-      player.alive = true;
-
-      broadcast(room, {
-        type: 'damage',
-
-        targetId: player.id,
-
-        hp: MAX_HP,
-
-        alive: true,
-
-        by: player.id,
-
-        respawn: true
-      });
-
-      return;
-    }
-
-    if (
-      msg.type === 'switch' &&
-      typeof msg.team === 'string'
-    ) {
-      const team =
-        msg.team === 'T'
-          ? 'T'
-          : 'CT';
-
-      if (team === player.team) {
-        return;
-      }
-
-      const slot =
-        freeSlot(room, team);
-
-      if (slot < 0) {
-        send(ws, {
-          type: 'error',
-          error: 'team-full'
-        });
-
-        return;
-      }
-
-      player.team = team;
-      player.slot = slot;
-
-      broadcast(room, {
-        type: 'move',
-
-        player: pubPlayer(player)
-      });
-
-      checkRoundEnd(
-        room,
-        'switch'
-      );
-
-      return;
-    }
-
-    if (
-      msg.type === 'chat' &&
-      typeof msg.text === 'string'
-    ) {
-      const now = Date.now();
-
-      if (
-        now - player.lastChat <
-        CONFIG.chatCooldown
-      ) {
-        return;
-      }
-
-      player.lastChat = now;
-
-      const text =
-        cleanText(
-          msg.text,
-          CONFIG.maxChat
-        );
-
-      if (!text) return;
-
-      const scope =
-        msg.scope === 'team'
-          ? 'team'
-          : 'all';
-
-      const packet = {
-        type: 'chat',
-
-        from: player.id,
-
-        name: player.name,
-
-        team: player.team,
-
-        scope,
-
-        text,
-
-        t: now
-      };
-
-      if (scope === 'team') {
-        for (const other of room.players.values()) {
-          if (other.team === player.team) {
-            send(other.ws, packet);
-          }
-        }
-      } else {
-        broadcast(room, packet);
-      }
-
-      return;
-    }
-  });
-
-  ws.on('close', () => {
-    if (!room || !player) {
-      return;
-    }
-
-    const oldRoom = room;
-    const oldId = player.id;
-
-    room = null;
-    player = null;
-
-    removePlayer(
-      oldRoom,
-      oldId
+    handleMessage(
+      player,
+      msg
     );
   });
 
-  ws.on('error', () => {});
+  ws.on("close", () => {
+    if (player.room) {
+      removeFromRoom(
+        player,
+        "disconnect"
+      );
+    }
+
+    clients.delete(
+      player.id
+    );
+
+    broadcastRooms();
+  });
+
+  ws.on("error", () => {
+    try {
+      ws.close();
+    } catch {}
+  });
 });
 
 setInterval(() => {
-  const now = Date.now();
-
-  for (const room of rooms.values()) {
-    if (!room.players.size) {
-      continue;
-    }
-
-    room.tick++;
-
-    const snapshot = {
-      type: 'snap',
-
-      tick: room.tick,
-
-      t: now,
-
-      round: room.round.id,
-
-      score: {
-        CT: room.score.CT,
-        T: room.score.T
-      },
-
-      players:
-        [...room.players.values()]
-          .map(pubPlayer)
-    };
-
-    broadcast(room, snapshot);
+  for (const player of clients.values()) {
+    send(player.ws, "ping", {
+      time: Date.now()
+    });
   }
-}, CONFIG.tickMs);
+}, 15000);
 
-httpServer.listen(
-  CONFIG.port,
-  '0.0.0.0',
+setInterval(() => {
+  for (const room of rooms.values()) {
+    if (room.players.size > 0) {
+      broadcastGameState(room);
+    }
+  }
+}, 50);
+
+server.listen(
+  PORT,
+  "0.0.0.0",
   () => {
-    console.log('');
-    console.log('====================================');
-    console.log(' Connections Multiplayer Server');
-    console.log('====================================');
+    console.log("");
     console.log(
-      'HTTP : http://0.0.0.0:' +
-      CONFIG.port
+      "======================================"
     );
     console.log(
-      'WS   : ws://0.0.0.0:' +
-      CONFIG.port
+      " Connections Multiplayer Server"
     );
     console.log(
-      'Tick : ' +
-      CONFIG.tickMs +
-      'ms'
-    );
-    console.log('');
-    console.log(
-      'Start with: node server.js'
+      "======================================"
     );
     console.log(
-      'Cloudflare Tunnel should point to:'
+      "[SERVER] HTTP : " + PORT
     );
     console.log(
-      'http://localhost:' +
-      CONFIG.port
+      "[SERVER] WS   : ws://0.0.0.0:" + PORT
     );
-    console.log('====================================');
-    console.log('');
+    console.log(
+      "[SERVER] RAFIT enabled"
+    );
+    console.log(
+      "[SERVER] No default room"
+    );
+    console.log(
+      "[SERVER] ONLINE"
+    );
+    console.log(
+      "======================================"
+    );
+    console.log("");
   }
 );
