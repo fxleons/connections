@@ -1016,31 +1016,19 @@
     );
   }
 
-  function clamp(
-    value,
+function clamp(
+  value,
+  min,
+  max
+) {
+  return Math.max(
     min,
-    max
-  ) {
-    return Math.max(
-      min,
-      Math.min(
-        max,
-        value
-      )
-    );
-  }
-    try {
-      if (
-        typeof bot.setRotation ===
-        "function"
-      ) {
-        bot.setRotation(
-          yaw,
-          pitch
-        );
-      }
-    } catch {}
-  }
+    Math.min(
+      max,
+      value
+    )
+  );
+}
 
   /* =========================================================
      REAL BOT SYSTEM
