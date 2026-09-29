@@ -2870,6 +2870,676 @@
       );
     }
   }
+  /* =========================================================
+   MATCH SCANNER
+========================================================= */
+
+function findBotConstructor() {
+  try {
+    if (State.botCtor) return State.botCtor;
+
+    const g = getGame();
+    const mgr = getBotManager();
+    const bots = getBotArray();
+
+    if (!g || !mgr || !Array.isArray(bots)) {
+      return null;
+    }
+
+    const found = bots.find(
+      b =>
+        b &&
+        b.team !== undefined &&
+        typeof b.constructor === "function"
+    );
+
+    if (found) {
+      State.botCtor = found.constructor;
+
+      log(
+        "Bot constructor found:",
+        State.botCtor.name || "(anonymous)"
+      );
+
+      return State.botCtor;
+    }
+  } catch (e) {
+    warn("findBotConstructor failed:", e);
+  }
+
+  return null;
+}
+
+function destroyGameBot(bot) {
+  if (!bot) return;
+
+  try {
+    bot.alive = false;
+  } catch (e) {}
+
+  try {
+    bot.dead = true;
+  } catch (e) {}
+
+  try {
+    if (bot.cs2Agent && bot.cs2Agent.root) {
+      const root = bot.cs2Agent.root;
+
+      if (root.parent) {
+        root.parent.remove(root);
+      }
+    }
+  } catch (e) {}
+
+  try {
+    if (typeof bot.destroy === "function") {
+      bot.destroy();
+    }
+  } catch (e) {}
+}
+
+function removeAllOriginalBots() {
+  try {
+    const arr = getBotArray();
+
+    if (!arr) {
+      warn("Could not get bot array.");
+      return 0;
+    }
+
+    const originals = arr.slice();
+
+    State.originalBots = originals;
+
+    for (const bot of originals) {
+      destroyGameBot(bot);
+
+      const index = arr.indexOf(bot);
+
+      if (index >= 0) {
+        arr.splice(index, 1);
+      }
+    }
+
+    State.botPool = [];
+
+    log(
+      "Removed original bots:",
+      originals.length
+    );
+
+    return originals.length;
+  } catch (e) {
+    warn(
+      "removeAllOriginalBots failed:",
+      e
+    );
+
+    return 0;
+  }
+}
+
+function disableRemoteAI(bot) {
+  if (!bot) return;
+
+  const possibleObjects = [
+    bot,
+    bot.ai,
+    bot.agent,
+    bot.cs2Agent,
+    bot.controller
+  ];
+
+  for (const obj of possibleObjects) {
+    if (!obj) continue;
+
+    try {
+      if ("enabled" in obj) {
+        obj.enabled = false;
+      }
+    } catch (e) {}
+
+    try {
+      if ("active" in obj) {
+        obj.active = false;
+      }
+    } catch (e) {}
+
+    try {
+      if ("isAI" in obj) {
+        obj.isAI = false;
+      }
+    } catch (e) {}
+
+    try {
+      if ("canThink" in obj) {
+        obj.canThink = false;
+      }
+    } catch (e) {}
+
+    try {
+      if ("thinking" in obj) {
+        obj.thinking = false;
+      }
+    } catch (e) {}
+  }
+}
+
+function spawnRemoteBot(remote) {
+  try {
+    if (!remote) return null;
+
+    const g = getGame();
+
+    if (!g) {
+      warn("Cannot spawn remote bot: game missing.");
+      return null;
+    }
+
+    const mgr = getBotManager();
+    const arr = getBotArray();
+    const ctor = findBotConstructor();
+
+    if (!mgr || !arr || !ctor) {
+      warn(
+        "Cannot spawn remote bot:",
+        {
+          manager: !!mgr,
+          array: !!arr,
+          ctor: !!ctor
+        }
+      );
+
+      return null;
+    }
+
+    const team =
+      remote.team ||
+      "CT";
+
+    const name =
+      remote.name ||
+      "Player";
+
+    let bot = null;
+
+    try {
+      bot = new ctor(
+        g,
+        team,
+        name,
+        "normal"
+      );
+    } catch (e) {
+      warn(
+        "Remote bot constructor failed:",
+        e
+      );
+      return null;
+    }
+
+    if (!bot) return null;
+
+    try {
+      arr.push(bot);
+    } catch (e) {
+      warn(
+        "Could not add remote bot to manager:",
+        e
+      );
+    }
+
+    try {
+      if (typeof bot.spawn === "function") {
+        bot.spawn();
+      }
+    } catch (e) {
+      warn(
+        "Remote bot spawn failed:",
+        e
+      );
+    }
+
+    disableRemoteAI(bot);
+
+    remote.bot = bot;
+
+    applyBotData(
+      bot,
+      remote
+    );
+
+    try {
+      rebuildAvatars();
+    } catch (e) {}
+
+    log(
+      "Created remote bot:",
+      remote.id,
+      remote.name
+    );
+
+    return bot;
+  } catch (e) {
+    warn(
+      "spawnRemoteBot failed:",
+      e
+    );
+
+    return null;
+  }
+}
+
+function applyBotData(bot, remote) {
+  if (!bot || !remote) return;
+
+  try {
+    bot.name =
+      remote.name ||
+      bot.name ||
+      "Player";
+  } catch (e) {}
+
+  try {
+    bot.playerName =
+      remote.name ||
+      bot.playerName ||
+      "Player";
+  } catch (e) {}
+
+  try {
+    bot.team =
+      remote.team ||
+      bot.team ||
+      "CT";
+  } catch (e) {}
+
+  try {
+    bot.health =
+      typeof remote.health === "number"
+        ? remote.health
+        : 100;
+  } catch (e) {}
+
+  try {
+    bot.alive =
+      remote.alive !== false;
+  } catch (e) {}
+
+  try {
+    bot.dead =
+      remote.dead === true;
+  } catch (e) {}
+
+  try {
+    bot.isPlayer = true;
+  } catch (e) {}
+
+  try {
+    bot.avatar =
+      remote.avatar || null;
+  } catch (e) {}
+
+  try {
+    bot.avatarUrl =
+      remote.avatar || null;
+  } catch (e) {}
+
+  try {
+    setPosition(
+      bot,
+      remote.x,
+      remote.y,
+      remote.z
+    );
+  } catch (e) {}
+
+  try {
+    setRotation(
+      bot,
+      remote.yaw,
+      remote.pitch
+    );
+  } catch (e) {}
+
+  disableRemoteAI(bot);
+}
+
+function updateRemoteBots() {
+  try {
+    for (const id in State.remoteBots) {
+      const remote =
+        State.remoteBots[id];
+
+      if (!remote) continue;
+
+      if (
+        remote.dead ||
+        remote.alive === false
+      ) {
+        if (remote.bot) {
+          destroyGameBot(
+            remote.bot
+          );
+
+          const arr =
+            getBotArray();
+
+          if (arr) {
+            const index =
+              arr.indexOf(
+                remote.bot
+              );
+
+            if (index >= 0) {
+              arr.splice(
+                index,
+                1
+              );
+            }
+          }
+
+          remote.bot = null;
+        }
+
+        continue;
+      }
+
+      if (!remote.bot) {
+        spawnRemoteBot(remote);
+        continue;
+      }
+
+      applyBotData(
+        remote.bot,
+        remote
+      );
+    }
+
+    rebuildAvatars();
+  } catch (e) {
+    warn(
+      "updateRemoteBots failed:",
+      e
+    );
+  }
+}
+
+function purgeNonRemoteBots() {
+  try {
+    if (!State.confirmedMatch) return;
+
+    const arr =
+      getBotArray();
+
+    if (!arr) return;
+
+    const allowed =
+      new Set();
+
+    for (const id in State.remoteBots) {
+      const remote =
+        State.remoteBots[id];
+
+      if (
+        remote &&
+        remote.bot
+      ) {
+        allowed.add(
+          remote.bot
+        );
+      }
+    }
+
+    for (
+      let i = arr.length - 1;
+      i >= 0;
+      i--
+    ) {
+      const bot = arr[i];
+
+      if (!bot) {
+        arr.splice(i, 1);
+        continue;
+      }
+
+      if (!allowed.has(bot)) {
+        destroyGameBot(bot);
+        arr.splice(i, 1);
+      }
+    }
+  } catch (e) {
+    warn(
+      "purgeNonRemoteBots failed:",
+      e
+    );
+  }
+}
+
+function removeRemote(id) {
+  try {
+    const remote =
+      State.remoteBots[id];
+
+    if (!remote) return;
+
+    if (remote.bot) {
+      const bot =
+        remote.bot;
+
+      destroyGameBot(bot);
+
+      const arr =
+        getBotArray();
+
+      if (arr) {
+        const index =
+          arr.indexOf(bot);
+
+        if (index >= 0) {
+          arr.splice(
+            index,
+            1
+          );
+        }
+      }
+
+      remote.bot = null;
+    }
+
+    delete State.remoteBots[id];
+
+    try {
+      rebuildAvatars();
+    } catch (e) {}
+  } catch (e) {
+    warn(
+      "removeRemote failed:",
+      e
+    );
+  }
+}
+
+function clearRemoteBots() {
+  try {
+    for (const id in State.remoteBots) {
+      const remote =
+        State.remoteBots[id];
+
+      if (
+        remote &&
+        remote.bot
+      ) {
+        destroyGameBot(
+          remote.bot
+        );
+
+        const arr =
+          getBotArray();
+
+        if (arr) {
+          const index =
+            arr.indexOf(
+              remote.bot
+            );
+
+          if (index >= 0) {
+            arr.splice(
+              index,
+              1
+            );
+          }
+        }
+      }
+    }
+  } catch (e) {
+    warn(
+      "clearRemoteBots failed:",
+      e
+    );
+  }
+
+  State.remoteBots = {};
+}
+
+function rebuildAvatars() {
+  try {
+    const g = getGame();
+
+    if (!g) return;
+
+    const hud = g.hud;
+
+    if (
+      hud &&
+      typeof hud.buildAvatars === "function"
+    ) {
+      hud.buildAvatars();
+    }
+  } catch (e) {}
+}
+
+function confirmMatch() {
+  if (!State.joinedRoom) {
+    setStatus(
+      "Join a room first."
+    );
+    return;
+  }
+
+  if (!isInsideMatch()) {
+    setStatus(
+      "You must be inside a real match first."
+    );
+    return;
+  }
+
+  const mgr =
+    getBotManager();
+
+  const arr =
+    getBotArray();
+
+  if (!mgr || !arr) {
+    setStatus(
+      "Bot manager not found."
+    );
+
+    warn(
+      "window.game:",
+      getGame()
+    );
+
+    return;
+  }
+
+  log(
+    "Match detected. Scanning bot manager..."
+  );
+
+  /*
+   * VERY IMPORTANT:
+   *
+   * Find the real constructor BEFORE
+   * deleting the original bots.
+   */
+  const ctor =
+    findBotConstructor();
+
+  if (!ctor) {
+    setStatus(
+      "Could not find bot constructor."
+    );
+
+    return;
+  }
+
+  State.botManager =
+    mgr;
+
+  /*
+   * Remove the original game bots.
+   */
+  const removed =
+    removeAllOriginalBots();
+
+  State.confirmedMatch = true;
+
+  setStatus(
+    "Match confirmed. Multiplayer ready."
+  );
+
+  updateScanUI();
+
+  startStateLoop();
+
+  log(
+    "Bot constructor:",
+    ctor.name || "(anonymous)"
+  );
+
+  log(
+    "Original bots removed:",
+    removed
+  );
+
+  log(
+    "Connections multiplayer ready."
+  );
+
+  rebuildAvatars();
+}
+
+function monitorMatch() {
+  if (
+    State.confirmedMatch &&
+    !isInsideMatch()
+  ) {
+    State.confirmedMatch =
+      false;
+
+    stopStateLoop();
+
+    clearRemoteBots();
+
+    State.originalBots = [];
+    State.botPool = [];
+    State.botManager = null;
+    State.botCtor = null;
+
+    updateScanUI();
+
+    return;
+  }
+
+  if (
+    State.confirmedMatch
+  ) {
+    updateRemoteBots();
+    purgeNonRemoteBots();
+  }
+}
+
 
 /* =========================================================
    CHAT - IN GAME ONLY
