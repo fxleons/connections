@@ -1,3 +1,4 @@
+```javascript
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
@@ -875,7 +876,8 @@
     ];
 
     for (
-      const manager of candidates
+      const manager of
+      candidates
     ) {
       if (
         manager &&
@@ -908,7 +910,8 @@
     ];
 
     for (
-      const c of candidates
+      const c of
+      candidates
     ) {
       if (
         typeof c ===
@@ -2079,6 +2082,166 @@
     }
   }
 
+  function makePanelDraggable(
+    panel,
+    handle
+  ) {
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    const stopDrag = () => {
+      if (!dragging) {
+        return;
+      }
+
+      dragging = false;
+
+      document.body.style.userSelect =
+        "";
+
+      document.removeEventListener(
+        "mousemove",
+        onMouseMove
+      );
+
+      document.removeEventListener(
+        "mouseup",
+        stopDrag
+      );
+    };
+
+    const onMouseMove = event => {
+      if (!dragging) {
+        return;
+      }
+
+      const dx =
+        event.clientX - startX;
+
+      const dy =
+        event.clientY - startY;
+
+      let left =
+        startLeft + dx;
+
+      let top =
+        startTop + dy;
+
+      const rect =
+        panel.getBoundingClientRect();
+
+      const margin = 8;
+
+      const maxLeft =
+        window.innerWidth -
+        rect.width -
+        margin;
+
+      const maxTop =
+        window.innerHeight -
+        rect.height -
+        margin;
+
+      left =
+        Math.max(
+          margin,
+          Math.min(
+            left,
+            Math.max(
+              margin,
+              maxLeft
+            )
+          )
+        );
+
+      top =
+        Math.max(
+          margin,
+          Math.min(
+            top,
+            Math.max(
+              margin,
+              maxTop
+            )
+          )
+        );
+
+      panel.style.left =
+        `${left}px`;
+
+      panel.style.top =
+        `${top}px`;
+    };
+
+    handle.addEventListener(
+      "mousedown",
+      event => {
+        if (
+          event.button !== 0
+        ) {
+          return;
+        }
+
+        if (
+          event.target.closest(
+            "button, input, textarea, select, a"
+          )
+        ) {
+          return;
+        }
+
+        const rect =
+          panel.getBoundingClientRect();
+
+        panel.style.transform =
+          "none";
+
+        panel.style.left =
+          `${rect.left}px`;
+
+        panel.style.top =
+          `${rect.top}px`;
+
+        startX =
+          event.clientX;
+
+        startY =
+          event.clientY;
+
+        startLeft =
+          rect.left;
+
+        startTop =
+          rect.top;
+
+        dragging = true;
+
+        document.body.style.userSelect =
+          "none";
+
+        document.addEventListener(
+          "mousemove",
+          onMouseMove
+        );
+
+        document.addEventListener(
+          "mouseup",
+          stopDrag
+        );
+
+        event.preventDefault();
+      }
+    );
+
+    window.addEventListener(
+      "blur",
+      stopDrag
+    );
+  }
+
   function buildUI() {
     GM_addStyle(`
       #connections-panel {
@@ -2110,6 +2273,12 @@
         align-items: center;
         gap: 12px;
         margin-bottom: 15px;
+        cursor: grab;
+        user-select: none;
+      }
+
+      .conn-header:active {
+        cursor: grabbing;
       }
 
       .conn-logo {
@@ -2117,6 +2286,7 @@
         height: 38px;
         object-fit: contain;
         border-radius: 8px;
+        pointer-events: none;
       }
 
       .conn-title {
@@ -2815,6 +2985,11 @@
     State.UI.professional =
       pro;
 
+    makePanelDraggable(
+      panel,
+      header
+    );
+
     addSegment(
       "MY SERVER",
       "#ff3030"
@@ -3024,3 +3199,4 @@
     boot();
   }
 })();
+```
