@@ -1,4041 +1,2661 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.2.0
+// @version      1.0.0
 // @description  clutcher.io multiplayer
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
 // @grant        unsafeWindow
 // @grant        GM_addStyle
 // @connect      able-vpn-star-constitutional.trycloudflare.com
+// @run-at       document-start
 // ==/UserScript==
 
 (() => {
-    "use strict";
+  "use strict";
 
-    const VERSION = "1.2.0";
+  const VERSION = "1.0.0";
+  const WS_URL = "wss://able-vpn-star-constitutional.trycloudflare.com";
+  const RAFIT_LOGO =
+    "https://raw.githubusercontent.com/fxleons/connections/main/rafit_logo.png";
 
-    const WS_URL =
-        "wss://able-vpn-star-constitutional.trycloudflare.com";
+  const W = unsafeWindow || window;
 
-    const RAFIT_LOGO =
-        "https://raw.githubusercontent.com/fxleons/connections/main/rafit_logo.png";
+  const State = {
+    ws: null,
+    connected: false,
+    connecting: false,
 
-    const State = {
-        ws: null,
-        connected: false,
-        connecting: false,
+    id: null,
+    name: localStorage.getItem("connections_name") || "Player",
+    nameColor: localStorage.getItem("connections_name_color") || "#7289da",
 
-        id: null,
+    room: null,
+    roomData: null,
+    rooms: [],
 
-        name:
-            localStorage.getItem("connections_name") ||
-            "Player",
+    joinedRoom: false,
+    confirmedMatch: false,
 
-        room: null,
-        rooms: [],
-        roomData: null,
+    game: null,
+    botManager: null,
 
-        joinedRoom: false,
-        leavingRoom: false,
+    originalBots: [],
+    botPool: [],
 
-        confirmedMatch: false,
+    remotes: new Map(),
 
-        game: null,
-        botManager: null,
-        botArrayKey: "bots",
+    localAvatar: localStorage.getItem("pp-avatar") || null,
 
-        originalBots: [],
-        botPool: [],
+    UI: {},
 
-        remotes: new Map(),
+    stateTimer: null,
+    monitorTimer: null,
 
-        dead: false,
+    chat: {
+      open: false,
+      input: null,
+      messages: []
+    },
 
-        localAvatar:
-            localStorage.getItem("pp-avatar") ||
-            null,
+    rtp: Number(localStorage.getItem("connections_rtp") || 0),
+    rafit: true
+  };
 
-        lastPosition: null,
+  const log = (...a) =>
+    console.log("[Connections]", ...a);
 
-        stateTimer: null,
-        monitorTimer: null,
+  const warn = (...a) =>
+    console.warn("[Connections]", ...a);
 
-        UI: {},
+  const err = (...a) =>
+    console.error("[Connections]", ...a);
 
-        chat: {
-            open: false,
-            lobbyOpen: false,
-            messages: [],
-            maxMessages: 80,
-            overlayTimers: new Map()
-        }
-    };
+  function saveProfile() {
+    try {
+      localStorage.setItem("connections_name", State.name);
+      localStorage.setItem(
+        "connections_name_color",
+        State.nameColor
+      );
+    } catch {}
+  }
 
-    const log = (...args) =>
-        console.log("[Connections]", ...args);
+  /* =========================================================
+     GAME
+  ========================================================= */
 
-    const warn = (...args) =>
-        console.warn("[Connections]", ...args);
-
-    const error = (...args) =>
-        console.error("[Connections]", ...args);
-
-    /* =========================================================
-       GAME
-    ========================================================= */
-
-    function getGame() {
-        if (
-            State.game &&
-            typeof State.game === "object"
-        ) {
-            return State.game;
-        }
-
-        const w =
-            typeof unsafeWindow !== "undefined"
-                ? unsafeWindow
-                : window;
-
-        const candidates = [
-            w.game,
-            w.Game,
-            w.clutcher,
-            w.__game,
-            w.app,
-            w.engine
-        ];
-
-        for (const game of candidates) {
-            if (
-                game &&
-                typeof game === "object"
-            ) {
-                State.game = game;
-
-                log(
-                    "Game found:",
-                    game
-                );
-
-                return game;
-            }
-        }
-
-        return null;
+  function getGame() {
+    if (State.game && typeof State.game === "object") {
+      return State.game;
     }
 
-    function getLocalPlayer() {
-        const game = getGame();
+    const candidates = [
+      W.game,
+      W.Game,
+      W.clutcher,
+      W.__game,
+      W.app,
+      W.engine
+    ];
 
-        if (!game) {
-            return null;
-        }
-
-        const candidates = [
-            game.player,
-            game.localPlayer,
-            game.me,
-            game.character,
-            game.local,
-            game.myPlayer,
-            game.playerEntity
-        ];
-
-        for (const player of candidates) {
-            if (
-                player &&
-                typeof player === "object"
-            ) {
-                return player;
-            }
-        }
-
-        return null;
+    for (const g of candidates) {
+      if (g && typeof g === "object") {
+        State.game = g;
+        return g;
+      }
     }
 
-    function isInsideMatch() {
-        const game = getGame();
+    return null;
+  }
 
-        if (!game) {
-            return false;
-        }
+  function getLocalPlayer() {
+    const g = getGame();
 
-        try {
-            if (
-                typeof game.isInMatch ===
-                "function"
-            ) {
-                if (game.isInMatch()) {
-                    return true;
-                }
-            }
-        } catch {}
+    if (!g) return null;
 
-        if (
-            game.gameState ===
-            "playing"
-        ) {
-            return true;
-        }
+    const players = [
+      g.player,
+      g.localPlayer,
+      g.me,
+      g.character,
+      g.local,
+      g.myPlayer,
+      g.playerEntity
+    ];
 
-        if (
-            game.state ===
-            "playing"
-        ) {
-            return true;
-        }
-
-        if (
-            game.inMatch === true
-        ) {
-            return true;
-        }
-
-        if (
-            game.match &&
-            (
-                game.match.started === true ||
-                game.match.isStarted === true
-            )
-        ) {
-            return true;
-        }
-
-        return false;
+    for (const p of players) {
+      if (p && typeof p === "object") {
+        return p;
+      }
     }
 
-    function positionOf(obj) {
-        if (!obj) {
-            return {
-                x: 0,
-                y: 0,
-                z: 0
-            };
-        }
+    return null;
+  }
 
-        const p =
-            obj.position ||
-            obj.pos ||
-            obj.transform?.position ||
-            obj.root?.position ||
-            obj.cs2Agent?.root?.position;
+  function isInsideMatch() {
+    const g = getGame();
 
-        if (p) {
-            return {
-                x: Number(p.x) || 0,
-                y: Number(p.y) || 0,
-                z: Number(p.z) || 0
-            };
-        }
+    if (!g) return false;
 
-        return {
-            x: Number(obj.x) || 0,
-            y: Number(obj.y) || 0,
-            z: Number(obj.z) || 0
-        };
-    }
-
-    function rotationOf(obj) {
-        if (!obj) {
-            return {
-                yaw: 0,
-                pitch: 0
-            };
-        }
-
-        const r =
-            obj.rotation ||
-            obj.eulerAngles ||
-            obj.transform?.rotation ||
-            obj.root?.rotation ||
-            obj.cs2Agent?.root?.rotation;
-
-        if (r) {
-            return {
-                yaw: Number(r.y) || 0,
-                pitch: Number(r.x) || 0
-            };
-        }
-
-        return {
-            yaw: Number(obj.yaw) || 0,
-            pitch: Number(obj.pitch) || 0
-        };
-    }
-
-    function getAlive(player) {
-        if (!player) {
-            return !State.dead;
-        }
-
-        if (
-            typeof player.alive ===
-            "boolean"
-        ) {
-            return player.alive;
-        }
-
-        if (
-            typeof player.isAlive ===
-            "boolean"
-        ) {
-            return player.isAlive;
-        }
-
-        if (
-            typeof player.dead ===
-            "boolean"
-        ) {
-            return !player.dead;
-        }
-
-        if (
-            typeof player.health ===
-            "number"
-        ) {
-            return player.health > 0;
-        }
-
+    try {
+      if (
+        typeof g.isInMatch === "function" &&
+        g.isInMatch()
+      ) {
         return true;
+      }
+    } catch {}
+
+    if (g.gameState === "playing") return true;
+    if (g.state === "playing") return true;
+    if (g.inMatch === true) return true;
+
+    if (
+      g.match &&
+      (
+        g.match.isStarted === true ||
+        g.match.started === true
+      )
+    ) {
+      return true;
     }
 
-    /* =========================================================
-       NETWORK
-    ========================================================= */
+    return false;
+  }
 
-    function NetworkSend(type, data = {}) {
-        if (
-            !State.ws ||
-            State.ws.readyState !==
-            WebSocket.OPEN
-        ) {
-            return false;
+  function getBotManager() {
+    if (
+      State.botManager &&
+      typeof State.botManager === "object"
+    ) {
+      return State.botManager;
+    }
+
+    const g = getGame();
+
+    if (!g) return null;
+
+    const manager =
+      g.botMgr ||
+      g.botManager ||
+      g.bots ||
+      g.ai ||
+      g.botSystem ||
+      g.enemyManager;
+
+    if (manager && typeof manager === "object") {
+      State.botManager = manager;
+      return manager;
+    }
+
+    return null;
+  }
+
+  function getBotArray() {
+    const mgr = getBotManager();
+
+    if (!mgr) return null;
+
+    if (Array.isArray(mgr.bots)) {
+      return mgr.bots;
+    }
+
+    if (Array.isArray(mgr.agents)) {
+      return mgr.agents;
+    }
+
+    if (Array.isArray(mgr.entities)) {
+      return mgr.entities;
+    }
+
+    if (Array.isArray(mgr.players)) {
+      return mgr.players;
+    }
+
+    return null;
+  }
+
+  function positionOf(obj) {
+    if (!obj) {
+      return { x: 0, y: 0, z: 0 };
+    }
+
+    const p =
+      obj.position ||
+      obj.pos ||
+      obj.transform?.position ||
+      obj.root?.position ||
+      obj.cs2Agent?.root?.position;
+
+    if (p) {
+      return {
+        x: Number(p.x) || 0,
+        y: Number(p.y) || 0,
+        z: Number(p.z) || 0
+      };
+    }
+
+    return {
+      x: Number(obj.x) || 0,
+      y: Number(obj.y) || 0,
+      z: Number(obj.z) || 0
+    };
+  }
+
+  function rotationOf(obj) {
+    if (!obj) {
+      return { yaw: 0, pitch: 0 };
+    }
+
+    const r =
+      obj.rotation ||
+      obj.eulerAngles ||
+      obj.transform?.rotation ||
+      obj.root?.rotation ||
+      obj.cs2Agent?.root?.rotation;
+
+    if (r) {
+      return {
+        yaw: Number(r.y) || 0,
+        pitch: Number(r.x) || 0
+      };
+    }
+
+    return {
+      yaw: Number(obj.yaw) || 0,
+      pitch: Number(obj.pitch) || 0
+    };
+  }
+
+  function setPosition(bot, x, y, z) {
+    if (!bot) return;
+
+    const p = { x, y, z };
+
+    try {
+      if (bot.position) {
+        bot.position.x = x;
+        bot.position.y = y;
+        bot.position.z = z;
+      }
+    } catch {}
+
+    try {
+      if (bot.pos) {
+        bot.pos.x = x;
+        bot.pos.y = y;
+        bot.pos.z = z;
+      }
+    } catch {}
+
+    try {
+      if (bot.transform?.position) {
+        bot.transform.position.x = x;
+        bot.transform.position.y = y;
+        bot.transform.position.z = z;
+      }
+    } catch {}
+
+    try {
+      if (bot.root?.position) {
+        bot.root.position.x = x;
+        bot.root.position.y = y;
+        bot.root.position.z = z;
+      }
+    } catch {}
+
+    try {
+      if (bot.cs2Agent?.root?.position) {
+        bot.cs2Agent.root.position.x = x;
+        bot.cs2Agent.root.position.y = y;
+        bot.cs2Agent.root.position.z = z;
+      }
+    } catch {}
+
+    try {
+      if (typeof bot.setPosition === "function") {
+        bot.setPosition(p);
+      }
+    } catch {}
+  }
+
+  function setRotation(bot, yaw, pitch) {
+    if (!bot) return;
+
+    try {
+      if (bot.rotation) {
+        bot.rotation.y = yaw;
+        bot.rotation.x = pitch;
+      }
+    } catch {}
+
+    try {
+      if (bot.eulerAngles) {
+        bot.eulerAngles.y = yaw;
+        bot.eulerAngles.x = pitch;
+      }
+    } catch {}
+
+    try {
+      if (bot.transform?.rotation) {
+        bot.transform.rotation.y = yaw;
+        bot.transform.rotation.x = pitch;
+      }
+    } catch {}
+
+    try {
+      if (bot.root?.rotation) {
+        bot.root.rotation.y = yaw;
+        bot.root.rotation.x = pitch;
+      }
+    } catch {}
+
+    try {
+      if (typeof bot.setRotation === "function") {
+        bot.setRotation(yaw, pitch);
+      }
+    } catch {}
+  }
+
+  function hideBot(bot) {
+    if (!bot) return;
+
+    try { bot.visible = false; } catch {}
+    try { bot.enabled = false; } catch {}
+    try { bot.isPlayer = false; } catch {}
+
+    try {
+      if (bot.gameObject) {
+        bot.gameObject.active = false;
+      }
+    } catch {}
+
+    try {
+      if (bot.root) {
+        bot.root.visible = false;
+      }
+    } catch {}
+
+    try {
+      if (bot.cs2Agent?.root) {
+        bot.cs2Agent.root.visible = false;
+      }
+    } catch {}
+
+    try {
+      if (typeof bot.setVisible === "function") {
+        bot.setVisible(false);
+      }
+    } catch {}
+  }
+
+  function showBot(bot) {
+    if (!bot) return;
+
+    try { bot.visible = true; } catch {}
+    try { bot.enabled = true; } catch {}
+
+    try {
+      if (bot.gameObject) {
+        bot.gameObject.active = true;
+      }
+    } catch {}
+
+    try {
+      if (bot.root) {
+        bot.root.visible = true;
+      }
+    } catch {}
+
+    try {
+      if (bot.cs2Agent?.root) {
+        bot.cs2Agent.root.visible = true;
+      }
+    } catch {}
+
+    try {
+      if (typeof bot.setVisible === "function") {
+        bot.setVisible(true);
+      }
+    } catch {}
+  }
+
+  /* =========================================================
+     BOT POOL
+  ========================================================= */
+
+  function captureOriginalBots() {
+    const mgr = getBotManager();
+    const arr = getBotArray();
+
+    if (!mgr || !arr) {
+      warn("Bot manager/array not found.");
+      return false;
+    }
+
+    if (State.originalBots.length) {
+      return true;
+    }
+
+    const bots = arr.slice();
+
+    log(
+      "Bot scan:",
+      bots.length,
+      "original bots found."
+    );
+
+    State.originalBots = bots;
+    State.botPool = bots.slice();
+
+    /*
+     * IMPORTANT:
+     * capture FIRST, remove SECOND.
+     */
+    for (const bot of bots) {
+      hideBot(bot);
+
+      const i = arr.indexOf(bot);
+
+      if (i !== -1) {
+        arr.splice(i, 1);
+      }
+    }
+
+    log(
+      "Captured bot pool:",
+      State.botPool.length
+    );
+
+    return true;
+  }
+
+  function acquireBot() {
+    const bot = State.botPool.find(
+      b => b && !State.remotesHasBot?.(b)
+    );
+
+    if (!bot) {
+      return null;
+    }
+
+    const i = State.botPool.indexOf(bot);
+
+    if (i !== -1) {
+      State.botPool.splice(i, 1);
+    }
+
+    return bot;
+  }
+
+  function releaseBot(bot) {
+    if (!bot) return;
+
+    const arr = getBotArray();
+
+    if (arr) {
+      const i = arr.indexOf(bot);
+
+      if (i !== -1) {
+        arr.splice(i, 1);
+      }
+    }
+
+    hideBot(bot);
+
+    if (!State.botPool.includes(bot)) {
+      State.botPool.push(bot);
+    }
+  }
+
+  function addBotToManager(bot) {
+    const arr = getBotArray();
+
+    if (!arr || !bot) return;
+
+    if (!arr.includes(bot)) {
+      arr.push(bot);
+    }
+
+    showBot(bot);
+  }
+
+  State.remotesHasBot = function(bot) {
+    for (const remote of State.remotes.values()) {
+      if (remote.bot === bot) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  function applyBotData(bot, remote) {
+    if (!bot || !remote) return;
+
+    try { bot.name = remote.name; } catch {}
+    try { bot.team = remote.team; } catch {}
+    try { bot.health = remote.health; } catch {}
+    try { bot.alive = remote.alive; } catch {}
+    try { bot.dead = !remote.alive; } catch {}
+    try { bot.isPlayer = true; } catch {}
+
+    try {
+      bot.playerName = remote.name;
+    } catch {}
+
+    try {
+      bot.avatar = remote.avatar;
+    } catch {}
+
+    setPosition(
+      bot,
+      remote.x,
+      remote.y,
+      remote.z
+    );
+
+    setRotation(
+      bot,
+      remote.yaw,
+      remote.pitch
+    );
+  }
+
+  function createRemoteBot(remote) {
+    if (!remote || remote.bot) {
+      return remote?.bot || null;
+    }
+
+    const bot = acquireBot();
+
+    if (!bot) {
+      warn(
+        "No free bot in pool for remote:",
+        remote.name
+      );
+      return null;
+    }
+
+    remote.bot = bot;
+
+    applyBotData(bot, remote);
+    addBotToManager(bot);
+
+    log(
+      "Remote bot assigned:",
+      remote.name
+    );
+
+    return bot;
+  }
+
+  function updateBots() {
+    for (const remote of State.remotes.values()) {
+      if (!remote.bot) {
+        if (!remote.dead) {
+          createRemoteBot(remote);
         }
+
+        continue;
+      }
+
+      if (remote.dead) {
+        releaseBot(remote.bot);
+        remote.bot = null;
+        continue;
+      }
+
+      remote.x +=
+        (remote.targetX - remote.x) * 0.35;
+
+      remote.y +=
+        (remote.targetY - remote.y) * 0.35;
+
+      remote.z +=
+        (remote.targetZ - remote.z) * 0.35;
+
+      remote.yaw +=
+        (remote.targetYaw - remote.yaw) * 0.35;
+
+      remote.pitch +=
+        (remote.targetPitch - remote.pitch) * 0.35;
+
+      applyBotData(remote.bot, remote);
+    }
+  }
+
+  function removeRemote(id) {
+    const remote = State.remotes.get(String(id));
+
+    if (!remote) return;
+
+    if (remote.bot) {
+      releaseBot(remote.bot);
+      remote.bot = null;
+    }
+
+    State.remotes.delete(String(id));
+  }
+
+  function clearRemoteBots() {
+    for (const remote of State.remotes.values()) {
+      if (remote.bot) {
+        releaseBot(remote.bot);
+        remote.bot = null;
+      }
+    }
+
+    State.remotes.clear();
+  }
+
+  /* =========================================================
+     NETWORK
+  ========================================================= */
+
+  function send(type, data = {}) {
+    if (
+      !State.ws ||
+      State.ws.readyState !== WebSocket.OPEN
+    ) {
+      return false;
+    }
+
+    try {
+      State.ws.send(
+        JSON.stringify({
+          type,
+          ...data
+        })
+      );
+
+      return true;
+    } catch (e) {
+      err(e);
+      return false;
+    }
+  }
+
+  const Network = {
+    connect() {
+      if (
+        State.connecting ||
+        (
+          State.ws &&
+          State.ws.readyState === WebSocket.OPEN
+        )
+      ) {
+        return;
+      }
+
+      State.connecting = true;
+      setStatus("Connecting...");
+
+      let ws;
+
+      try {
+        ws = new WebSocket(WS_URL);
+      } catch (e) {
+        State.connecting = false;
+        setStatus("WebSocket error");
+        return;
+      }
+
+      State.ws = ws;
+
+      ws.onopen = () => {
+        State.connected = true;
+        State.connecting = false;
+
+        setStatus("Connected");
+
+        send("list_rooms");
+
+        updateUI();
+      };
+
+      ws.onmessage = e => {
+        let msg;
 
         try {
-            State.ws.send(
-                JSON.stringify({
-                    type,
-                    ...data
-                })
-            );
-
-            return true;
-        } catch (e) {
-            error(
-                "NetworkSend failed:",
-                e
-            );
-
-            return false;
+          msg = JSON.parse(e.data);
+        } catch {
+          return;
         }
-    }
 
-    const Network = {
+        Network.handle(msg);
+      };
+
+      ws.onerror = () => {
+        State.connected = false;
+        setStatus("Connection error");
+        updateUI();
+      };
+
+      ws.onclose = () => {
+        State.connected = false;
+        State.connecting = false;
+        State.joinedRoom = false;
+
+        State.ws = null;
+
+        stopStateLoop();
+        clearRemoteBots();
 
-        connect() {
-            if (
-                State.connecting ||
-                (
-                    State.ws &&
-                    State.ws.readyState ===
-                    WebSocket.OPEN
-                )
-            ) {
-                return;
-            }
+        setStatus("Disconnected");
+        updateUI();
+      };
+    },
 
-            State.connecting = true;
-
-            updateStatus(
-                "Connecting..."
-            );
+    createRoom(data) {
+      if (!State.connected) {
+        this.connect();
 
-            let ws;
+        setTimeout(
+          () => this.createRoom(data),
+          500
+        );
+
+        return;
+      }
 
-            try {
-                ws = new WebSocket(
-                    WS_URL
-                );
-            } catch (e) {
-                State.connecting = false;
-
-                error(
-                    "WebSocket failed:",
-                    e
-                );
-
-                updateStatus(
-                    "WebSocket error"
-                );
-
-                return;
-            }
-
-            State.ws = ws;
-
-            ws.onopen = () => {
-                State.connected = true;
-                State.connecting = false;
-
-                log(
-                    "Multiplayer connected."
-                );
-
-                updateStatus(
-                    "Connected"
-                );
-
-                NetworkSend(
-                    "list_rooms"
-                );
-
-                updateUI();
-            };
-
-            ws.onmessage = event => {
-                let msg;
-
-                try {
-                    msg = JSON.parse(
-                        event.data
-                    );
-                } catch {
-                    return;
-                }
-
-                Network.handle(msg);
-            };
-
-            ws.onerror = () => {
-                State.connected = false;
-
-                updateStatus(
-                    "Connection error"
-                );
-
-                updateUI();
-            };
-
-            ws.onclose = () => {
-                State.connected = false;
-                State.connecting = false;
-                State.joinedRoom = false;
-
-                State.ws = null;
-
-                stopStateLoop();
-
-                clearRemoteBots();
-
-                updateStatus(
-                    "Disconnected"
-                );
-
-                updateUI();
-            };
-        },
-
-        createRoom(data) {
-            if (!State.connected) {
-                this.connect();
-
-                setTimeout(
-                    () => {
-                        this.createRoom(data);
-                    },
-                    500
-                );
-
-                return;
-            }
-
-            NetworkSend(
-                "create_room",
-                {
-                    ...data,
-                    name: State.name,
-                    avatar: State.localAvatar
-                }
-            );
-        },
-
-        joinRoom(roomId) {
-            if (!roomId) {
-                return;
-            }
-
-            if (!State.connected) {
-                this.connect();
-
-                setTimeout(
-                    () => {
-                        this.joinRoom(roomId);
-                    },
-                    500
-                );
-
-                return;
-            }
-
-            NetworkSend(
-                "join_room",
-                {
-                    roomId,
-                    name: State.name,
-                    avatar: State.localAvatar
-                }
-            );
-
-            updateStatus(
-                "Joining room..."
-            );
-        },
-
-        leaveRoom() {
-            if (!State.joinedRoom) {
-                return;
-            }
-
-            State.leavingRoom = true;
-            State.confirmedMatch = false;
-
-            stopStateLoop();
-            clearRemoteBots();
-
-            updateScanUI();
-
-            NetworkSend(
-                "leave_room"
-            );
-        },
-
-        kick(id) {
-            NetworkSend(
-                "kick",
-                {
-                    targetId: id
-                }
-            );
-        },
-
-        chat(text) {
-            const clean =
-                String(text || "")
-                    .trim()
-                    .slice(0, 300);
-
-            if (!clean) {
-                return;
-            }
-
-            if (!State.joinedRoom) {
-                return;
-            }
-
-            NetworkSend(
-                "chat",
-                {
-                    text: clean
-                }
-            );
-        },
-
-        handle(msg) {
-            if (!msg) {
-                return;
-            }
-
-            switch (msg.type) {
-
-                case "connected":
-                    if (msg.id) {
-                        State.id =
-                            String(msg.id);
-                    }
-
-                    log(
-                        "Assigned id:",
-                        State.id
-                    );
-
-                    break;
-
-                case "hello":
-                    if (msg.id) {
-                        State.id =
-                            String(msg.id);
-                    }
-
-                    break;
-
-                case "rooms":
-                    State.rooms =
-                        Array.isArray(msg.rooms)
-                            ? msg.rooms
-                            : [];
-
-                    updateRoomList();
-                    updateUI();
-
-                    break;
-
-                case "room_joined":
-                    this.handleRoomJoined(msg);
-                    break;
-
-                case "roster":
-                    if (msg.room) {
-                        State.roomData =
-                            msg.room;
-                    }
-
-                    updateRoomList();
-                    updateUI();
-
-                    break;
-
-                case "join":
-                    updateRoomList();
-                    updateCurrentRoom();
-                    break;
-
-                case "leave":
-                    if (msg.id) {
-                        removeRemote(
-                            String(msg.id)
-                        );
-                    }
-
-                    updateRoomList();
-                    updateCurrentRoom();
-
-                    break;
-
-                case "host_changed":
-                    updateRoomList();
-                    break;
-
-                case "kicked":
-                    State.joinedRoom = false;
-                    State.room = null;
-                    State.roomData = null;
-                    State.confirmedMatch = false;
-
-                    stopStateLoop();
-                    clearRemoteBots();
-
-                    updateScanUI();
-
-                    updateStatus(
-                        "You were kicked."
-                    );
-
-                    updateUI();
-
-                    break;
-
-                case "left_room":
-                    State.joinedRoom = false;
-                    State.room = null;
-                    State.roomData = null;
-                    State.leavingRoom = false;
-                    State.confirmedMatch = false;
-
-                    stopStateLoop();
-                    clearRemoteBots();
-
-                    updateScanUI();
-
-                    updateStatus(
-                        "Left room."
-                    );
-
-                    updateUI();
-
-                    break;
-
-                case "state":
-                    handleStateMessage(msg);
-                    break;
-
-                case "chat":
-                    receiveChat(msg);
-                    break;
-
-                case "rafit_warning":
-                    updateStatus(
-                        "RAFIT warning: " +
-                        msg.type +
-                        " | RTP " +
-                        msg.rtp
-                    );
-                    break;
-
-                case "rafit_banned":
-                    updateStatus(
-                        "RAFIT: banned."
-                    );
-
-                    State.confirmedMatch =
-                        false;
-
-                    stopStateLoop();
-
-                    break;
-
-                case "error":
-                    handleServerError(msg);
-                    break;
-
-                case "pong":
-                    break;
-
-                default:
-                    break;
-            }
-        },
-
-        handleRoomJoined(msg) {
-            State.room =
-                msg.room?.id ||
-                msg.roomId ||
-                null;
-
-            State.roomData =
-                msg.room ||
-                null;
-
-            if (msg.id) {
-                State.id =
-                    String(msg.id);
-            }
-
-            State.joinedRoom = true;
-            State.leavingRoom = false;
-
-            log(
-                "Joined room:",
-                State.room
-            );
-
-            updateStatus(
-                "Room joined. Enter your match and scan."
-            );
-
-            updateRoomList();
-            updateCurrentRoom();
-            updateUI();
-            updateScanUI();
-        }
-    };
-
-    function handleServerError(msg) {
-        const code =
+      send("create_room", {
+        ...data,
+        name: State.name,
+        avatar: State.localAvatar
+      });
+    },
+
+    joinRoom(roomId) {
+      if (!roomId) return;
+
+      if (!State.connected) {
+        this.connect();
+
+        setTimeout(
+          () => this.joinRoom(roomId),
+          500
+        );
+
+        return;
+      }
+
+      send("join_room", {
+        roomId,
+        name: State.name,
+        avatar: State.localAvatar
+      });
+
+      setStatus("Joining room...");
+    },
+
+    leaveRoom() {
+      if (!State.joinedRoom) return;
+
+      State.confirmedMatch = false;
+
+      stopStateLoop();
+      clearRemoteBots();
+
+      send("leave_room");
+    },
+
+    kick(id) {
+      send("kick", {
+        targetId: id
+      });
+    },
+
+    handle(msg) {
+      if (!msg) return;
+
+      switch (msg.type) {
+        case "connected":
+        case "hello":
+          if (msg.id) {
+            State.id = String(msg.id);
+          }
+          break;
+
+        case "rooms":
+          State.rooms =
+            Array.isArray(msg.rooms)
+              ? msg.rooms
+              : [];
+
+          renderRooms();
+          break;
+
+        case "room_joined":
+          State.room =
+            msg.room?.id ||
+            msg.roomId ||
+            null;
+
+          State.roomData =
+            msg.room || null;
+
+          if (msg.id) {
+            State.id = String(msg.id);
+          }
+
+          State.joinedRoom = true;
+
+          setStatus(
+            "Room joined. Enter your match and scan."
+          );
+
+          updateScanUI();
+          updateUI();
+          break;
+
+        case "roster":
+          if (msg.room) {
+            State.roomData = msg.room;
+          }
+
+          renderRooms();
+          updateUI();
+          break;
+
+        case "join":
+          renderRooms();
+          break;
+
+        case "leave":
+          if (msg.id) {
+            removeRemote(msg.id);
+          }
+
+          renderRooms();
+          break;
+
+        case "host_changed":
+          renderRooms();
+          break;
+
+        case "left_room":
+        case "kicked":
+          State.joinedRoom = false;
+          State.room = null;
+          State.roomData = null;
+          State.confirmedMatch = false;
+
+          stopStateLoop();
+          clearRemoteBots();
+
+          updateScanUI();
+          updateUI();
+
+          setStatus(
+            msg.type === "kicked"
+              ? "You were kicked."
+              : "Left room."
+          );
+          break;
+
+        case "state":
+          handleState(msg);
+          break;
+
+        case "chat":
+          receiveChat(msg);
+          break;
+
+        case "rafit_warning":
+          setStatus(
+            "RAFIT warning: " +
+            (msg.type || "") +
+            " | RTP " +
+            (msg.rtp ?? State.rtp)
+          );
+          break;
+
+        case "rafit_banned":
+          State.confirmedMatch = false;
+          stopStateLoop();
+          setStatus("RAFIT: banned.");
+          break;
+
+        case "error":
+          setStatus(
             msg.code ||
             msg.message ||
-            "Unknown error";
+            "Server error"
+          );
+          break;
+      }
+    }
+  };
 
-        const names = {
-            ROOM_NOT_FOUND:
-                "Room not found.",
+  /* =========================================================
+     STATE
+  ========================================================= */
 
-            ROOM_FULL:
-                "Room is full.",
+  function handleState(msg) {
+    const players =
+      Array.isArray(msg.players)
+        ? msg.players
+        : [];
 
-            HOST_ONLY:
-                "Only the host can do that.",
+    for (const data of players) {
+      if (!data?.id) continue;
 
-            CANNOT_KICK_HOST:
-                "You cannot kick yourself.",
+      const id = String(data.id);
 
-            PLAYER_NOT_FOUND:
-                "Player not found.",
+      if (
+        State.id &&
+        id === String(State.id)
+      ) {
+        continue;
+      }
 
-            RAFIT_BANNED:
-                "You are currently RAFIT banned.",
+      let remote = State.remotes.get(id);
 
-            RAFIT_2000_REQUIRED:
-                "You need 2000+ RTP for this server."
+      if (!remote) {
+        remote = {
+          id,
+
+          name: data.name || "Player",
+          team: data.team || "CT",
+
+          x: Number(data.x) || 0,
+          y: Number(data.y) || 0,
+          z: Number(data.z) || 0,
+
+          targetX: Number(data.x) || 0,
+          targetY: Number(data.y) || 0,
+          targetZ: Number(data.z) || 0,
+
+          yaw: Number(data.yaw) || 0,
+          pitch: Number(data.pitch) || 0,
+
+          targetYaw: Number(data.yaw) || 0,
+          targetPitch: Number(data.pitch) || 0,
+
+          health:
+            typeof data.health === "number"
+              ? data.health
+              : 100,
+
+          alive: data.alive !== false,
+          dead: data.dead === true,
+
+          avatar: data.avatar || null,
+
+          bot: null
         };
 
-        updateStatus(
-            names[code] ||
-            code
-        );
+        State.remotes.set(id, remote);
+      }
 
-        warn(
-            "Server error:",
-            msg
-        );
+      remote.name =
+        data.name || remote.name;
+
+      remote.team =
+        data.team || remote.team;
+
+      remote.targetX =
+        Number(data.x) || 0;
+
+      remote.targetY =
+        Number(data.y) || 0;
+
+      remote.targetZ =
+        Number(data.z) || 0;
+
+      remote.targetYaw =
+        Number(data.yaw) || 0;
+
+      remote.targetPitch =
+        Number(data.pitch) || 0;
+
+      remote.health =
+        typeof data.health === "number"
+          ? data.health
+          : remote.health;
+
+      remote.alive =
+        data.alive !== false &&
+        data.dead !== true &&
+        remote.health > 0;
+
+      remote.dead = !remote.alive;
+
+      remote.avatar =
+        data.avatar ||
+        remote.avatar ||
+        null;
+
+      if (remote.dead) {
+        if (remote.bot) {
+          releaseBot(remote.bot);
+          remote.bot = null;
+        }
+      } else if (!remote.bot) {
+        createRemoteBot(remote);
+      }
     }
 
-    /* =========================================================
-       CHAT
-    ========================================================= */
+    updateBots();
+  }
 
-    function receiveChat(msg) {
-        const name =
-            String(
-                msg.name ||
-                "Player"
-            ).slice(0, 32);
+  function getLocalState() {
+    const player = getLocalPlayer();
 
-        const text =
-            String(
-                msg.text ||
-                ""
-            ).slice(0, 300);
+    if (!player) return null;
 
-        if (!text) {
-            return;
-        }
+    const p = positionOf(player);
+    const r = rotationOf(player);
 
-        const entry = {
-            id:
-                String(
-                    msg.id ||
-                    ""
-                ),
+    let health = 100;
 
-            name,
-            text,
-            time: Date.now()
-        };
-
-        State.chat.messages.push(entry);
-
-        if (
-            State.chat.messages.length >
-            State.chat.maxMessages
-        ) {
-            State.chat.messages.shift();
-        }
-
-        renderLobbyChat();
-        showGameChat(entry);
+    if (typeof player.health === "number") {
+      health = player.health;
     }
 
-    function showGameChat(entry) {
-        const box =
-            State.UI.gameChat;
+    let alive = true;
 
-        if (!box) {
-            return;
-        }
-
-        const row =
-            document.createElement(
-                "div"
-            );
-
-        row.className =
-            "conn-game-chat-row";
-
-        const name =
-            document.createElement(
-                "span"
-            );
-
-        name.className =
-            "conn-game-chat-name";
-
-        name.textContent =
-            entry.name + ":";
-
-        const text =
-            document.createElement(
-                "span"
-            );
-
-        text.className =
-            "conn-game-chat-text";
-
-        text.textContent =
-            " " + entry.text;
-
-        row.appendChild(name);
-        row.appendChild(text);
-
-        box.appendChild(row);
-
-        while (
-            box.children.length >
-            8
-        ) {
-            box.firstChild.remove();
-        }
-
-        clearTimeout(
-            State.chat.overlayTimers.get(
-                row
-            )
-        );
-
-        const timer =
-            setTimeout(
-                () => {
-                    row.classList.add(
-                        "conn-chat-fade"
-                    );
-
-                    setTimeout(
-                        () => {
-                            row.remove();
-                        },
-                        500
-                    );
-                },
-                7000
-            );
-
-        State.chat.overlayTimers.set(
-            row,
-            timer
-        );
+    if (typeof player.alive === "boolean") {
+      alive = player.alive;
     }
 
-    function openChat() {
-        if (
-            !State.joinedRoom
-        ) {
-            return;
-        }
-
-        if (
-            State.chat.open
-        ) {
-            return;
-        }
-
-        State.chat.open = true;
-
-        const input =
-            State.UI.chatInput;
-
-        if (!input) {
-            return;
-        }
-
-        input.value = "";
-        input.style.display =
-            "block";
-
-        input.focus();
-
-        if (State.UI.chatHint) {
-            State.UI.chatHint.style.display =
-                "block";
-        }
+    if (typeof player.dead === "boolean") {
+      alive = !player.dead;
     }
 
-    function closeChat() {
-        State.chat.open = false;
-
-        const input =
-            State.UI.chatInput;
-
-        if (input) {
-            input.value = "";
-            input.style.display =
-                "none";
-        }
-
-        if (State.UI.chatHint) {
-            State.UI.chatHint.style.display =
-                "none";
-        }
+    if (health <= 0) {
+      alive = false;
     }
 
-    function submitChat() {
-        const input =
-            State.UI.chatInput;
+    const team =
+      player.team ||
+      player.side ||
+      player.faction ||
+      "CT";
 
-        if (!input) {
-            closeChat();
-            return;
-        }
+    return {
+      x: p.x,
+      y: p.y,
+      z: p.z,
 
-        const text =
-            input.value.trim();
+      yaw: r.yaw,
+      pitch: r.pitch,
+
+      alive,
+      dead: !alive,
+
+      health,
+
+      name: State.name,
+      team,
+
+      avatar: State.localAvatar
+    };
+  }
+
+  function startStateLoop() {
+    stopStateLoop();
+
+    State.stateTimer = setInterval(() => {
+      if (!State.joinedRoom) return;
+      if (!State.confirmedMatch) return;
+      if (!isInsideMatch()) return;
+
+      const state = getLocalState();
+
+      if (!state) return;
+
+      send("state", {
+        state
+      });
+    }, 50);
+  }
+
+  function stopStateLoop() {
+    if (State.stateTimer) {
+      clearInterval(State.stateTimer);
+      State.stateTimer = null;
+    }
+  }
+
+  /* =========================================================
+     MATCH SCANNER
+  ========================================================= */
+
+  function confirmMatch() {
+    if (!State.joinedRoom) {
+      setStatus("Join a room first.");
+      return;
+    }
+
+    if (!isInsideMatch()) {
+      setStatus(
+        "You must be inside a real match first."
+      );
+      return;
+    }
+
+    const mgr = getBotManager();
+    const arr = getBotArray();
+
+    if (!mgr || !arr) {
+      setStatus(
+        "Bot manager not found."
+      );
+
+      warn(
+        "window.game:",
+        getGame()
+      );
+
+      return;
+    }
+
+    log(
+      "Match detected. Scanning bot manager..."
+    );
+
+    /*
+     * This happens BEFORE touching the original
+     * bot array.
+     */
+    const ok = captureOriginalBots();
+
+    if (!ok) {
+      setStatus(
+        "Could not capture original bots."
+      );
+      return;
+    }
+
+    State.confirmedMatch = true;
+
+    setStatus(
+      "Match confirmed. Multiplayer ready."
+    );
+
+    updateScanUI();
+
+    startStateLoop();
+
+    log(
+      "Original bots:",
+      State.originalBots.length
+    );
+
+    log(
+      "Connections multiplayer ready."
+    );
+  }
+
+  function monitorMatch() {
+    if (
+      State.confirmedMatch &&
+      !isInsideMatch()
+    ) {
+      State.confirmedMatch = false;
+
+      stopStateLoop();
+      clearRemoteBots();
+
+      State.originalBots = [];
+      State.botPool = [];
+      State.botManager = null;
+
+      updateScanUI();
+    }
+
+    updateBots();
+  }
+
+  /* =========================================================
+     CHAT - IN GAME ONLY
+     ========================================================= */
+
+  function createChat() {
+    if (document.getElementById("connections-game-chat")) {
+      return;
+    }
+
+    const box = document.createElement("div");
+
+    box.id = "connections-game-chat";
+
+    box.innerHTML = `
+      <div class="conn-chat-messages"></div>
+      <input
+        class="conn-chat-input"
+        maxlength="300"
+        autocomplete="off"
+        placeholder="Say something..."
+      >
+    `;
+
+    box.style.cssText = `
+      position:fixed;
+      left:18px;
+      bottom:18px;
+      width:420px;
+      z-index:2147483646;
+      pointer-events:none;
+      font-family:Arial,sans-serif;
+      display:none;
+    `;
+
+    const messages =
+      box.querySelector(".conn-chat-messages");
+
+    messages.style.cssText = `
+      display:flex;
+      flex-direction:column;
+      gap:3px;
+      max-height:220px;
+      overflow:hidden;
+      margin-bottom:8px;
+      text-shadow:0 2px 4px #000;
+    `;
+
+    const input =
+      box.querySelector(".conn-chat-input");
+
+    input.style.cssText = `
+      width:100%;
+      box-sizing:border-box;
+      padding:9px 11px;
+      border:1px solid #444;
+      border-radius:7px;
+      outline:none;
+      background:rgba(10,10,14,.92);
+      color:#fff;
+      font-size:14px;
+      pointer-events:auto;
+    `;
+
+    document.body.appendChild(box);
+
+    State.chat.input = input;
+
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+
+        const text = input.value.trim();
 
         if (text) {
-            Network.chat(text);
+          send("chat", {
+            text
+          });
         }
 
         closeChat();
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeChat();
+      }
+    });
+  }
+
+  function openChat() {
+    if (!isInsideMatch()) return;
+
+    createChat();
+
+    const box =
+      document.getElementById(
+        "connections-game-chat"
+      );
+
+    if (!box) return;
+
+    State.chat.open = true;
+
+    box.style.display = "block";
+
+    State.chat.input.value = "";
+
+    setTimeout(() => {
+      State.chat.input?.focus();
+    }, 0);
+  }
+
+  function closeChat() {
+    State.chat.open = false;
+
+    const box =
+      document.getElementById(
+        "connections-game-chat"
+      );
+
+    if (box) {
+      box.style.display = "none";
+    }
+  }
+
+  function receiveChat(msg) {
+    const name =
+      msg.name ||
+      msg.player ||
+      "Player";
+
+    const text =
+      String(msg.text || "").slice(0, 300);
+
+    if (!text) return;
+
+    createChat();
+
+    const container =
+      document.querySelector(
+        "#connections-game-chat .conn-chat-messages"
+      );
+
+    if (!container) return;
+
+    const row =
+      document.createElement("div");
+
+    row.style.cssText = `
+      color:#fff;
+      font-size:14px;
+      line-height:19px;
+      opacity:1;
+    `;
+
+    const sender =
+      document.createElement("span");
+
+    sender.textContent =
+      name + ": ";
+
+    sender.style.cssText = `
+      color:#7289da;
+      font-weight:700;
+    `;
+
+    const message =
+      document.createElement("span");
+
+    message.textContent = text;
+
+    row.appendChild(sender);
+    row.appendChild(message);
+
+    container.appendChild(row);
+
+    while (container.children.length > 8) {
+      container.removeChild(
+        container.firstChild
+      );
     }
 
-    function renderLobbyChat() {
-        const box =
-            State.UI.lobbyChatMessages;
+    setTimeout(() => {
+      row.style.transition =
+        "opacity .4s";
 
-        if (!box) {
-            return;
-        }
+      row.style.opacity = "0";
 
-        box.innerHTML = "";
+      setTimeout(() => {
+        row.remove();
+      }, 450);
+    }, 7000);
+  }
 
-        for (
-            const message of
-            State.chat.messages
-        ) {
-            const row =
-                document.createElement(
-                    "div"
-                );
+  /* =========================================================
+     UI
+  ========================================================= */
 
-            row.className =
-                "conn-lobby-chat-row";
-
-            const name =
-                document.createElement(
-                    "span"
-                );
-
-            name.className =
-                "conn-lobby-chat-name";
-
-            name.textContent =
-                message.name + ":";
-
-            const text =
-                document.createElement(
-                    "span"
-                );
-
-            text.className =
-                "conn-lobby-chat-text";
-
-            text.textContent =
-                " " + message.text;
-
-            row.appendChild(name);
-            row.appendChild(text);
-
-            box.appendChild(row);
-        }
-
-        box.scrollTop =
-            box.scrollHeight;
+  GM_addStyle(`
+    #connections-panel,
+    #connections-panel * {
+      box-sizing:border-box;
     }
 
-    function clearChat() {
-        State.chat.messages = [];
-
-        renderLobbyChat();
-
-        if (State.UI.gameChat) {
-            State.UI.gameChat.innerHTML = "";
-        }
+    #connections-panel {
+      position:fixed;
+      top:50%;
+      left:50%;
+      transform:translate(-50%,-50%);
+      width:780px;
+      max-width:calc(100vw - 30px);
+      max-height:calc(100vh - 30px);
+      overflow:auto;
+      z-index:999999;
+      background:#101116;
+      color:#eee;
+      border:1px solid #2c2f3a;
+      border-radius:16px;
+      box-shadow:0 20px 80px rgba(0,0,0,.65);
+      font-family:Arial,sans-serif;
+      padding:18px;
+      display:none;
     }
 
-    /* =========================================================
-       REMOTE STATE
-    ========================================================= */
-
-    function handleStateMessage(msg) {
-        const list =
-            Array.isArray(msg.players)
-                ? msg.players
-                : [];
-
-        if (!list.length) {
-            return;
-        }
-
-        for (
-            const data of
-            list
-        ) {
-            if (!data?.id) {
-                continue;
-            }
-
-            const id =
-                String(data.id);
-
-            if (
-                State.id &&
-                id ===
-                String(State.id)
-            ) {
-                continue;
-            }
-
-            let remote =
-                State.remotes.get(id);
-
-            if (!remote) {
-                remote = {
-                    id,
-
-                    name:
-                        data.name ||
-                        "Player",
-
-                    team:
-                        data.team ||
-                        "ct",
-
-                    x:
-                        Number(data.x) ||
-                        0,
-
-                    y:
-                        Number(data.y) ||
-                        0,
-
-                    z:
-                        Number(data.z) ||
-                        0,
-
-                    targetX:
-                        Number(data.x) ||
-                        0,
-
-                    targetY:
-                        Number(data.y) ||
-                        0,
-
-                    targetZ:
-                        Number(data.z) ||
-                        0,
-
-                    yaw:
-                        Number(data.yaw) ||
-                        0,
-
-                    pitch:
-                        Number(data.pitch) ||
-                        0,
-
-                    targetYaw:
-                        Number(data.yaw) ||
-                        0,
-
-                    targetPitch:
-                        Number(data.pitch) ||
-                        0,
-
-                    health:
-                        typeof data.health ===
-                        "number"
-                            ? data.health
-                            : 100,
-
-                    alive:
-                        data.alive !== false,
-
-                    dead:
-                        data.dead === true,
-
-                    avatar:
-                        data.avatar ||
-                        null,
-
-                    bot: null,
-
-                    pooledBot: false
-                };
-
-                State.remotes.set(
-                    id,
-                    remote
-                );
-
-                log(
-                    "New remote player:",
-                    remote.name,
-                    id
-                );
-            }
-
-            remote.name =
-                data.name ||
-                remote.name;
-
-            remote.team =
-                data.team ||
-                remote.team;
-
-            remote.targetX =
-                Number(data.x) ||
-                0;
-
-            remote.targetY =
-                Number(data.y) ||
-                0;
-
-            remote.targetZ =
-                Number(data.z) ||
-                0;
-
-            remote.targetYaw =
-                Number(data.yaw) ||
-                0;
-
-            remote.targetPitch =
-                Number(data.pitch) ||
-                0;
-
-            remote.health =
-                typeof data.health ===
-                "number"
-                    ? data.health
-                    : remote.health;
-
-            remote.alive =
-                data.alive !== false &&
-                data.dead !== true &&
-                remote.health > 0;
-
-            remote.dead =
-                !remote.alive;
-
-            remote.avatar =
-                data.avatar ||
-                remote.avatar ||
-                null;
-
-            if (remote.dead) {
-                killRemote(remote);
-            } else {
-                if (!remote.bot) {
-                    createRemoteBot(remote);
-                }
-            }
-        }
-
-        updateBots();
+    #connections-panel::-webkit-scrollbar {
+      width:8px;
     }
 
-    /* =========================================================
-       BOT MANAGER
-    ========================================================= */
-
-    function getBotManager() {
-        if (
-            State.botManager &&
-            typeof State.botManager ===
-            "object"
-        ) {
-            return State.botManager;
-        }
-
-        const game =
-            getGame();
-
-        if (!game) {
-            return null;
-        }
-
-        /*
-         * This is intentionally first.
-         *
-         * The actual game uses:
-         *
-         * window.game.botMgr.bots
-         */
-        const candidates = [
-            game.botMgr,
-            game.botManager,
-            game.bots,
-            game.ai,
-            game.botSystem,
-            game.enemyManager,
-            game.agents
-        ];
-
-        for (
-            const manager of
-            candidates
-        ) {
-            if (
-                manager &&
-                typeof manager ===
-                "object"
-            ) {
-                State.botManager =
-                    manager;
-
-                return manager;
-            }
-        }
-
-        return null;
+    #connections-panel::-webkit-scrollbar-thumb {
+      background:#2c2f3a;
+      border-radius:10px;
     }
 
-    function getBotArray(manager) {
-        if (!manager) {
-            return null;
-        }
-
-        /*
-         * Actual Clutcher path.
-         */
-        if (
-            Array.isArray(
-                manager.bots
-            )
-        ) {
-            State.botArrayKey =
-                "bots";
-
-            return manager.bots;
-        }
-
-        const keys = [
-            "agents",
-            "entities",
-            "players"
-        ];
-
-        for (
-            const key of
-            keys
-        ) {
-            if (
-                Array.isArray(
-                    manager[key]
-                )
-            ) {
-                State.botArrayKey =
-                    key;
-
-                return manager[key];
-            }
-        }
-
-        return null;
+    .conn-header {
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:18px;
+      cursor:move;
+      user-select:none;
     }
 
-    function hideBot(bot) {
-        if (!bot) {
-            return;
-        }
-
-        try {
-            bot.visible = false;
-        } catch {}
-
-        try {
-            bot.enabled = false;
-        } catch {}
-
-        try {
-            if (bot.gameObject) {
-                bot.gameObject.active =
-                    false;
-            }
-        } catch {}
-
-        try {
-            if (bot.root) {
-                bot.root.visible =
-                    false;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.cs2Agent &&
-                bot.cs2Agent.root
-            ) {
-                bot.cs2Agent.root.visible =
-                    false;
-            }
-        } catch {}
-
-        try {
-            if (
-                typeof bot.setVisible ===
-                "function"
-            ) {
-                bot.setVisible(false);
-            }
-        } catch {}
+    .conn-logo {
+      width:48px;
+      height:48px;
+      object-fit:contain;
+      border-radius:10px;
     }
 
-    function showBot(bot) {
-        if (!bot) {
-            return;
-        }
-
-        try {
-            bot.visible = true;
-        } catch {}
-
-        try {
-            bot.enabled = true;
-        } catch {}
-
-        try {
-            if (bot.gameObject) {
-                bot.gameObject.active =
-                    true;
-            }
-        } catch {}
-
-        try {
-            if (bot.root) {
-                bot.root.visible =
-                    true;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.cs2Agent &&
-                bot.cs2Agent.root
-            ) {
-                bot.cs2Agent.root.visible =
-                    true;
-            }
-        } catch {}
-
-        try {
-            if (
-                typeof bot.setVisible ===
-                "function"
-            ) {
-                bot.setVisible(true);
-            }
-        } catch {}
+    .conn-title {
+      font-size:22px;
+      font-weight:800;
     }
 
-    function prepareBots() {
-        const game =
-            getGame();
-
-        const manager =
-            game?.botMgr ||
-            getBotManager();
-
-        if (!manager) {
-            warn(
-                "botMgr not found."
-            );
-
-            return false;
-        }
-
-        State.game =
-            game;
-
-        State.botManager =
-            manager;
-
-        const arr =
-            manager.bots;
-
-        /*
-         * Exact path proven by the user's
-         * console test:
-         *
-         * window.game.botMgr.bots
-         */
-        if (
-            !Array.isArray(arr)
-        ) {
-            warn(
-                "game.botMgr.bots is not an array."
-            );
-
-            return false;
-        }
-
-        if (
-            State.originalBots.length
-        ) {
-            return true;
-        }
-
-        /*
-         * Capture the REAL existing bots.
-         *
-         * No constructor needed.
-         */
-        const bots =
-            arr.slice();
-
-        for (
-            const bot of
-            bots
-        ) {
-            if (!bot) {
-                continue;
-            }
-
-            if (
-                bot.__connectionsRemote
-            ) {
-                continue;
-            }
-
-            State.originalBots.push(
-                bot
-            );
-
-            hideBot(bot);
-
-            /*
-             * Make the object less likely
-             * to keep behaving as a normal AI.
-             */
-            try {
-                bot.isPlayer = true;
-            } catch {}
-
-            try {
-                bot.aiEnabled = false;
-            } catch {}
-
-            try {
-                bot.enabled = false;
-            } catch {}
-
-            try {
-                bot.alive = false;
-            } catch {}
-        }
-
-        /*
-         * These objects are now our remote-player pool.
-         */
-        State.botPool =
-            State.originalBots.slice();
-
-        /*
-         * Remove the originals from the
-         * active bot manager.
-         */
-        try {
-            arr.length = 0;
-        } catch (e) {
-            warn(
-                "Could not clear bot array:",
-                e
-            );
-        }
-
-        log(
-            "Bot scan:",
-            State.originalBots.length,
-            "original bots found."
-        );
-
-        log(
-            "Remote bot pool:",
-            State.botPool.length
-        );
-
-        /*
-         * The constructor is only diagnostic now.
-         * We don't depend on it.
-         */
-        try {
-            const found =
-                bots.find(
-                    b =>
-                        b &&
-                        b.team !== undefined
-                );
-
-            if (found) {
-                log(
-                    "Verified bot constructor:",
-                    found.constructor
-                );
-            }
-        } catch {}
-
-        return true;
+    .conn-subtitle {
+      color:#8d91a0;
+      font-size:12px;
+      margin-top:2px;
     }
 
-    function addToBotManager(bot) {
-        const manager =
-            getBotManager();
-
-        if (
-            !manager ||
-            !bot
-        ) {
-            return false;
-        }
-
-        const arr =
-            getBotArray(manager);
-
-        if (!arr) {
-            return false;
-        }
-
-        if (
-            !arr.includes(bot)
-        ) {
-            arr.push(bot);
-        }
-
-        return true;
+    .conn-close {
+      margin-left:auto;
+      width:34px;
+      height:34px;
+      border:1px solid #30333f;
+      border-radius:9px;
+      background:#181a21;
+      color:#aaa;
+      font-size:22px;
+      cursor:pointer;
     }
 
-    function removeBotFromManager(bot) {
-        if (!bot) {
-            return;
-        }
-
-        const manager =
-            getBotManager();
-
-        if (!manager) {
-            return;
-        }
-
-        const keys = [
-            "bots",
-            "agents",
-            "entities",
-            "players"
-        ];
-
-        for (
-            const key of
-            keys
-        ) {
-            const arr =
-                manager[key];
-
-            if (
-                !Array.isArray(arr)
-            ) {
-                continue;
-            }
-
-            let index;
-
-            while (
-                (
-                    index =
-                    arr.indexOf(bot)
-                ) !== -1
-            ) {
-                arr.splice(
-                    index,
-                    1
-                );
-            }
-        }
+    .conn-close:hover {
+      background:#22252e;
+      color:#fff;
     }
 
-    function getFreePoolBot() {
-        for (
-            const bot of
-            State.botPool
-        ) {
-            if (!bot) {
-                continue;
-            }
-
-            let used = false;
-
-            for (
-                const remote of
-                State.remotes.values()
-            ) {
-                if (
-                    remote.bot ===
-                    bot
-                ) {
-                    used = true;
-                    break;
-                }
-            }
-
-            if (!used) {
-                return bot;
-            }
-        }
-
-        return null;
+    .conn-section {
+      margin-top:14px;
+      padding:14px;
+      border:1px solid #292c36;
+      border-radius:12px;
+      background:#14161d;
     }
 
-    function applyRemoteMetadata(
-        bot,
-        remote
-    ) {
-        if (!bot) {
-            return;
-        }
-
-        try {
-            bot.__connectionsRemote =
-                true;
-        } catch {}
-
-        try {
-            bot.__connectionsId =
-                remote.id;
-        } catch {}
-
-        try {
-            bot.name =
-                remote.name;
-        } catch {}
-
-        try {
-            bot.username =
-                remote.name;
-        } catch {}
-
-        try {
-            bot.team =
-                remote.team;
-        } catch {}
-
-        try {
-            bot.isPlayer =
-                true;
-        } catch {}
-
-        try {
-            bot.aiEnabled =
-                false;
-        } catch {}
-
-        try {
-            bot.difficulty =
-                0;
-        } catch {}
-
-        if (
-            remote.avatar
-        ) {
-            try {
-                bot.avatar =
-                    remote.avatar;
-            } catch {}
-
-            try {
-                bot.avatarUrl =
-                    remote.avatar;
-            } catch {}
-
-            try {
-                bot.skin =
-                    remote.avatar;
-            } catch {}
-
-            try {
-                bot.modelUrl =
-                    remote.avatar;
-            } catch {}
-        }
+    .conn-section-title {
+      color:#777c8c;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:1.2px;
+      margin-bottom:10px;
     }
 
-    function createRemoteBot(remote) {
-        if (
-            !remote ||
-            remote.dead ||
-            remote.bot
-        ) {
-            return;
-        }
-
-        const bot =
-            getFreePoolBot();
-
-        if (!bot) {
-            warn(
-                "No free original bot available for:",
-                remote.name
-            );
-
-            return;
-        }
-
-        remote.bot =
-            bot;
-
-        remote.pooledBot =
-            true;
-
-        applyRemoteMetadata(
-            bot,
-            remote
-        );
-
-        try {
-            if (
-                typeof bot.spawn ===
-                "function"
-            ) {
-                bot.spawn();
-            }
-        } catch {}
-
-        try {
-            if (
-                typeof bot.init ===
-                "function"
-            ) {
-                bot.init();
-            }
-        } catch {}
-
-        addToBotManager(bot);
-
-        showBot(bot);
-
-        setBotPosition(
-            bot,
-            remote.x,
-            remote.y,
-            remote.z
-        );
-
-        setBotRotation(
-            bot,
-            remote.yaw,
-            remote.pitch
-        );
-
-        try {
-            bot.health =
-                remote.health;
-        } catch {}
-
-        try {
-            bot.alive =
-                true;
-        } catch {}
-
-        try {
-            bot.dead =
-                false;
-        } catch {}
-
-        log(
-            "REMOTE CREATED FROM POOL:",
-            remote.name,
-            remote.id
-        );
+    .conn-match-title {
+      font-size:16px;
+      font-weight:700;
+      margin-bottom:5px;
     }
 
-    /* =========================================================
-       REMOTE TRANSFORM
-    ========================================================= */
-
-    function setBotPosition(
-        bot,
-        x,
-        y,
-        z
-    ) {
-        if (!bot) {
-            return;
-        }
-
-        try {
-            if (bot.position) {
-                bot.position.x = x;
-                bot.position.y = y;
-                bot.position.z = z;
-                return;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.transform &&
-                bot.transform.position
-            ) {
-                bot.transform.position.x =
-                    x;
-
-                bot.transform.position.y =
-                    y;
-
-                bot.transform.position.z =
-                    z;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.cs2Agent &&
-                bot.cs2Agent.root &&
-                bot.cs2Agent.root.position
-            ) {
-                bot.cs2Agent.root.position.x =
-                    x;
-
-                bot.cs2Agent.root.position.y =
-                    y;
-
-                bot.cs2Agent.root.position.z =
-                    z;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.root &&
-                bot.root.position
-            ) {
-                bot.root.position.x =
-                    x;
-
-                bot.root.position.y =
-                    y;
-
-                bot.root.position.z =
-                    z;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            bot.x = x;
-            bot.y = y;
-            bot.z = z;
-        } catch {}
+    .conn-match-description {
+      color:#969aa8;
+      font-size:12px;
+      line-height:18px;
+      margin-bottom:12px;
     }
 
-    function setBotRotation(
-        bot,
-        yaw,
-        pitch
-    ) {
-        if (!bot) {
-            return;
-        }
-
-        try {
-            if (bot.rotation) {
-                bot.rotation.x =
-                    pitch;
-
-                bot.rotation.y =
-                    yaw;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            if (bot.eulerAngles) {
-                bot.eulerAngles.x =
-                    pitch;
-
-                bot.eulerAngles.y =
-                    yaw;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.transform &&
-                bot.transform.rotation
-            ) {
-                bot.transform.rotation.x =
-                    pitch;
-
-                bot.transform.rotation.y =
-                    yaw;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            if (
-                bot.root &&
-                bot.root.rotation
-            ) {
-                bot.root.rotation.x =
-                    pitch;
-
-                bot.root.rotation.y =
-                    yaw;
-
-                return;
-            }
-        } catch {}
-
-        try {
-            bot.yaw =
-                yaw;
-
-            bot.pitch =
-                pitch;
-        } catch {}
+    .conn-btn {
+      border:1px solid #383c49;
+      border-radius:8px;
+      background:#1b1e27;
+      color:#fff;
+      padding:9px 12px;
+      cursor:pointer;
+      font-weight:700;
     }
 
-    function updateBots() {
-        for (
-            const remote of
-            State.remotes.values()
-        ) {
-            if (
-                !remote.bot
-            ) {
-                if (
-                    remote.alive &&
-                    !remote.dead
-                ) {
-                    createRemoteBot(
-                        remote
-                    );
-                }
-
-                continue;
-            }
-
-            if (
-                remote.dead ||
-                !remote.alive
-            ) {
-                killRemote(
-                    remote
-                );
-
-                continue;
-            }
-
-            /*
-             * Smooth movement.
-             */
-            remote.x +=
-                (
-                    remote.targetX -
-                    remote.x
-                ) * 0.45;
-
-            remote.y +=
-                (
-                    remote.targetY -
-                    remote.y
-                ) * 0.45;
-
-            remote.z +=
-                (
-                    remote.targetZ -
-                    remote.z
-                ) * 0.45;
-
-            remote.yaw =
-                remote.targetYaw;
-
-            remote.pitch =
-                remote.targetPitch;
-
-            setBotPosition(
-                remote.bot,
-                remote.x,
-                remote.y,
-                remote.z
-            );
-
-            setBotRotation(
-                remote.bot,
-                remote.yaw,
-                remote.pitch
-            );
-
-            try {
-                remote.bot.health =
-                    remote.health;
-            } catch {}
-
-            try {
-                remote.bot.alive =
-                    true;
-            } catch {}
-
-            try {
-                remote.bot.dead =
-                    false;
-            } catch {}
-
-            applyRemoteMetadata(
-                remote.bot,
-                remote
-            );
-
-            showBot(
-                remote.bot
-            );
-        }
+    .conn-btn:hover {
+      background:#252936;
     }
 
-    function killRemote(remote) {
-        if (
-            !remote ||
-            !remote.bot
-        ) {
-            return;
-        }
-
-        try {
-            remote.bot.health =
-                0;
-        } catch {}
-
-        try {
-            remote.bot.alive =
-                false;
-        } catch {}
-
-        try {
-            remote.bot.dead =
-                true;
-        } catch {}
-
-        hideBot(
-            remote.bot
-        );
+    .conn-btn.primary {
+      background:#7289da;
+      border-color:#7289da;
+      color:#fff;
     }
 
-    function removeRemote(id) {
-        const remote =
-            State.remotes.get(
-                String(id)
-            );
-
-        if (!remote) {
-            return;
-        }
-
-        if (remote.bot) {
-            removeBotFromManager(
-                remote.bot
-            );
-
-            hideBot(
-                remote.bot
-            );
-
-            /*
-             * Return it to the pool.
-             */
-            try {
-                remote.bot.__connectionsRemote =
-                    false;
-            } catch {}
-
-            try {
-                remote.bot.__connectionsId =
-                    null;
-            } catch {}
-
-            try {
-                remote.bot.isPlayer =
-                    false;
-            } catch {}
-
-            try {
-                remote.bot.aiEnabled =
-                    true;
-            } catch {}
-
-            try {
-                remote.bot.alive =
-                    false;
-            } catch {}
-        }
-
-        State.remotes.delete(
-            String(id)
-        );
-
-        log(
-            "Remote removed:",
-            id
-        );
+    .conn-btn.primary:hover {
+      background:#6379c7;
     }
 
-    function clearRemoteBots() {
-        for (
-            const id of
-            Array.from(
-                State.remotes.keys()
-            )
-        ) {
-            removeRemote(id);
-        }
-
-        /*
-         * Return every original bot to
-         * a hidden pool state.
-         */
-        for (
-            const bot of
-            State.originalBots
-        ) {
-            if (!bot) {
-                continue;
-            }
-
-            removeBotFromManager(
-                bot
-            );
-
-            hideBot(bot);
-
-            try {
-                bot.__connectionsRemote =
-                    false;
-            } catch {}
-
-            try {
-                bot.__connectionsId =
-                    null;
-            } catch {}
-
-            try {
-                bot.isPlayer =
-                    false;
-            } catch {}
-
-            try {
-                bot.aiEnabled =
-                    true;
-            } catch {}
-
-            try {
-                bot.alive =
-                    false;
-            } catch {}
-        }
-
-        State.remotes.clear();
-        State.botPool =
-            State.originalBots.slice();
+    .conn-status {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-size:13px;
     }
 
-    /* =========================================================
-       LOCAL STATE
-    ========================================================= */
-
-    function sendLocalState() {
-        if (
-            !State.joinedRoom ||
-            !State.confirmedMatch
-        ) {
-            return;
-        }
-
-        const player =
-            getLocalPlayer();
-
-        const pos =
-            positionOf(
-                player
-            );
-
-        const rot =
-            rotationOf(
-                player
-            );
-
-        const alive =
-            getAlive(
-                player
-            );
-
-        const health =
-            State.dead
-                ? 0
-                : (
-                    typeof player?.health ===
-                    "number"
-                        ? player.health
-                        : 100
-                );
-
-        State.lastPosition =
-            pos;
-
-        let team =
-            player?.team ||
-            player?.side ||
-            player?.teamName ||
-            "ct";
-
-        NetworkSend(
-            "state",
-            {
-                state: {
-                    x: pos.x,
-                    y: pos.y,
-                    z: pos.z,
-
-                    yaw: rot.yaw,
-                    pitch: rot.pitch,
-
-                    alive,
-                    dead: !alive,
-
-                    health,
-
-                    name:
-                        State.name,
-
-                    team,
-
-                    avatar:
-                        State.localAvatar
-                }
-            }
-        );
+    .conn-dot {
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:#666;
     }
 
-    function startStateLoop() {
-        if (
-            State.stateTimer
-        ) {
-            return;
-        }
-
-        State.stateTimer =
-            setInterval(
-                sendLocalState,
-                50
-            );
-
-        sendLocalState();
+    .conn-dot.online {
+      background:#43d17a;
+      box-shadow:0 0 8px rgba(67,209,122,.55);
     }
 
-    function stopStateLoop() {
-        if (
-            State.stateTimer
-        ) {
-            clearInterval(
-                State.stateTimer
-            );
-
-            State.stateTimer =
-                null;
-        }
+    .conn-dot.offline {
+      background:#e25555;
     }
 
-    /* =========================================================
-       MATCH SCAN
-    ========================================================= */
-
-    function updateScanUI() {
-        const button =
-            State.UI.scanButton;
-
-        const status =
-            State.UI.scanStatus;
-
-        if (!button) {
-            return;
-        }
-
-        if (
-            State.confirmedMatch
-        ) {
-            button.textContent =
-                "MATCH SCANNED";
-
-            button.classList.add(
-                "conn-scan-done"
-            );
-
-            button.disabled =
-                true;
-
-            if (status) {
-                status.textContent =
-                    "Multiplayer ready";
-            }
-
-            return;
-        }
-
-        button.classList.remove(
-            "conn-scan-done"
-        );
-
-        button.disabled =
-            false;
-
-        button.textContent =
-            "I AM INSIDE A MATCH";
-
-        if (status) {
-            status.textContent =
-                "Enter a match, then scan.";
-        }
+    .conn-profile {
+      display:flex;
+      gap:8px;
+      margin-bottom:10px;
     }
 
-    function confirmMatch() {
-        if (
-            State.confirmedMatch
-        ) {
-            return true;
-        }
-
-        if (
-            !isInsideMatch()
-        ) {
-            updateStatus(
-                "Enter a match first."
-            );
-
-            if (
-                State.UI.scanStatus
-            ) {
-                State.UI.scanStatus.textContent =
-                    "No active match detected.";
-            }
-
-            log(
-                "Match scan rejected: not inside a match."
-            );
-
-            return false;
-        }
-
-        const game =
-            getGame();
-
-        if (!game) {
-            updateStatus(
-                "Game not found."
-            );
-
-            return false;
-        }
-
-        const manager =
-            game.botMgr;
-
-        if (!manager) {
-            updateStatus(
-                "botMgr not found."
-            );
-
-            warn(
-                "window.game.botMgr missing."
-            );
-
-            return false;
-        }
-
-        const arr =
-            manager.bots;
-
-        if (
-            !Array.isArray(arr)
-        ) {
-            updateStatus(
-                "botMgr.bots not found."
-            );
-
-            return false;
-        }
-
-        log(
-            "Match detected. Scanning bot manager..."
-        );
-
-        log(
-            "botMgr:",
-            manager
-        );
-
-        log(
-            "bots:",
-            arr
-        );
-
-        /*
-         * IMPORTANT:
-         *
-         * Do the exact thing confirmed
-         * by the user's console test.
-         */
-        const found =
-            arr.find(
-                b =>
-                    b &&
-                    b.team !== undefined
-            );
-
-        if (!found) {
-            warn(
-                "Could not find a bot with team."
-            );
-        } else {
-            log(
-                "Found bot:",
-                found
-            );
-
-            log(
-                "Bot constructor:",
-                found.constructor
-            );
-
-            log(
-                "Constructor name:",
-                found.constructor?.name
-            );
-        }
-
-        if (
-            !prepareBots()
-        ) {
-            updateStatus(
-                "Bot scan failed."
-            );
-
-            return false;
-        }
-
-        State.confirmedMatch =
-            true;
-
-        startStateLoop();
-
-        updateStatus(
-            "Match confirmed."
-        );
-
-        updateScanUI();
-
-        log(
-            "Match confirmed."
-        );
-
-        log(
-            "Original bots:",
-            State.originalBots.length
-        );
-
-        log(
-            "Connections multiplayer ready."
-        );
-
-        return true;
+    .conn-input {
+      width:100%;
+      background:#0e1015;
+      color:#fff;
+      border:1px solid #30333e;
+      border-radius:8px;
+      padding:9px;
+      outline:none;
     }
 
-    /* =========================================================
-       ROOMS
-    ========================================================= */
-
-    function updateRoomList() {
-        const list =
-            State.UI.roomList;
-
-        if (!list) {
-            return;
-        }
-
-        list.innerHTML = "";
-
-        if (
-            !State.rooms.length
-        ) {
-            const empty =
-                document.createElement(
-                    "div"
-                );
-
-            empty.className =
-                "conn-muted";
-
-            empty.textContent =
-                "No rooms.";
-
-            list.appendChild(
-                empty
-            );
-
-            return;
-        }
-
-        for (
-            const room of
-            State.rooms
-        ) {
-            const row =
-                document.createElement(
-                    "div"
-                );
-
-            row.className =
-                "conn-room";
-
-            const info =
-                document.createElement(
-                    "div"
-                );
-
-            const title =
-                document.createElement(
-                    "div"
-                );
-
-            title.className =
-                "conn-room-title";
-
-            title.textContent =
-                room.name ||
-                room.id ||
-                "Room";
-
-            const count =
-                document.createElement(
-                    "div"
-                );
-
-            count.className =
-                "conn-room-count";
-
-            count.textContent =
-                (
-                    room.players ??
-                    room.count ??
-                    0
-                ) +
-                " players";
-
-            info.appendChild(
-                title
-            );
-
-            info.appendChild(
-                count
-            );
-
-            const join =
-                document.createElement(
-                    "button"
-                );
-
-            join.className =
-                "conn-small";
-
-            join.textContent =
-                "Join";
-
-            join.onclick =
-                () =>
-                    Network.joinRoom(
-                        room.id
-                    );
-
-            row.appendChild(
-                info
-            );
-
-            row.appendChild(
-                join
-            );
-
-            list.appendChild(
-                row
-            );
-        }
+    .conn-color {
+      width:44px;
+      height:36px;
+      padding:2px;
+      border:1px solid #30333e;
+      background:#0e1015;
+      border-radius:8px;
     }
 
-    function updateCurrentRoom() {
-        const current =
-            State.UI.current;
-
-        if (!current) {
-            return;
-        }
-
-        if (
-            !State.joinedRoom
-        ) {
-            current.textContent =
-                "No room";
-
-            return;
-        }
-
-        const room =
-            State.roomData;
-
-        current.textContent =
-            room?.name ||
-            State.room ||
-            "Connected room";
+    .conn-room-card {
+      border:1px solid #292c36;
+      background:#101218;
+      border-radius:10px;
+      padding:11px;
+      margin-top:8px;
     }
 
-    function updateKickList() {
-        const box =
-            State.UI.kickList;
-
-        if (!box) {
-            return;
-        }
-
-        box.innerHTML = "";
-
-        const players =
-            State.roomData?.players;
-
-        if (
-            !Array.isArray(players)
-        ) {
-            return;
-        }
-
-        for (
-            const player of
-            players
-        ) {
-            if (
-                String(player.id) ===
-                String(State.id)
-            ) {
-                continue;
-            }
-
-            const row =
-                document.createElement(
-                    "div"
-                );
-
-            row.className =
-                "conn-kick-row";
-
-            const name =
-                document.createElement(
-                    "span"
-                );
-
-            name.textContent =
-                player.name ||
-                "Player";
-
-            const button =
-                document.createElement(
-                    "button"
-                );
-
-            button.className =
-                "conn-kick";
-
-            button.textContent =
-                "Kick";
-
-            button.onclick =
-                () =>
-                    Network.kick(
-                        player.id
-                    );
-
-            row.appendChild(
-                name
-            );
-
-            row.appendChild(
-                button
-            );
-
-            box.appendChild(
-                row
-            );
-        }
+    .conn-room-head {
+      display:flex;
+      align-items:center;
+      gap:8px;
     }
 
-    function createRoomFromUI() {
-        const name =
-            State.UI.roomName?.value.trim() ||
-            "Connections Room";
-
-        const maxPlayers =
-            Math.max(
-                1,
-                Number(
-                    State.UI.maxPlayers?.value
-                ) || 10
-            );
-
-        Network.createRoom({
-            name,
-            maxPlayers,
-            team:
-                "ct"
-        });
+    .conn-room-name {
+      font-weight:800;
     }
 
-    /* =========================================================
-       UI
-    ========================================================= */
-
-    function updateStatus(text) {
-        if (
-            State.UI.status
-        ) {
-            State.UI.status.textContent =
-                text;
-        }
+    .conn-room-meta {
+      color:#777c8c;
+      font-size:11px;
+      margin-top:4px;
     }
 
-    function updateUI() {
-        updateRoomList();
-        updateCurrentRoom();
-        updateKickList();
-        updateScanUI();
-        renderLobbyChat();
+    .conn-room-players {
+      color:#aaa;
+      font-size:12px;
+      margin-top:8px;
+      line-height:18px;
     }
 
-    function toggleUI() {
-        const panel =
-            State.UI.panel;
-
-        if (!panel) {
-            return;
-        }
-
-        panel.style.display =
-            panel.style.display ===
-            "none"
-                ? "block"
-                : "none";
+    .conn-room-actions {
+      margin-top:9px;
+      display:flex;
+      gap:7px;
     }
 
-    function closeUI() {
-        if (
-            State.UI.panel
-        ) {
-            State.UI.panel.style.display =
-                "none";
-        }
+    .conn-tag {
+      display:inline-block;
+      font-size:10px;
+      font-weight:800;
+      padding:3px 6px;
+      border-radius:5px;
+      background:#252936;
+      color:#aaa;
     }
 
-    function makePanelDraggable(
-        panel,
-        handle
-    ) {
-        let dragging = false;
-
-        let startX = 0;
-        let startY = 0;
-
-        let startLeft = 0;
-        let startTop = 0;
-
-        const stop =
-            () => {
-                dragging = false;
-
-                document.body.style.userSelect =
-                    "";
-
-                document.removeEventListener(
-                    "mousemove",
-                    move
-                );
-
-                document.removeEventListener(
-                    "mouseup",
-                    stop
-                );
-            };
-
-        const move =
-            event => {
-                if (!dragging) {
-                    return;
-                }
-
-                let left =
-                    startLeft +
-                    (
-                        event.clientX -
-                        startX
-                    );
-
-                let top =
-                    startTop +
-                    (
-                        event.clientY -
-                        startY
-                    );
-
-                const rect =
-                    panel.getBoundingClientRect();
-
-                left =
-                    Math.max(
-                        8,
-                        Math.min(
-                            left,
-                            window.innerWidth -
-                            rect.width -
-                            8
-                        )
-                    );
-
-                top =
-                    Math.max(
-                        8,
-                        Math.min(
-                            top,
-                            window.innerHeight -
-                            rect.height -
-                            8
-                        )
-                    );
-
-                panel.style.left =
-                    left + "px";
-
-                panel.style.top =
-                    top + "px";
-
-                panel.style.right =
-                    "auto";
-            };
-
-        handle.addEventListener(
-            "mousedown",
-            event => {
-                if (
-                    event.button !== 0
-                ) {
-                    return;
-                }
-
-                dragging = true;
-
-                startX =
-                    event.clientX;
-
-                startY =
-                    event.clientY;
-
-                const rect =
-                    panel.getBoundingClientRect();
-
-                startLeft =
-                    rect.left;
-
-                startTop =
-                    rect.top;
-
-                document.body.style.userSelect =
-                    "none";
-
-                document.addEventListener(
-                    "mousemove",
-                    move
-                );
-
-                document.addEventListener(
-                    "mouseup",
-                    stop
-                );
-            }
-        );
+    .conn-tag.rafit {
+      background:#25213a;
+      color:#b5a7ff;
     }
 
-    function createUI() {
-        if (
-            State.UI.panel
-        ) {
-            return;
-        }
+    .conn-tag.rtp {
+      background:#202d39;
+      color:#8ac8ff;
+    }
 
-        const panel =
-            document.createElement(
-                "div"
-            );
+    .conn-create-row {
+      display:flex;
+      gap:8px;
+      margin-top:8px;
+    }
 
-        panel.id =
-            "connections-panel";
+    .conn-segments {
+      display:flex;
+      flex-direction:column;
+      gap:7px;
+    }
 
-        panel.innerHTML = `
-            <div class="conn-header">
+    .conn-segment {
+      display:grid;
+      grid-template-columns:1fr 80px 80px 42px 42px 36px;
+      gap:6px;
+      align-items:center;
+    }
+
+    .conn-segment input[type="number"] {
+      width:100%;
+      background:#0e1015;
+      color:#fff;
+      border:1px solid #30333e;
+      border-radius:7px;
+      padding:7px;
+    }
+
+    .conn-segment input[type="color"] {
+      width:36px;
+      height:32px;
+      border:1px solid #30333e;
+      border-radius:7px;
+      background:#0e1015;
+      padding:2px;
+    }
+
+    .conn-check {
+      display:flex;
+      gap:8px;
+      align-items:center;
+      color:#aaa;
+      font-size:12px;
+      margin-top:9px;
+    }
+
+    .conn-footer {
+      color:#666b79;
+      text-align:center;
+      font-size:11px;
+      margin-top:15px;
+    }
+
+    .conn-current-player {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:7px;
+      background:#0f1117;
+      border-radius:7px;
+      margin-top:5px;
+    }
+
+    .conn-player-name {
+      font-weight:700;
+    }
+
+    .conn-kick {
+      margin-left:auto;
+      background:#321c22;
+      border:1px solid #542630;
+      color:#ff8b9d;
+      border-radius:6px;
+      padding:4px 7px;
+      cursor:pointer;
+      font-size:11px;
+    }
+
+    .conn-status-text {
+      margin-top:8px;
+      color:#8e93a1;
+      font-size:12px;
+    }
+
+    .conn-brand {
+      margin-left:auto;
+      display:flex;
+      align-items:center;
+      gap:5px;
+    }
+  `);
+
+  function buildUI() {
+    if (document.getElementById("connections-panel")) {
+      return;
+    }
+
+    const panel =
+      document.createElement("div");
+
+    panel.id = "connections-panel";
+
+    panel.innerHTML = `
+      <div class="conn-header">
+        <img
+          class="conn-logo"
+          src="${RAFIT_LOGO}"
+        >
+
+        <div>
+          <div class="conn-title">
+            Connections
+          </div>
+
+          <div class="conn-subtitle">
+            Multiplayer
+          </div>
+        </div>
+
+        <div class="conn-brand">
+          <span class="conn-tag rafit">
+            RAFIT
+          </span>
+
+          <span class="conn-tag rtp">
+            RTP ${State.rtp}
+          </span>
+        </div>
+
+        <button class="conn-close">
+          ×
+        </button>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          MATCH CHECK
+        </div>
+
+        <div class="conn-match-title">
+          Multiplayer Match Scanner
+        </div>
+
+        <div class="conn-match-description">
+          Enter a real match first, then click the button.
+          Connections will scan the game and remove the
+          original bots so remote players can be rendered.
+        </div>
+
+        <button
+          id="conn-match-btn"
+          class="conn-btn primary"
+        >
+          I AM INSIDE A MATCH
+        </button>
+
+        <div
+          id="conn-match-status"
+          class="conn-status-text"
+        >
+          Not confirmed.
+        </div>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          CONNECTION
+        </div>
+
+        <div class="conn-status">
+          <span
+            id="conn-dot"
+            class="conn-dot offline"
+          ></span>
+
+          <span id="conn-connection-text">
+            OFFLINE
+          </span>
+        </div>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          PROFILE
+        </div>
+
+        <div class="conn-profile">
+          <input
+            id="conn-name"
+            class="conn-input"
+            placeholder="Player name"
+            maxlength="24"
+          >
+
+          <input
+            id="conn-name-color"
+            class="conn-color"
+            type="color"
+          >
+        </div>
+
+        <button
+          id="conn-save-profile"
+          class="conn-btn"
+        >
+          Save Profile
+        </button>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          CREATE ROOM
+        </div>
+
+        <div class="conn-create-row">
+          <input
+            id="conn-room-name"
+            class="conn-input"
+            placeholder="Room name"
+            maxlength="32"
+          >
+        </div>
+
+        <div
+          id="conn-segments"
+          class="conn-segments"
+        ></div>
+
+        <button
+          id="conn-add-segment"
+          class="conn-btn"
+          style="margin-top:8px"
+        >
+          + Add segment
+        </button>
+
+        <label class="conn-check">
+          <input
+            id="conn-rafit"
+            type="checkbox"
+            checked
+          >
+          RAFIT
+        </label>
+
+        <label class="conn-check">
+          <input
+            id="conn-professional"
+            type="checkbox"
+          >
+          Professional
+        </label>
+
+        <button
+          id="conn-create-room"
+          class="conn-btn primary"
+          style="margin-top:10px"
+        >
+          Create Room
+        </button>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          ROOMS
+        </div>
+
+        <div id="conn-rooms">
+          Loading rooms...
+        </div>
+      </div>
+
+      <div class="conn-section">
+        <div class="conn-section-title">
+          CURRENT ROOM
+        </div>
+
+        <div
+          id="conn-current-room"
+          class="conn-status-text"
+        >
+          Not in a room.
+        </div>
+
+        <button
+          id="conn-leave-room"
+          class="conn-btn"
+          style="margin-top:8px"
+        >
+          Leave Room
+        </button>
+
+        <div
+          id="conn-current-players"
+          style="margin-top:9px"
+        ></div>
+      </div>
+
+      <div class="conn-footer">
+        <span id="conn-status">
+          Offline
+        </span>
+        <br>
+        Backspace = open/close
+      </div>
+    `;
+
+    document.body.appendChild(panel);
+
+    State.UI.panel = panel;
+
+    State.UI.matchBtn =
+      panel.querySelector(
+        "#conn-match-btn"
+      );
+
+    State.UI.rooms =
+      panel.querySelector(
+        "#conn-rooms"
+      );
+
+    State.UI.currentRoom =
+      panel.querySelector(
+        "#conn-current-room"
+      );
+
+    State.UI.currentPlayers =
+      panel.querySelector(
+        "#conn-current-players"
+      );
+
+    State.UI.status =
+      panel.querySelector(
+        "#conn-status"
+      );
+
+    State.UI.matchStatus =
+      panel.querySelector(
+        "#conn-match-status"
+      );
+
+    bindUI();
+
+    addSegment();
+  }
+
+  function bindUI() {
+    const panel = State.UI.panel;
+
+    panel
+      .querySelector(".conn-close")
+      .onclick = () => {
+        toggleUI(false);
+      };
+
+    State.UI.matchBtn.onclick =
+      confirmMatch;
+
+    panel.querySelector(
+      "#conn-save-profile"
+    ).onclick = () => {
+      const name =
+        panel.querySelector(
+          "#conn-name"
+        ).value.trim();
+
+      const color =
+        panel.querySelector(
+          "#conn-name-color"
+        ).value;
+
+      if (name) {
+        State.name = name;
+      }
+
+      if (color) {
+        State.nameColor = color;
+      }
+
+      saveProfile();
+
+      setStatus(
+        "Profile saved."
+      );
+    };
+
+    panel.querySelector(
+      "#conn-add-segment"
+    ).onclick = addSegment;
+
+    panel.querySelector(
+      "#conn-create-room"
+    ).onclick = createRoomFromUI;
+
+    panel.querySelector(
+      "#conn-leave-room"
+    ).onclick = () => {
+      Network.leaveRoom();
+    };
+
+    panel.querySelector(
+      "#conn-name"
+    ).value = State.name;
+
+    panel.querySelector(
+      "#conn-name-color"
+    ).value = State.nameColor;
+
+    makeDraggable(panel);
+  }
+
+  function addSegment(
+    defaults = {}
+  ) {
+    const container =
+      document.getElementById(
+        "conn-segments"
+      );
+
+    if (!container) return;
+
+    const row =
+      document.createElement("div");
+
+    row.className =
+      "conn-segment";
+
+    row.innerHTML = `
+      <input
+        class="conn-input segment-name"
+        placeholder="Segment"
+        value="${defaults.name || "Segment"}"
+      >
+
+      <input
+        type="number"
+        class="segment-ct"
+        min="0"
+        max="32"
+        value="${defaults.ct ?? 5}"
+      >
+
+      <input
+        type="number"
+        class="segment-tt"
+        min="0"
+        max="32"
+        value="${defaults.tt ?? 5}"
+      >
+
+      <input
+        type="color"
+        class="segment-color"
+        value="${defaults.color || "#7289da"}"
+      >
+
+      <span class="conn-tag">
+        CT/TT
+      </span>
+
+      <button
+        class="conn-btn segment-remove"
+      >
+        ×
+      </button>
+    `;
+
+    row.querySelector(
+      ".segment-remove"
+    ).onclick = () => {
+      row.remove();
+    };
+
+    container.appendChild(row);
+  }
+
+  function createRoomFromUI() {
+    const name =
+      document.getElementById(
+        "conn-room-name"
+      )?.value.trim();
+
+    if (!name) {
+      setStatus(
+        "Enter a room name."
+      );
+      return;
+    }
+
+    const segments = [
+      ...document.querySelectorAll(
+        "#conn-segments .conn-segment"
+      )
+    ].map(row => ({
+      name:
+        row.querySelector(
+          ".segment-name"
+        ).value || "Segment",
+
+      ct:
+        Number(
+          row.querySelector(
+            ".segment-ct"
+          ).value
+        ) || 0,
+
+      tt:
+        Number(
+          row.querySelector(
+            ".segment-tt"
+          ).value
+        ) || 0,
+
+      color:
+        row.querySelector(
+          ".segment-color"
+        ).value || "#7289da"
+    }));
+
+    const rafit =
+      document.getElementById(
+        "conn-rafit"
+      ).checked;
+
+    const professional =
+      document.getElementById(
+        "conn-professional"
+      ).checked;
+
+    Network.createRoom({
+      name,
+      segments,
+      rafit,
+      professional,
+      rtp: State.rtp
+    });
+  }
+
+  function renderRooms() {
+    const container = State.UI.rooms;
+
+    if (!container) return;
+
+    if (!State.rooms.length) {
+      container.innerHTML = `
+        <div class="conn-status-text">
+          No rooms available.
+        </div>
+      `;
+
+      return;
+    }
+
+    container.innerHTML = "";
+
+    for (const room of State.rooms) {
+      const card =
+        document.createElement("div");
+
+      card.className =
+        "conn-room-card";
+
+      const players =
+        Array.isArray(room.players)
+          ? room.players
+          : [];
+
+      const playerText =
+        players.length
+          ? players.map(p => {
+              const color =
+                p.color ||
+                p.nameColor ||
+                "#7289da";
+
+              return `
                 <div>
-                    <div class="conn-title">
-                        CONNECTIONS
-                    </div>
-                    <div class="conn-version">
-                        v${VERSION}
-                    </div>
+                  <span
+                    style="
+                      color:${escapeHtml(color)};
+                      font-weight:700;
+                    "
+                  >
+                    ${escapeHtml(
+                      p.name || "Player"
+                    )}
+                  </span>
                 </div>
+              `;
+            }).join("")
+          : "No players";
 
-                <button
-                    class="conn-close"
-                    id="conn-close"
-                >
-                    ×
-                </button>
-            </div>
+      card.innerHTML = `
+        <div class="conn-room-head">
+          <div class="conn-room-name">
+            ${escapeHtml(
+              room.name || "Room"
+            )}
+          </div>
 
-            <div class="conn-section">
-                <div class="conn-section-title">
-                    PROFILE
-                </div>
+          ${
+            room.rafit
+              ? `<span class="conn-tag rafit">RAFIT</span>`
+              : ""
+          }
 
-                <input
-                    id="conn-name"
-                    class="conn-input"
-                    maxlength="32"
-                    placeholder="Player name"
-                />
-            </div>
+          ${
+            room.professional
+              ? `<span class="conn-tag">Professional</span>`
+              : ""
+          }
 
-            <div class="conn-section">
-                <div class="conn-section-title">
-                    MATCH CHECK
-                </div>
+          <span class="conn-tag rtp">
+            RTP ${Number(room.rtp || 0)}
+          </span>
+        </div>
 
-                <button
-                    id="conn-scan"
-                    class="conn-scan"
-                >
-                    I AM INSIDE A MATCH
-                </button>
+        <div class="conn-room-meta">
+          ${players.length} player(s)
+        </div>
 
-                <div
-                    id="conn-scan-status"
-                    class="conn-scan-status"
-                >
-                    Enter a match, then scan.
-                </div>
-            </div>
+        <div class="conn-room-players">
+          ${playerText}
+        </div>
 
-            <div class="conn-section">
-                <div class="conn-section-title">
-                    CREATE ROOM
-                </div>
+        <div class="conn-room-actions">
+          <button class="conn-btn join-room">
+            Join
+          </button>
+        </div>
+      `;
 
-                <input
-                    id="conn-room-name"
-                    class="conn-input"
-                    maxlength="40"
-                    placeholder="Room name"
-                    value="Connections Room"
-                />
+      card.querySelector(
+        ".join-room"
+      ).onclick = () => {
+        Network.joinRoom(
+          room.id ||
+          room.roomId
+        );
+      };
 
-                <input
-                    id="conn-max"
-                    class="conn-input"
-                    type="number"
-                    min="2"
-                    max="32"
-                    value="10"
-                    placeholder="Max players"
-                />
+      container.appendChild(card);
+    }
+  }
 
-                <button
-                    id="conn-create"
-                    class="conn-btn"
-                >
-                    Create Room
-                </button>
-            </div>
+  function updateCurrentRoom() {
+    if (!State.UI.currentRoom) return;
 
-            <div class="conn-section">
-                <div class="conn-section-title">
-                    ROOMS
-                </div>
+    if (!State.joinedRoom) {
+      State.UI.currentRoom.innerHTML =
+        "Not in a room.";
 
-                <div id="conn-rooms"></div>
-            </div>
+      State.UI.currentPlayers.innerHTML =
+        "";
 
-            <div class="conn-section">
-                <div class="conn-section-title">
-                    CURRENT ROOM
-                </div>
+      return;
+    }
 
-                <div
-                    id="conn-current"
-                    class="conn-current"
-                >
-                    No room
-                </div>
+    const room =
+      State.roomData || {};
 
-                <button
-                    id="conn-leave"
-                    class="conn-small conn-leave"
-                >
-                    Leave Room
-                </button>
+    State.UI.currentRoom.innerHTML = `
+      <strong>
+        ${escapeHtml(
+          room.name ||
+          State.room ||
+          "Current Room"
+        )}
+      </strong>
+    `;
 
-                <div
-                    id="conn-kicks"
-                    class="conn-kicks"
-                ></div>
-            </div>
+    const players =
+      Array.isArray(room.players)
+        ? room.players
+        : [];
 
-            <div class="conn-section conn-chat-section">
-                <div class="conn-section-title">
-                    CHAT
-                </div>
+    State.UI.currentPlayers.innerHTML =
+      players.map(p => {
+        const id =
+          String(p.id || "");
 
-                <div
-                    id="conn-lobby-chat"
-                    class="conn-lobby-chat"
-                ></div>
+        const color =
+          p.color ||
+          p.nameColor ||
+          "#7289da";
 
-                <div class="conn-chat-compose">
-                    <input
-                        id="conn-lobby-input"
-                        class="conn-input"
-                        maxlength="300"
-                        placeholder="Message..."
-                    />
+        const isMe =
+          State.id &&
+          id === String(State.id);
 
-                    <button
-                        id="conn-lobby-send"
-                        class="conn-small"
-                    >
-                        Send
-                    </button>
-                </div>
-
-                <div class="conn-chat-help">
-                    During match: press Y
-                </div>
-            </div>
-
-            <div
-                id="conn-status"
-                class="conn-status"
+        return `
+          <div class="conn-current-player">
+            <span
+              class="conn-player-name"
+              style="color:${escapeHtml(color)}"
             >
-                Offline
-            </div>
+              ${escapeHtml(
+                p.name || "Player"
+              )}
+            </span>
 
-            <div class="conn-hotkey">
-                Backspace = open/close
-            </div>
+            ${
+              isMe
+                ? `<span class="conn-tag">YOU</span>`
+                : ""
+            }
+
+            ${
+              !isMe &&
+              room.host === State.id
+                ? `
+                  <button
+                    class="conn-kick"
+                    data-kick="${escapeHtml(id)}"
+                  >
+                    Kick
+                  </button>
+                `
+                : ""
+            }
+          </div>
         `;
-
-        document.body.appendChild(
-            panel
-        );
-
-        State.UI.panel =
-            panel;
-
-        State.UI.name =
-            panel.querySelector(
-                "#conn-name"
-            );
-
-        State.UI.name.value =
-            State.name;
-
-        State.UI.scanButton =
-            panel.querySelector(
-                "#conn-scan"
-            );
-
-        State.UI.scanStatus =
-            panel.querySelector(
-                "#conn-scan-status"
-            );
-
-        State.UI.roomName =
-            panel.querySelector(
-                "#conn-room-name"
-            );
-
-        State.UI.maxPlayers =
-            panel.querySelector(
-                "#conn-max"
-            );
-
-        State.UI.roomList =
-            panel.querySelector(
-                "#conn-rooms"
-            );
-
-        State.UI.current =
-            panel.querySelector(
-                "#conn-current"
-            );
-
-        State.UI.kickList =
-            panel.querySelector(
-                "#conn-kicks"
-            );
-
-        State.UI.status =
-            panel.querySelector(
-                "#conn-status"
-            );
-
-        State.UI.lobbyChatMessages =
-            panel.querySelector(
-                "#conn-lobby-chat"
-            );
-
-        State.UI.lobbyChatInput =
-            panel.querySelector(
-                "#conn-lobby-input"
-            );
-
-        State.UI.lobbyChatSend =
-            panel.querySelector(
-                "#conn-lobby-send"
-            );
-
-        /*
-         * Match chat input.
-         */
-        const chatInput =
-            document.createElement(
-                "input"
-            );
-
-        chatInput.id =
-            "connections-game-chat-input";
-
-        chatInput.className =
-            "conn-game-chat-input";
-
-        chatInput.maxLength =
-            300;
-
-        chatInput.placeholder =
-            "Say something...";
-
-        chatInput.style.display =
-            "none";
-
-        document.body.appendChild(
-            chatInput
-        );
-
-        State.UI.chatInput =
-            chatInput;
-
-        const chatHint =
-            document.createElement(
-                "div"
-            );
-
-        chatHint.className =
-            "conn-game-chat-hint";
-
-        chatHint.textContent =
-            "ENTER send • ESC cancel";
-
-        chatHint.style.display =
-            "none";
-
-        document.body.appendChild(
-            chatHint
-        );
-
-        State.UI.chatHint =
-            chatHint;
-
-        /*
-         * Match chat message overlay.
-         */
-        const gameChat =
-            document.createElement(
-                "div"
-            );
-
-        gameChat.className =
-            "conn-game-chat";
-
-        document.body.appendChild(
-            gameChat
-        );
-
-        State.UI.gameChat =
-            gameChat;
-
-        panel.querySelector(
-            "#conn-close"
-        ).onclick =
-            closeUI;
-
-        State.UI.scanButton.onclick =
-            confirmMatch;
-
-        panel.querySelector(
-            "#conn-create"
-        ).onclick =
-            createRoomFromUI;
-
-        panel.querySelector(
-            "#conn-leave"
-        ).onclick =
-            () =>
-                Network.leaveRoom();
-
-        State.UI.name.addEventListener(
-            "change",
-            () => {
-                const name =
-                    State.UI.name.value
-                        .trim()
-                        .slice(0, 32);
-
-                State.name =
-                    name ||
-                    "Player";
-
-                localStorage.setItem(
-                    "connections_name",
-                    State.name
-                );
-            }
-        );
-
-        State.UI.lobbyChatSend.onclick =
-            () => {
-                const input =
-                    State.UI.lobbyChatInput;
-
-                const value =
-                    input.value.trim();
-
-                if (value) {
-                    Network.chat(value);
-                    input.value = "";
-                }
-            };
-
-        State.UI.lobbyChatInput.addEventListener(
-            "keydown",
-            event => {
-                if (
-                    event.key ===
-                    "Enter"
-                ) {
-                    event.preventDefault();
-
-                    State.UI.lobbyChatSend.click();
-                }
-
-                if (
-                    event.key ===
-                    "Escape"
-                ) {
-                    event.preventDefault();
-
-                    State.UI.lobbyChatInput.value =
-                        "";
-                }
-            }
-        );
-
-        chatInput.addEventListener(
-            "keydown",
-            event => {
-                if (
-                    event.key ===
-                    "Enter"
-                ) {
-                    event.preventDefault();
-
-                    submitChat();
-                    return;
-                }
-
-                if (
-                    event.key ===
-                    "Escape"
-                ) {
-                    event.preventDefault();
-
-                    closeChat();
-                }
-            }
-        );
-
-        makePanelDraggable(
-            panel,
-            panel.querySelector(
-                ".conn-header"
-            )
-        );
-
-        renderLobbyChat();
-        updateUI();
-    }
-
-    /* =========================================================
-       HOTKEYS
-    ========================================================= */
-
-    function installHotkeys() {
-        document.addEventListener(
-            "keydown",
-            event => {
-
-                /*
-                 * Y opens match chat.
-                 */
-                if (
-                    event.code ===
-                    "KeyY"
-                ) {
-                    const target =
-                        event.target;
-
-                    if (
-                        target &&
-                        (
-                            target.tagName ===
-                            "INPUT" ||
-                            target.tagName ===
-                            "TEXTAREA" ||
-                            target.isContentEditable
-                        )
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        State.joinedRoom &&
-                        State.confirmedMatch
-                    ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-
-                        openChat();
-                    }
-
-                    return;
-                }
-
-                /*
-                 * Don't let Backspace toggle
-                 * Connections while typing.
-                 */
-                if (
-                    event.code !==
-                    "Backspace"
-                ) {
-                    return;
-                }
-
-                const target =
-                    event.target;
-
-                if (
-                    target &&
-                    (
-                        target.tagName ===
-                        "INPUT" ||
-                        target.tagName ===
-                        "TEXTAREA" ||
-                        target.isContentEditable
-                    )
-                ) {
-                    return;
-                }
-
-                event.preventDefault();
-
-                toggleUI();
-            },
-            true
-        );
-    }
-
-    /* =========================================================
-       MONITOR
-    ========================================================= */
-
-    function installMonitor() {
-        State.monitorTimer =
-            setInterval(
-                () => {
-
-                    if (
-                        State.confirmedMatch
-                    ) {
-                        if (
-                            !isInsideMatch()
-                        ) {
-                            State.confirmedMatch =
-                                false;
-
-                            State.dead =
-                                false;
-
-                            stopStateLoop();
-
-                            /*
-                             * Keep remote objects around
-                             * until explicit scan/leave,
-                             * matching the old behavior.
-                             */
-                            updateScanUI();
-
-                            updateStatus(
-                                "Match ended. Scan again."
-                            );
-                        }
-                    }
-
-                    updateBots();
-                    updateCurrentRoom();
-                    updateKickList();
-
-                },
-                100
-            );
-    }
-
-    /* =========================================================
-       STYLES
-    ========================================================= */
-
-    function installStyles() {
-        GM_addStyle(`
-            #connections-panel {
-                position: fixed;
-                top: 90px;
-                right: 25px;
-                width: 370px;
-                max-height: 82vh;
-                overflow-y: auto;
-                z-index: 2147483646;
-
-                background:
-                    linear-gradient(
-                        145deg,
-                        rgba(18,18,24,.98),
-                        rgba(10,10,14,.98)
-                    );
-
-                color: #eeeeee;
-
-                border:
-                    1px solid
-                    rgba(114,137,218,.45);
-
-                border-radius: 14px;
-
-                box-shadow:
-                    0 18px 60px
-                    rgba(0,0,0,.55),
-                    0 0 35px
-                    rgba(114,137,218,.08);
-
-                font-family:
-                    Arial,
-                    Helvetica,
-                    sans-serif;
-
-                font-size: 13px;
-
-                backdrop-filter:
-                    blur(14px);
-
-                scrollbar-width:
-                    thin;
-            }
-
-            #connections-panel::-webkit-scrollbar {
-                width: 6px;
-            }
-
-            #connections-panel::-webkit-scrollbar-thumb {
-                background: #3b3f50;
-                border-radius: 10px;
-            }
-
-            .conn-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-
-                padding: 16px;
-
-                cursor: move;
-
-                border-bottom:
-                    1px solid
-                    rgba(255,255,255,.07);
-            }
-
-            .conn-title {
-                font-size: 17px;
-                font-weight: 800;
-                letter-spacing: 1.4px;
-            }
-
-            .conn-version {
-                margin-top: 3px;
-                opacity: .45;
-                font-size: 10px;
-            }
-
-            .conn-close {
-                width: 30px;
-                height: 30px;
-
-                border: 0;
-                border-radius: 8px;
-
-                background:
-                    rgba(255,255,255,.06);
-
-                color: #aaa;
-
-                font-size: 20px;
-                cursor: pointer;
-            }
-
-            .conn-close:hover {
-                background:
-                    rgba(255,255,255,.12);
-
-                color: #fff;
-            }
-
-            .conn-section {
-                margin: 10px;
-                padding: 12px;
-
-                background:
-                    rgba(255,255,255,.025);
-
-                border:
-                    1px solid
-                    rgba(255,255,255,.055);
-
-                border-radius: 10px;
-            }
-
-            .conn-section-title {
-                margin-bottom: 9px;
-
-                font-size: 10px;
-                font-weight: 800;
-
-                letter-spacing: 1.2px;
-
-                opacity: .55;
-            }
-
-            .conn-input {
-                box-sizing: border-box;
-
-                width: 100%;
-
-                margin-bottom: 7px;
-
-                padding:
-                    10px 11px;
-
-                border:
-                    1px solid
-                    rgba(255,255,255,.09);
-
-                outline: none;
-
-                border-radius: 8px;
-
-                background:
-                    rgba(0,0,0,.28);
-
-                color: #fff;
-
-                font-size: 13px;
-            }
-
-            .conn-input:focus {
-                border-color:
-                    rgba(114,137,218,.8);
-            }
-
-            .conn-btn,
-            .conn-scan,
-            .conn-small {
-                border: 0;
-                border-radius: 8px;
-
-                background:
-                    #7289da;
-
-                color: #fff;
-
-                cursor: pointer;
-
-                font-weight: 700;
-            }
-
-            .conn-btn {
-                width: 100%;
-                padding: 10px;
-            }
-
-            .conn-scan {
-                width: 100%;
-                padding: 12px;
-            }
-
-            .conn-scan:hover,
-            .conn-btn:hover,
-            .conn-small:hover {
-                filter: brightness(1.12);
-            }
-
-            .conn-scan:disabled {
-                opacity: .65;
-                cursor: default;
-            }
-
-            .conn-scan-done {
-                background:
-                    #3c9c68 !important;
-            }
-
-            .conn-scan-status {
-                margin-top: 8px;
-                font-size: 11px;
-                opacity: .55;
-                text-align: center;
-            }
-
-            .conn-room {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-
-                padding: 9px;
-
-                margin-bottom: 6px;
-
-                background:
-                    rgba(255,255,255,.035);
-
-                border-radius: 8px;
-            }
-
-            .conn-room-title {
-                font-weight: 700;
-            }
-
-            .conn-room-count {
-                margin-top: 2px;
-                font-size: 10px;
-                opacity: .45;
-            }
-
-            .conn-small {
-                padding:
-                    7px 10px;
-
-                font-size: 11px;
-            }
-
-            .conn-leave {
-                margin-top: 8px;
-                background:
-                    #9b4242;
-            }
-
-            .conn-current {
-                font-weight: 700;
-            }
-
-            .conn-kicks {
-                margin-top: 9px;
-            }
-
-            .conn-kick-row {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-
-                padding: 6px 0;
-
-                border-bottom:
-                    1px solid
-                    rgba(255,255,255,.04);
-            }
-
-            .conn-kick {
-                border: 0;
-                border-radius: 6px;
-
-                padding:
-                    4px 7px;
-
-                background:
-                    rgba(180,60,60,.75);
-
-                color: white;
-
-                font-size: 10px;
-                cursor: pointer;
-            }
-
-            .conn-muted {
-                opacity: .45;
-                font-size: 11px;
-                padding: 4px;
-            }
-
-            .conn-status {
-                margin: 10px 12px 4px;
-
-                padding: 8px;
-
-                border-radius: 7px;
-
-                background:
-                    rgba(255,255,255,.035);
-
-                color: #aeb8d8;
-
-                font-size: 11px;
-
-                text-align: center;
-            }
-
-            .conn-hotkey {
-                padding:
-                    9px 12px 14px;
-
-                text-align: center;
-
-                opacity: .35;
-
-                font-size: 10px;
-            }
-
-            .conn-chat-section {
-                padding-bottom: 10px;
-            }
-
-            .conn-lobby-chat {
-                height: 170px;
-                overflow-y: auto;
-
-                padding: 8px;
-
-                background:
-                    rgba(0,0,0,.25);
-
-                border-radius: 8px;
-
-                scrollbar-width: thin;
-            }
-
-            .conn-lobby-chat-row {
-                padding:
-                    4px 2px;
-
-                line-height: 1.35;
-
-                word-break: break-word;
-            }
-
-            .conn-lobby-chat-name {
-                color: #8ea2ed;
-                font-weight: 700;
-            }
-
-            .conn-lobby-chat-text {
-                color: #ddd;
-            }
-
-            .conn-chat-compose {
-                display: flex;
-                gap: 6px;
-
-                margin-top: 7px;
-            }
-
-            .conn-chat-compose .conn-input {
-                margin: 0;
-            }
-
-            .conn-chat-help {
-                margin-top: 7px;
-
-                font-size: 10px;
-
-                opacity: .38;
-
-                text-align: center;
-            }
-
-            .conn-game-chat {
-                position: fixed;
-
-                left: 25px;
-                bottom: 125px;
-
-                width: min(
-                    550px,
-                    55vw
-                );
-
-                z-index:
-                    2147483640;
-
-                pointer-events: none;
-
-                font-family:
-                    Arial,
-                    Helvetica,
-                    sans-serif;
-
-                font-size: 14px;
-
-                text-shadow:
-                    1px 1px 3px
-                    rgba(0,0,0,.95);
-            }
-
-            .conn-game-chat-row {
-                display: block;
-
-                margin-top: 4px;
-
-                color: #fff;
-
-                opacity: 1;
-
-                transition:
-                    opacity .5s;
-            }
-
-            .conn-game-chat-name {
-                color: #9caef4;
-                font-weight: 800;
-            }
-
-            .conn-game-chat-text {
-                color: #fff;
-            }
-
-            .conn-chat-fade {
-                opacity: 0;
-            }
-
-            .conn-game-chat-input {
-                position: fixed;
-
-                left: 25px;
-                bottom: 78px;
-
-                width: min(
-                    500px,
-                    50vw
-                );
-
-                height: 38px;
-
-                z-index:
-                    2147483641;
-
-                box-sizing: border-box;
-
-                padding:
-                    0 12px;
-
-                border:
-                    1px solid
-                    rgba(114,137,218,.7);
-
-                border-radius: 6px;
-
-                outline: none;
-
-                background:
-                    rgba(8,8,12,.92);
-
-                color: #fff;
-
-                font:
-                    14px
-                    Arial,
-                    sans-serif;
-
-                box-shadow:
-                    0 8px 25px
-                    rgba(0,0,0,.4);
-            }
-
-            .conn-game-chat-hint {
-                position: fixed;
-
-                left: 25px;
-                bottom: 57px;
-
-                z-index:
-                    2147483641;
-
-                color: rgba(255,255,255,.55);
-
-                font:
-                    10px
-                    Arial,
-                    sans-serif;
-
-                pointer-events: none;
-            }
-        `);
-    }
-
-    /* =========================================================
-       INIT
-    ========================================================= */
-
-    function init() {
-        installStyles();
-
-        createUI();
-
-        installHotkeys();
-
-        installMonitor();
-
-        Network.connect();
-
-        log(
-            `Connections ${VERSION} loaded.`
-        );
-
-        log(
-            "Press Backspace to open."
-        );
-
-        log(
-            "Press Y during a match to chat."
-        );
-    }
-
-    if (
-        document.readyState ===
-        "loading"
-    ) {
-        document.addEventListener(
-            "DOMContentLoaded",
-            init,
-            {
-                once: true
-            }
-        );
+      }).join("");
+
+    State.UI.currentPlayers
+      .querySelectorAll(
+        "[data-kick]"
+      )
+      .forEach(btn => {
+        btn.onclick = () => {
+          Network.kick(
+            btn.dataset.kick
+          );
+        };
+      });
+  }
+
+  function updateScanUI() {
+    if (!State.UI.matchBtn) return;
+
+    if (State.confirmedMatch) {
+      State.UI.matchBtn.textContent =
+        "MATCH CONFIRMED";
+
+      State.UI.matchBtn.disabled = true;
+
+      State.UI.matchStatus.textContent =
+        `Ready • ${State.originalBots.length} original bots captured`;
     } else {
-        init();
+      State.UI.matchBtn.textContent =
+        "I AM INSIDE A MATCH";
+
+      State.UI.matchBtn.disabled = false;
+
+      State.UI.matchStatus.textContent =
+        State.joinedRoom
+          ? "Not confirmed."
+          : "Join a room first.";
     }
+  }
+
+  function updateUI() {
+    if (!State.UI.panel) return;
+
+    const dot =
+      State.UI.panel.querySelector(
+        "#conn-dot"
+      );
+
+    const connectionText =
+      State.UI.panel.querySelector(
+        "#conn-connection-text"
+      );
+
+    if (State.connected) {
+      dot.className =
+        "conn-dot online";
+
+      connectionText.textContent =
+        "ONLINE";
+    } else {
+      dot.className =
+        "conn-dot offline";
+
+      connectionText.textContent =
+        "OFFLINE";
+    }
+
+    updateScanUI();
+    updateCurrentRoom();
+    renderRooms();
+
+    const rtp =
+      State.UI.panel.querySelector(
+        ".conn-tag.rtp"
+      );
+
+    if (rtp) {
+      rtp.textContent =
+        `RTP ${State.rtp}`;
+    }
+  }
+
+  function setStatus(text) {
+    if (State.UI.status) {
+      State.UI.status.textContent =
+        text;
+    }
+
+    log(text);
+  }
+
+  function toggleUI(force) {
+    const panel = State.UI.panel;
+
+    if (!panel) return;
+
+    const visible =
+      force !== undefined
+        ? force
+        : panel.style.display !== "block";
+
+    panel.style.display =
+      visible
+        ? "block"
+        : "none";
+
+    if (visible) {
+      updateUI();
+    }
+  }
+
+  /* =========================================================
+     DRAG
+  ========================================================= */
+
+  function makeDraggable(panel) {
+    const header =
+      panel.querySelector(
+        ".conn-header"
+      );
+
+    if (!header) return;
+
+    let dragging = false;
+    let ox = 0;
+    let oy = 0;
+
+    header.addEventListener(
+      "mousedown",
+      e => {
+        if (
+          e.target.closest(
+            ".conn-close"
+          )
+        ) {
+          return;
+        }
+
+        dragging = true;
+
+        const rect =
+          panel.getBoundingClientRect();
+
+        ox =
+          e.clientX -
+          rect.left;
+
+        oy =
+          e.clientY -
+          rect.top;
+
+        panel.style.transform =
+          "none";
+
+        panel.style.left =
+          rect.left + "px";
+
+        panel.style.top =
+          rect.top + "px";
+
+        e.preventDefault();
+      }
+    );
+
+    document.addEventListener(
+      "mousemove",
+      e => {
+        if (!dragging) return;
+
+        panel.style.left =
+          Math.max(
+            5,
+            Math.min(
+              window.innerWidth -
+                panel.offsetWidth -
+                5,
+              e.clientX - ox
+            )
+          ) + "px";
+
+        panel.style.top =
+          Math.max(
+            5,
+            Math.min(
+              window.innerHeight -
+                panel.offsetHeight -
+                5,
+              e.clientY - oy
+            )
+          ) + "px";
+      }
+    );
+
+    document.addEventListener(
+      "mouseup",
+      () => {
+        dragging = false;
+      }
+    );
+  }
+
+  /* =========================================================
+     INPUT / HOTKEYS
+  ========================================================= */
+
+  document.addEventListener(
+    "keydown",
+    e => {
+      if (
+        e.key === "Backspace" &&
+        !e.target.matches(
+          "input,textarea,select"
+        )
+      ) {
+        e.preventDefault();
+        toggleUI();
+        return;
+      }
+
+      if (
+        e.key.toLowerCase() === "y" &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.target.matches(
+          "input,textarea,select"
+        )
+      ) {
+        if (isInsideMatch()) {
+          e.preventDefault();
+          openChat();
+        }
+      }
+    },
+    true
+  );
+
+  /* =========================================================
+     UTIL
+  ========================================================= */
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  /* =========================================================
+     INIT
+  ========================================================= */
+
+  function init() {
+    buildUI();
+
+    Network.connect();
+
+    if (State.monitorTimer) {
+      clearInterval(
+        State.monitorTimer
+      );
+    }
+
+    State.monitorTimer =
+      setInterval(
+        monitorMatch,
+        250
+      );
+
+    log(
+      `Connections ${VERSION} loaded.`
+    );
+
+    log(
+      "Backspace = open/close"
+    );
+  }
+
+  if (
+    document.readyState ===
+    "loading"
+  ) {
+    document.addEventListener(
+      "DOMContentLoaded",
+      init,
+      { once: true }
+    );
+  } else {
+    init();
+  }
 })();
