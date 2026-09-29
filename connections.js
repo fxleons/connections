@@ -1,4 +1,3 @@
-```javascript
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
@@ -3199,4 +3198,3 @@
     boot();
   }
 })();
-```
