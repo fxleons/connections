@@ -5365,6 +5365,7 @@ if (
       once: true
     }
   );
-} else {
-  init();
+  } else {
+    init();
+  }
 })();
