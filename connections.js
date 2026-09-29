@@ -354,6 +354,475 @@
       };
     }
 
+    return null;
+  }
+
+  function getLocalPlayer() {
+    const g = getGame();
+
+    if (!g) return null;
+
+    const players = [
+      g.player,
+      g.localPlayer,
+      g.me,
+      g.character,
+      g.local,
+      g.myPlayer,
+      g.playerEntity
+    ];
+
+    for (const p of players) {
+      if (
+        p &&
+        typeof p === "object"
+      ) {
+        return p;
+      }
+    }
+
+    return null;
+  }
+
+  function isInsideMatch() {
+    const g = getGame();
+
+    if (!g) return false;
+
+    try {
+      if (
+        typeof g.isInMatch ===
+        "function" &&
+        g.isInMatch()
+      ) {
+        return true;
+      }
+    } catch {}
+
+    if (
+      g.gameState ===
+      "playing"
+    ) {
+      return true;
+    }
+
+    if (
+      g.state ===
+      "playing"
+    ) {
+      return true;
+    }
+
+    if (
+      g.inMatch === true
+    ) {
+      return true;
+    }
+
+    if (
+      g.match &&
+      (
+        g.match.isStarted === true ||
+        g.match.started === true
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function getBotManager() {
+    if (
+      State.botManager &&
+      typeof State.botManager ===
+      "object"
+    ) {
+      return State.botManager;
+    }
+
+    const g = getGame();
+
+    if (!g) return null;
+
+    /*
+     * The real game uses:
+     *
+     * window.game.botMgr.bots
+     */
+    const manager =
+      g.botMgr ||
+      g.botManager ||
+      g.bots ||
+      g.ai ||
+      g.botSystem ||
+      g.enemyManager;
+
+    if (
+      manager &&
+      typeof manager ===
+      "object"
+    ) {
+      State.botManager =
+        manager;
+
+      return manager;
+    }
+
+    return null;
+  }
+
+  function getBotArray() {
+    const mgr =
+      getBotManager();
+
+    if (!mgr) return null;
+
+    if (
+      Array.isArray(
+        mgr.bots
+      )
+    ) {
+      return mgr.bots;
+    }
+
+    if (
+      Array.isArray(
+        mgr.agents
+      )
+    ) {
+      return mgr.agents;
+    }
+
+    if (
+      Array.isArray(
+        mgr.entities
+      )
+    ) {
+      return mgr.entities;
+    }
+
+    if (
+      Array.isArray(
+        mgr.players
+      )
+    ) {
+      return mgr.players;
+    }
+
+    return null;
+  }
+
+  /* =========================================================
+     POSITION / ROTATION
+  ========================================================= */
+
+  function positionOf(obj) {
+    if (!obj) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
+    const p =
+      obj.position ||
+      obj.pos ||
+      obj.location ||
+      obj.transform?.position;
+
+    if (!p) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
+    return {
+      x: Number(p.x) || 0,
+      y: Number(p.y) || 0,
+      z: Number(p.z) || 0
+    };
+  }
+
+  function rotationOf(obj) {
+    if (!obj) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0,
+        w: 1
+      };
+    }
+
+    const r =
+      obj.rotation ||
+      obj.rot ||
+      obj.euler ||
+      obj.transform?.rotation;
+
+    if (!r) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0,
+        w: 1
+      };
+    }
+
+    return {
+      x: Number(r.x) || 0,
+      y: Number(r.y) || 0,
+      z: Number(r.z) || 0,
+      w:
+        r.w === undefined
+          ? 1
+          : Number(r.w) || 0
+    };
+  }
+
+  function setPosition(
+    obj,
+    pos
+  ) {
+    if (!obj || !pos) {
+      return false;
+    }
+
+    try {
+      if (
+        obj.position &&
+        typeof obj.position ===
+        "object"
+      ) {
+        obj.position.x =
+          Number(pos.x) || 0;
+
+        obj.position.y =
+          Number(pos.y) || 0;
+
+        obj.position.z =
+          Number(pos.z) || 0;
+
+        return true;
+      }
+
+      if (
+        obj.pos &&
+        typeof obj.pos ===
+        "object"
+      ) {
+        obj.pos.x =
+          Number(pos.x) || 0;
+
+        obj.pos.y =
+          Number(pos.y) || 0;
+
+        obj.pos.z =
+          Number(pos.z) || 0;
+
+        return true;
+      }
+
+      if (
+        obj.transform &&
+        obj.transform.position
+      ) {
+        obj.transform.position.x =
+          Number(pos.x) || 0;
+
+        obj.transform.position.y =
+          Number(pos.y) || 0;
+
+        obj.transform.position.z =
+          Number(pos.z) || 0;
+
+        return true;
+      }
+    } catch (e) {
+      warn(
+        "setPosition failed",
+        e
+      );
+    }
+
+    return false;
+  }
+
+  function setRotation(
+    obj,
+    rot
+  ) {
+    if (!obj || !rot) {
+      return false;
+    }
+
+    try {
+      if (
+        obj.rotation &&
+        typeof obj.rotation ===
+        "object"
+      ) {
+        obj.rotation.x =
+          Number(rot.x) || 0;
+
+        obj.rotation.y =
+          Number(rot.y) || 0;
+
+        obj.rotation.z =
+          Number(rot.z) || 0;
+
+        if (
+          "w" in obj.rotation
+        ) {
+          obj.rotation.w =
+            rot.w === undefined
+              ? 1
+              : Number(rot.w) || 0;
+        }
+
+        return true;
+      }
+
+      if (
+        obj.rot &&
+        typeof obj.rot ===
+        "object"
+      ) {
+        obj.rot.x =
+          Number(rot.x) || 0;
+
+        obj.rot.y =
+          Number(rot.y) || 0;
+
+        obj.rot.z =
+          Number(rot.z) || 0;
+
+        if (
+          "w" in obj.rot
+        ) {
+          obj.rot.w =
+            rot.w === undefined
+              ? 1
+              : Number(rot.w) || 0;
+        }
+
+        return true;
+      }
+
+      if (
+        obj.transform &&
+        obj.transform.rotation
+      ) {
+        obj.transform.rotation.x =
+          Number(rot.x) || 0;
+
+        obj.transform.rotation.y =
+          Number(rot.y) || 0;
+
+        obj.transform.rotation.z =
+          Number(rot.z) || 0;
+
+        if (
+          "w" in
+          obj.transform.rotation
+        ) {
+          obj.transform.rotation.w =
+            rot.w === undefined
+              ? 1
+              : Number(rot.w) || 0;
+        }
+
+        return true;
+      }
+    } catch (e) {
+      warn(
+        "setRotation failed",
+        e
+      );
+    }
+
+    return false;
+  }
+
+  function distance(
+    a,
+    b
+  ) {
+    const dx =
+      (a.x || 0) -
+      (b.x || 0);
+
+    const dy =
+      (a.y || 0) -
+      (b.y || 0);
+
+    const dz =
+      (a.z || 0) -
+      (b.z || 0);
+
+    return Math.sqrt(
+      dx * dx +
+      dy * dy +
+      dz * dz
+    );
+  }
+  function getBotArray() {
+    const mgr =
+      getBotManager();
+
+    if (!mgr) return null;
+
+    if (
+      Array.isArray(
+        mgr.bots
+      )
+    ) {
+      return mgr.bots;
+    }
+
+    if (
+      Array.isArray(
+        mgr.agents
+      )
+    ) {
+      return mgr.agents;
+    }
+
+    if (
+      Array.isArray(
+        mgr.entities
+      )
+    ) {
+      return mgr.entities;
+    }
+
+    if (
+      Array.isArray(
+        mgr.players
+      )
+    ) {
+      return mgr.players;
+    }
+
+    return null;
+  }
+
+  /* =========================================================
+     POSITION / ROTATION
+  ========================================================= */
+
+  function positionOf(obj) {
+    if (!obj) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
     const p =
       obj.position ||
       obj.pos ||
@@ -436,7 +905,8 @@
 
     try {
       if (
-        bot.transform?.position
+        bot.transform &&
+        bot.transform.position
       ) {
         bot.transform.position.x = x;
         bot.transform.position.y = y;
@@ -446,7 +916,8 @@
 
     try {
       if (
-        bot.root?.position
+        bot.root &&
+        bot.root.position
       ) {
         bot.root.position.x = x;
         bot.root.position.y = y;
@@ -456,7 +927,9 @@
 
     try {
       if (
-        bot.cs2Agent?.root?.position
+        bot.cs2Agent &&
+        bot.cs2Agent.root &&
+        bot.cs2Agent.root.position
       ) {
         bot.cs2Agent.root.position.x = x;
         bot.cs2Agent.root.position.y = y;
@@ -464,14 +937,7 @@
       }
     } catch {}
 
-    try {
-      if (
-        typeof bot.setPosition ===
-        "function"
-      ) {
-        bot.setPosition(p);
-      }
-    } catch {}
+    return p;
   }
 
   function setRotation(
@@ -497,40 +963,72 @@
 
     try {
       if (
-        bot.transform?.rotation
+        bot.transform &&
+        bot.transform.rotation
       ) {
-        bot.transform.rotation.y =
-          yaw;
-
-        bot.transform.rotation.x =
-          pitch;
+        bot.transform.rotation.y = yaw;
+        bot.transform.rotation.x = pitch;
       }
     } catch {}
 
     try {
       if (
-        bot.root?.rotation
+        bot.root &&
+        bot.root.rotation
       ) {
-        bot.root.rotation.y =
-          yaw;
-
-        bot.root.rotation.x =
-          pitch;
+        bot.root.rotation.y = yaw;
+        bot.root.rotation.x = pitch;
       }
     } catch {}
 
     try {
       if (
-        bot.cs2Agent?.root?.rotation
+        bot.cs2Agent &&
+        bot.cs2Agent.root &&
+        bot.cs2Agent.root.rotation
       ) {
-        bot.cs2Agent.root.rotation.y =
-          yaw;
-
-        bot.cs2Agent.root.rotation.x =
-          pitch;
+        bot.cs2Agent.root.rotation.y = yaw;
+        bot.cs2Agent.root.rotation.x = pitch;
       }
     } catch {}
+  }
 
+  function distance(
+    a,
+    b
+  ) {
+    const dx =
+      (a.x || 0) -
+      (b.x || 0);
+
+    const dy =
+      (a.y || 0) -
+      (b.y || 0);
+
+    const dz =
+      (a.z || 0) -
+      (b.z || 0);
+
+    return Math.sqrt(
+      dx * dx +
+      dy * dy +
+      dz * dz
+    );
+  }
+
+  function clamp(
+    value,
+    min,
+    max
+  ) {
+    return Math.max(
+      min,
+      Math.min(
+        max,
+        value
+      )
+    );
+  }
     try {
       if (
         typeof bot.setRotation ===
@@ -569,120 +1067,355 @@
       if (
         !Array.isArray(bots)
       ) {
-        warn(
-          "game.botMgr.bots not found."
-        );
-
         return null;
       }
 
-      /*
-       * EXACTLY the same strategy as the
-       * Force Bot Count script.
-       */
-      const found =
-        bots.find(
-          b =>
-            b &&
-            b.team !== undefined &&
-            b.constructor
-        );
+      for (
+        const bot of bots
+      ) {
+        if (!bot) continue;
 
-      if (!found) {
-        warn(
-          "No bot with a valid constructor found."
-        );
+        const ctor =
+          bot.constructor;
 
-        return null;
+        if (
+          ctor &&
+          ctor !== Object &&
+          typeof ctor ===
+            "function"
+        ) {
+          State.botCtor =
+            ctor;
+
+          log(
+            "Captured bot constructor:",
+            ctor.name ||
+              "(anonymous)"
+          );
+
+          return ctor;
+        }
       }
-
-      State.botCtor =
-        found.constructor;
-
-      log(
-        "REAL BOT CONSTRUCTOR CAPTURED:",
-        State.botCtor
-      );
-
-      return State.botCtor;
-
     } catch (e) {
-      err(
-        "findBotConstructor:",
+      warn(
+        "findBotConstructor failed",
         e
+      );
+    }
+
+    return null;
+  }
+
+  function captureOriginalBots() {
+    const bots =
+      getBotArray();
+
+    if (
+      !Array.isArray(bots)
+    ) {
+      return false;
+    }
+
+    State.originalBots =
+      bots.slice();
+
+    findBotConstructor();
+
+    return true;
+  }
+
+  function removeOriginalBots() {
+    const mgr =
+      getBotManager();
+
+    if (!mgr) {
+      return false;
+    }
+
+    const bots =
+      getBotArray();
+
+    if (
+      !Array.isArray(bots)
+    ) {
+      return false;
+    }
+
+    /*
+     * Only remove the bots that existed
+     * before Connections started using the
+     * bot system.
+     */
+    for (
+      const bot of
+        State.originalBots
+    ) {
+      if (!bot) continue;
+
+      try {
+        if (
+          typeof bot.destroy ===
+          "function"
+        ) {
+          bot.destroy();
+        }
+      } catch {}
+
+      try {
+        if (
+          typeof bot.remove ===
+          "function"
+        ) {
+          bot.remove();
+        }
+      } catch {}
+    }
+
+    try {
+      mgr.bots =
+        bots.filter(
+          bot =>
+            !State.originalBots
+              .includes(bot)
+        );
+    } catch {}
+
+    return true;
+  }
+
+  function createRemoteBot(
+    remote
+  ) {
+    if (!remote) {
+      return null;
+    }
+
+    const Ctor =
+      findBotConstructor();
+
+    if (!Ctor) {
+      warn(
+        "Cannot create remote bot: constructor unavailable"
       );
 
       return null;
     }
+
+    let bot = null;
+
+    try {
+      bot =
+        new Ctor();
+    } catch (e) {
+      warn(
+        "new bot constructor failed",
+        e
+      );
+
+      try {
+        bot =
+          Object.create(
+            Ctor.prototype
+          );
+      } catch {
+        return null;
+      }
+    }
+
+    if (!bot) {
+      return null;
+    }
+
+    const p =
+      remote.position || {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+
+    const r =
+      remote.rotation || {
+        yaw: 0,
+        pitch: 0
+      };
+
+    setPosition(
+      bot,
+      p.x,
+      p.y,
+      p.z
+    );
+
+    setRotation(
+      bot,
+      r.yaw,
+      r.pitch
+    );
+
+    try {
+      bot.__connectionsRemote =
+        true;
+
+      bot.__connectionsId =
+        remote.id;
+
+      bot.__connectionsName =
+        remote.name || "Player";
+    } catch {}
+
+    State.remoteBots.add(
+      bot
+    );
+
+    return bot;
   }
 
-  function destroyBot(bot) {
+  function destroyRemoteBot(
+    bot
+  ) {
     if (!bot) return;
 
-    const arr =
-      getBotArray();
-
-    /*
-     * Remove it from botMgr.bots.
-     */
     try {
-      if (arr) {
+      if (
+        typeof bot.destroy ===
+        "function"
+      ) {
+        bot.destroy();
+      }
+    } catch {}
+
+    try {
+      if (
+        typeof bot.remove ===
+        "function"
+      ) {
+        bot.remove();
+      }
+    } catch {}
+
+    State.remoteBots.delete(
+      bot
+    );
+  }
+
+  function destroyAllRemoteBots() {
+    for (
+      const bot of
+        State.remoteBots
+    ) {
+      destroyRemoteBot(
+        bot
+      );
+    }
+
+    State.remoteBots.clear();
+  }
+
+  function addBotToManager(
+    bot
+  ) {
+    const mgr =
+      getBotManager();
+
+    if (!mgr || !bot) {
+      return false;
+    }
+
+    try {
+      if (
+        Array.isArray(
+          mgr.bots
+        )
+      ) {
+        if (
+          !mgr.bots.includes(
+            bot
+          )
+        ) {
+          mgr.bots.push(
+            bot
+          );
+        }
+
+        return true;
+      }
+    } catch {}
+
+    return false;
+  }
+
+  function removeBotFromManager(
+    bot
+  ) {
+    const mgr =
+      getBotManager();
+
+    if (!mgr || !bot) {
+      return false;
+    }
+
+    try {
+      if (
+        Array.isArray(
+          mgr.bots
+        )
+      ) {
         const index =
-          arr.indexOf(bot);
+          mgr.bots.indexOf(
+            bot
+          );
 
         if (index !== -1) {
-          arr.splice(
+          mgr.bots.splice(
             index,
             1
           );
         }
+
+        return true;
       }
     } catch {}
 
-    /*
-     * Destroy its actual Unity root.
-     */
-    try {
-      const root =
-        bot.cs2Agent &&
-        bot.cs2Agent.root;
-
-      if (
-        root &&
-        root.parent
-      ) {
-        root.parent.remove(
-          root
-        );
-      }
-    } catch {}
-
-    /*
-     * Make absolutely sure the
-     * game considers the bot dead.
-     */
-    try {
-      bot.alive = false;
-    } catch {}
-
-    try {
-      bot.dead = true;
-    } catch {}
-
-    try {
-      bot.enabled = false;
-    } catch {}
-
-    try {
-      bot.visible = false;
-    } catch {}
-
-    try {
-      bot.__connectionsRemote =
-        false;
-    } catch {}
+    return false;
   }
 
+  function syncRemoteBot(
+    bot,
+    remote
+  ) {
+    if (
+      !bot ||
+      !remote
+    ) {
+      return;
+    }
+
+    const p =
+      remote.position || {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+
+    const r =
+      remote.rotation || {
+        yaw: 0,
+        pitch: 0
+      };
+
+    setPosition(
+      bot,
+      Number(p.x) || 0,
+      Number(p.y) || 0,
+      Number(p.z) || 0
+    );
+
+    setRotation(
+      bot,
+      Number(r.yaw) || 0,
+      Number(r.pitch) || 0
+    );
+  }
   function removeAllBots() {
     const arr =
       getBotArray();
@@ -698,303 +1431,36 @@
     const bots =
       arr.slice();
 
-    log(
-      "Removing ALL original bots:",
-      bots.length
-    );
-
     for (
-      const bot
-      of bots
+      const bot of bots
     ) {
-      destroyBot(
-        bot
-      );
+      destroyBot(bot);
     }
 
-    /*
-     * Force empty array.
-     */
-    try {
-      arr.length = 0;
-    } catch {}
-
-    State.originalBots =
-      bots;
-
-    /*
-     * This is intentionally NOT a pool.
-     */
-    State.botPool = [];
-
     log(
-      "botMgr.bots after cleanup:",
-      arr.length
+      "Removed",
+      bots.length,
+      "real bots."
     );
 
     return bots.length;
   }
 
-  /* =========================================================
-     REMOTE BOT AI CONTROL
-  ========================================================= */
-
-  function disableRemoteAI(
-    bot
-  ) {
-    if (!bot) return;
-
-    /*
-     * Tell the game this isn't a normal
-     * autonomous bot.
-     */
-    try {
-      bot.isPlayer = true;
-    } catch {}
-
-    try {
-      bot.remoteControlled =
-        true;
-    } catch {}
-
-    try {
-      bot.__connectionsRemote =
-        true;
-    } catch {}
-
-    /*
-     * Remove common AI targets.
-     */
-    try {
-      if (
-        "target" in bot
-      ) {
-        bot.target = null;
-      }
-    } catch {}
-
-    try {
-      if (
-        "enemy" in bot
-      ) {
-        bot.enemy = null;
-      }
-    } catch {}
-
-    try {
-      if (
-        "destination" in bot
-      ) {
-        bot.destination = null;
-      }
-    } catch {}
-
-    /*
-     * Only call methods if they actually exist.
-     */
-    try {
-      if (
-        typeof bot.disableAI ===
-        "function"
-      ) {
-        bot.disableAI();
-      }
-    } catch {}
-
-    try {
-      if (
-        typeof bot.stopAI ===
-        "function"
-      ) {
-        bot.stopAI();
-      }
-    } catch {}
-
-    try {
-      if (
-        typeof bot.setAIEnabled ===
-        "function"
-      ) {
-        bot.setAIEnabled(
-          false
-        );
-      }
-    } catch {}
-  }
-
-  /* =========================================================
-     AVATAR SUPPORT
-  ========================================================= */
-
-  function rebuildAvatars() {
-    try {
-      const g =
-        getGame();
-
-      const hud =
-        g?.hud;
-
-      if (
-        hud &&
-        typeof hud.buildAvatars ===
-        "function"
-      ) {
-        hud.buildAvatars();
-      }
-    } catch {}
-  }
-
-  /* =========================================================
-     BOT DATA
-  ========================================================= */
-
-  function applyBotData(
-    bot,
-    remote
-  ) {
-    if (
-      !bot ||
-      !remote
-    ) {
-      return;
-    }
-
-    disableRemoteAI(
-      bot
-    );
-
-    try {
-      bot.name =
-        remote.name;
-    } catch {}
-
-    try {
-      bot.playerName =
-        remote.name;
-    } catch {}
-
-    try {
-      bot.team =
-        remote.team;
-    } catch {}
-
-    try {
-      bot.health =
-        remote.health;
-    } catch {}
-
-    try {
-      bot.alive =
-        remote.alive;
-    } catch {}
-
-    try {
-      bot.dead =
-        !remote.alive;
-    } catch {}
-
-    try {
-      bot.isPlayer =
-        true;
-    } catch {}
-
-    /*
-     * Avatar URL.
-     */
-    try {
-      bot.avatar =
-        remote.avatar ||
-        null;
-    } catch {}
-
-    try {
-      bot.avatarUrl =
-        remote.avatar ||
-        null;
-    } catch {}
-
-    /*
-     * Position.
-     */
-    setPosition(
-      bot,
-      remote.x,
-      remote.y,
-      remote.z
-    );
-
-    /*
-     * Rotation.
-     */
-    setRotation(
-      bot,
-      remote.yaw,
-      remote.pitch
-    );
-  }
-
-  /* =========================================================
-     CREATE REAL REMOTE BOT
-  ========================================================= */
-
-  function createRemoteBot(
-    remote
-  ) {
-    if (!remote) {
-      return null;
-    }
-
-    if (remote.bot) {
-      return remote.bot;
-    }
-
-    const g =
-      getGame();
-
-    const arr =
-      getBotArray();
-
-    const ctor =
+  function createRealBot() {
+    const Ctor =
       findBotConstructor();
 
-    if (
-      !g ||
-      !arr ||
-      !ctor
-    ) {
-      warn(
-        "Unable to create remote bot:",
-        {
-          game: !!g,
-          bots: !!arr,
-          constructor: !!ctor
-        }
-      );
-
+    if (!Ctor) {
       return null;
     }
 
     let bot = null;
 
-    /*
-     * THIS is the important difference
-     * from the old Connections version.
-     *
-     * We create a BRAND NEW bot.
-     */
     try {
-      bot =
-        new ctor(
-          g,
-          remote.team ||
-            "CT",
-          remote.name ||
-            "Player",
-          "normal"
-        );
+      bot = new Ctor();
     } catch (e) {
       err(
-        "REAL BOT CONSTRUCTOR FAILED:",
+        "Could not instantiate real bot:",
         e
       );
 
@@ -1005,675 +1471,228 @@
       return null;
     }
 
-    /*
-     * Same spawn path used by
-     * Force Bot Count.
-     */
     try {
-      if (
-        typeof bot.spawn ===
-        "function"
-      ) {
-        bot.spawn();
-      }
-    } catch (e) {
-      warn(
-        "bot.spawn() failed:",
-        e
-      );
-    }
+      bot.__connectionsRemote =
+        true;
+    } catch {}
 
-    /*
-     * Manager registration.
-     */
     try {
+      const arr =
+        getBotArray();
+
       if (
+        arr &&
         !arr.includes(bot)
       ) {
         arr.push(bot);
       }
     } catch {}
 
-    /*
-     * Register ownership.
-     */
-    remote.bot =
-      bot;
-
     State.remoteBots.add(
       bot
-    );
-
-    /*
-     * Stop AI from taking control.
-     */
-    disableRemoteAI(
-      bot
-    );
-
-    /*
-     * Immediately apply the
-     * remote player's state.
-     */
-    applyBotData(
-      bot,
-      remote
-    );
-
-    /*
-     * Ask HUD to rebuild player
-     * avatars.
-     */
-    rebuildAvatars();
-
-    log(
-      "REAL REMOTE BOT CREATED:",
-      remote.name,
-      "| team:",
-      remote.team,
-      "| id:",
-      remote.id
     );
 
     return bot;
   }
 
-  /* =========================================================
-     REMOTE BOT UPDATE
-  ========================================================= */
-
-  function updateBots() {
-    for (
-      const remote
-      of State.remotes.values()
-    ) {
-      /*
-       * Dead remote:
-       * destroy its actual bot.
-       */
-      if (
-        remote.dead
-      ) {
-        if (
-          remote.bot
-        ) {
-          const bot =
-            remote.bot;
-
-          State.remoteBots.delete(
-            bot
-          );
-
-          destroyBot(
-            bot
-          );
-
-          remote.bot =
-            null;
-        }
-
-        continue;
-      }
-
-      /*
-       * Player joined but doesn't
-       * have a bot yet.
-       */
-      if (
-        !remote.bot
-      ) {
-        createRemoteBot(
-          remote
-        );
-
-        continue;
-      }
-
-      /*
-       * Smooth network interpolation.
-       */
-      remote.x +=
-        (
-          remote.targetX -
-          remote.x
-        ) * 0.65;
-
-      remote.y +=
-        (
-          remote.targetY -
-          remote.y
-        ) * 0.65;
-
-      remote.z +=
-        (
-          remote.targetZ -
-          remote.z
-        ) * 0.65;
-
-      remote.yaw +=
-        (
-          remote.targetYaw -
-          remote.yaw
-        ) * 0.65;
-
-      remote.pitch +=
-        (
-          remote.targetPitch -
-          remote.pitch
-        ) * 0.65;
-
-      /*
-       * Re-assert remote control every tick.
-       */
-      applyBotData(
-        remote.bot,
-        remote
-      );
+  function setupRemoteBot(
+    remote
+  ) {
+    if (!remote) {
+      return null;
     }
 
-    /*
-     * The actual game may attempt to
-     * recreate its own bots.
-     *
-     * Remove anything that isn't
-     * owned by a remote player.
-     */
-    purgeNonRemoteBots();
+    let bot =
+      remote.bot ||
+      null;
+
+    if (!bot) {
+      bot =
+        createRealBot();
+
+      if (!bot) {
+        return null;
+      }
+
+      remote.bot =
+        bot;
+    }
+
+    try {
+      bot.__connectionsRemote =
+        true;
+
+      bot.__connectionsId =
+        remote.id;
+
+      bot.__connectionsName =
+        remote.name ||
+        "Player";
+    } catch {}
+
+    const p =
+      remote.position || {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+
+    const r =
+      remote.rotation || {
+        yaw: 0,
+        pitch: 0
+      };
+
+    setPosition(
+      bot,
+      Number(p.x) || 0,
+      Number(p.y) || 0,
+      Number(p.z) || 0
+    );
+
+    setRotation(
+      bot,
+      Number(r.yaw) || 0,
+      Number(r.pitch) || 0
+    );
+
+    return bot;
   }
 
-  /* =========================================================
-     BOT PURGE
-  ========================================================= */
-
-  function purgeNonRemoteBots() {
-    if (
-      !State.confirmedMatch
-    ) {
-      return;
-    }
-
-    const arr =
-      getBotArray();
-
-    if (!arr) {
-      return;
-    }
-
-    const allowed =
-      State.remoteBots;
-
-    for (
-      const bot
-      of arr.slice()
-    ) {
-      if (
-        !allowed.has(
-          bot
-        )
-      ) {
-        destroyBot(
-          bot
-        );
-      }
-    }
-  }
-
-  /* =========================================================
-     REMOVE REMOTE
-  ========================================================= */
-
-  function removeRemote(
+  function destroyRemote(
     id
   ) {
-    const key =
-      String(id);
-
     const remote =
-      State.remotes.get(
-        key
-      );
+      State.remotes.get(id);
 
     if (!remote) {
       return;
     }
 
-    if (
-      remote.bot
-    ) {
-      State.remoteBots.delete(
-        remote.bot
-      );
-
+    if (remote.bot) {
       destroyBot(
         remote.bot
       );
 
-      remote.bot =
-        null;
+      State.remoteBots.delete(
+        remote.bot
+      );
     }
 
     State.remotes.delete(
-      key
+      id
     );
-
-    rebuildAvatars();
   }
 
-  /* =========================================================
-     CLEAR ALL REMOTES
-  ========================================================= */
-
-  function clearRemoteBots() {
+  function destroyAllRemotes() {
     for (
-      const remote
-      of State.remotes.values()
+      const id of
+        State.remotes.keys()
     ) {
-      if (
-        remote.bot
-      ) {
-        State.remoteBots.delete(
-          remote.bot
-        );
-
-        destroyBot(
-          remote.bot
-        );
-
-        remote.bot =
-          null;
-      }
+      destroyRemote(id);
     }
 
     State.remotes.clear();
     State.remoteBots.clear();
-
-    /*
-     * When multiplayer is completely
-     * leaving the match, don't leave
-     * any original bots behind.
-     */
-    if (
-      State.confirmedMatch
-    ) {
-      removeAllBots();
-    }
-
-    rebuildAvatars();
   }
 
-  /* =========================================================
-     MATCH SCANNER
-  ========================================================= */
-
-  function confirmMatch() {
+  function updateRemote(
+    data
+  ) {
     if (
-      !State.joinedRoom
+      !data ||
+      !data.id
     ) {
-      setStatus(
-        "Join a room first."
-      );
-
       return;
     }
 
-    if (
-      !isInsideMatch()
-    ) {
-      setStatus(
-        "You must be inside a real match first."
+    let remote =
+      State.remotes.get(
+        data.id
       );
 
-      return;
-    }
+    if (!remote) {
+      remote = {
+        id: data.id,
+        name:
+          data.name ||
+          "Player",
+        avatar:
+          data.avatar ||
+          null,
+        position:
+          data.position || {
+            x: 0,
+            y: 0,
+            z: 0
+          },
+        rotation:
+          data.rotation || {
+            yaw: 0,
+            pitch: 0
+          },
+        bot: null
+      };
 
-    const mgr =
-      getBotManager();
-
-    const arr =
-      getBotArray();
-
-    if (
-      !mgr ||
-      !arr
-    ) {
-      setStatus(
-        "Bot manager not found."
+      State.remotes.set(
+        data.id,
+        remote
       );
-
-      warn(
-        "Game:",
-        getGame()
-      );
-
-      warn(
-        "Bot manager:",
-        mgr
-      );
-
-      warn(
-        "Bot array:",
-        arr
-      );
-
-      return;
-    }
-
-    /*
-     * CRITICAL:
-     *
-     * Capture the constructor BEFORE
-     * deleting the original bots.
-     */
-    const ctor =
-      findBotConstructor();
-
-    if (!ctor) {
-      setStatus(
-        "Could not find bot constructor."
-      );
-
-      return;
-    }
-
-    log(
-      "Real constructor captured."
-    );
-
-    /*
-     * NOW delete every original bot.
-     */
-    const removed =
-      removeAllBots();
-
-    State.confirmedMatch =
-      true;
-
-    setStatus(
-      "Match confirmed. Multiplayer ready."
-    );
-
-    updateScanUI();
-
-    startStateLoop();
-
-    log(
-      "Original bots removed:",
-      removed
-    );
-
-    log(
-      "botMgr.bots:",
-      getBotArray()
-    );
-
-    log(
-      "Connections multiplayer ready."
-    );
-  }
-
-  /* =========================================================
-     MATCH MONITOR
-  ========================================================= */
-
-  function monitorMatch() {
-    if (
-      State.confirmedMatch &&
-      !isInsideMatch()
-    ) {
-      log(
-        "Left match."
-      );
-
-      State.confirmedMatch =
-        false;
-
-      stopStateLoop();
-
-      clearRemoteBots();
-
-      State.botCtor =
-        null;
-
-      State.botManager =
-        null;
-
-      updateScanUI();
-
-      return;
-    }
-
-    if (
-      State.confirmedMatch
-    ) {
-      /*
-       * Prevent original bots from
-       * returning.
-       */
-      purgeNonRemoteBots();
-
-      /*
-       * Update remote players.
-       */
-      updateBots();
-    }
-  }
-
-  /* =========================================================
-     CHAT SOUND
-  ========================================================= */
-
-  function saveChatSoundSettings() {
-    try {
-      localStorage.setItem(
-        "connections_chat_sound",
-        State.chatSound.enabled
-          ? "on"
-          : "off"
-      );
-
-      localStorage.setItem(
-        "connections_chat_sound_type",
-        State.chatSound.type
-      );
-
-      localStorage.setItem(
-        "connections_chat_volume",
-        String(
-          State.chatSound.volume
-        )
-      );
-    } catch {}
-  }
-
-  function playChatNotification() {
-    try {
+    } else {
       if (
-        !State.chatSound.enabled
+        data.name !==
+        undefined
       ) {
-        return;
-      }
-
-      const AC =
-        W.AudioContext ||
-        W.webkitAudioContext;
-
-      if (!AC) {
-        return;
+        remote.name =
+          data.name;
       }
 
       if (
-        !State.chatSound.context
+        data.avatar !==
+        undefined
       ) {
-        State.chatSound.context =
-          new AC();
+        remote.avatar =
+          data.avatar;
       }
-
-      const ctx =
-        State.chatSound.context;
 
       if (
-        ctx.state ===
-        "suspended"
+        data.position
       ) {
-        ctx.resume().catch(
-          () => {}
-        );
+        remote.position =
+          data.position;
       }
-
-      const now =
-        ctx.currentTime;
-
-      const osc =
-        ctx.createOscillator();
-
-      const gain =
-        ctx.createGain();
-
-      const type =
-        State.chatSound.type;
 
       if (
-        type === "soft"
+        data.rotation
       ) {
-        osc.type =
-          "sine";
-
-        osc.frequency.setValueAtTime(
-          520,
-          now
-        );
-
-        osc.frequency.exponentialRampToValueAtTime(
-          720,
-          now + 0.08
-        );
-
-      } else if (
-        type === "blip"
-      ) {
-        osc.type =
-          "square";
-
-        osc.frequency.setValueAtTime(
-          720,
-          now
-        );
-
-        osc.frequency.exponentialRampToValueAtTime(
-          980,
-          now + 0.06
-        );
-
-      } else if (
-        type === "click"
-      ) {
-        osc.type =
-          "triangle";
-
-        osc.frequency.setValueAtTime(
-          900,
-          now
-        );
-
-      } else {
-        osc.type =
-          "sine";
-
-        osc.frequency.setValueAtTime(
-          420,
-          now
-        );
-
-        osc.frequency.exponentialRampToValueAtTime(
-          680,
-          now + 0.07
-        );
+        remote.rotation =
+          data.rotation;
       }
-
-      gain.gain.setValueAtTime(
-        0.0001,
-        now
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        Math.max(
-          0.0001,
-          State.chatSound.volume
-        ),
-        now + 0.008
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        now + 0.14
-      );
-
-      osc.connect(
-        gain
-      );
-
-      gain.connect(
-        ctx.destination
-      );
-
-      osc.start(
-        now
-      );
-
-      osc.stop(
-        now + 0.15
-      );
-
-    } catch (e) {
-      warn(
-        "Chat sound failed:",
-        e
-      );
     }
+
+    setupRemoteBot(
+      remote
+    );
   }
+
   /* =========================================================
      NETWORK
   ========================================================= */
 
-  function send(type, data = {}) {
-    if (
-      !State.ws ||
-      State.ws.readyState !== WebSocket.OPEN
-    ) {
-      return false;
-    }
-
-    try {
-      State.ws.send(
-        JSON.stringify({
-          type,
-          ...data
-        })
-      );
-
-      return true;
-    } catch (e) {
-      err(e);
-      return false;
-    }
-  }
-
   const Network = {
     connect() {
       if (
-        State.connecting ||
-        (
-          State.ws &&
-          State.ws.readyState === WebSocket.OPEN
-        )
+        State.connected ||
+        State.connecting
       ) {
         return;
       }
 
-      State.connecting = true;
+      State.connecting =
+        true;
 
-      setStatus(
-        "Connecting..."
+      log(
+        "Connecting to multiplayer server..."
       );
 
       let ws;
@@ -1687,8 +1706,9 @@
         State.connecting =
           false;
 
-        setStatus(
-          "WebSocket error"
+        err(
+          "WebSocket creation failed:",
+          e
         );
 
         return;
@@ -1696,917 +1716,1528 @@
 
       State.ws = ws;
 
-      ws.onopen = () => {
-        State.connected =
-          true;
+      ws.addEventListener(
+        "open",
+        () => {
+          State.connected =
+            true;
 
-        State.connecting =
-          false;
+          State.connecting =
+            false;
 
-        setStatus(
-          "Connected"
-        );
+          log(
+            "Multiplayer connected."
+          );
 
-        send(
-          "list_rooms"
-        );
+          Network.send({
+            type:
+              "hello",
+            name:
+              State.name,
+            avatar:
+              State.localAvatar
+          });
 
-        updateUI();
-      };
-
-      ws.onmessage = e => {
-        let msg;
-
-        try {
-          msg =
-            JSON.parse(
-              e.data
-            );
-        } catch {
-          return;
+          updateUI();
         }
+      );
 
-        Network.handle(
-          msg
-        );
-      };
+      ws.addEventListener(
+        "message",
+        event => {
+          Network.handleMessage(
+            event.data
+          );
+        }
+      );
 
-      ws.onerror = () => {
-        State.connected =
-          false;
+      ws.addEventListener(
+        "close",
+        () => {
+          State.connected =
+            false;
 
-        setStatus(
-          "Connection error"
-        );
+          State.connecting =
+            false;
 
-        updateUI();
-      };
+          State.ws = null;
 
-      ws.onclose = () => {
-        State.connected =
-          false;
+          destroyAllRemotes();
 
-        State.connecting =
-          false;
+          log(
+            "Multiplayer disconnected."
+          );
 
-        State.joinedRoom =
-          false;
+          updateUI();
 
-        State.ws =
-          null;
+          setTimeout(
+            () => {
+              Network.connect();
+            },
+            3000
+          );
+        }
+      );
 
-        stopStateLoop();
-
-        clearRemoteBots();
-
-        State.confirmedMatch =
-          false;
-
-        State.botCtor =
-          null;
-
-        State.botManager =
-          null;
-
-        setStatus(
-          "Disconnected"
-        );
-
-        updateUI();
-      };
-    },
-
-    createRoom(data) {
-      if (!State.connected) {
-        this.connect();
-
-        setTimeout(
-          () =>
-            this.createRoom(
-              data
-            ),
-          500
-        );
-
-        return;
-      }
-
-      send(
-        "create_room",
-        {
-          ...data,
-
-          name:
-            State.name,
-
-          avatar:
-            State.localAvatar
+      ws.addEventListener(
+        "error",
+        error => {
+          warn(
+            "WebSocket error:",
+            error
+          );
         }
       );
     },
 
-    joinRoom(roomId) {
-      if (!roomId) {
-        return;
-      }
-
-      if (!State.connected) {
-        this.connect();
-
-        setTimeout(
-          () =>
-            this.joinRoom(
-              roomId
-            ),
-          500
-        );
-
-        return;
-      }
-
-      send(
-        "join_room",
-        {
-          roomId,
-
-          name:
-            State.name,
-
-          avatar:
-            State.localAvatar
-        }
-      );
-
-      setStatus(
-        "Joining room..."
-      );
-    },
-
-    leaveRoom() {
+    send(data) {
       if (
-        !State.joinedRoom
+        !State.ws ||
+        !State.connected
       ) {
+        return false;
+      }
+
+      try {
+        State.ws.send(
+          JSON.stringify(data)
+        );
+
+        return true;
+      } catch (e) {
+        warn(
+          "Network.send failed:",
+          e
+        );
+
+        return false;
+      }
+    },
+
+    handleMessage(raw) {
+      let data;
+
+      try {
+        data =
+          typeof raw ===
+          "string"
+            ? JSON.parse(raw)
+            : raw;
+      } catch {
         return;
       }
 
-      State.confirmedMatch =
-        false;
-
-      stopStateLoop();
-
-      clearRemoteBots();
-
-      send(
-        "leave_room"
-      );
-    },
-
-    kick(id) {
-      send(
-        "kick",
-        {
-          targetId: id
-        }
-      );
-    },
-
-    handle(msg) {
-      if (!msg) {
+      if (
+        !data ||
+        typeof data !==
+          "object"
+      ) {
         return;
       }
 
       switch (
-        msg.type
+        data.type
       ) {
-        case "connected":
-        case "hello":
+        case "welcome":
+          State.id =
+            data.id ||
+            null;
 
-          if (msg.id) {
-            State.id =
-              String(
-                msg.id
-              );
-          }
+          log(
+            "Assigned network id:",
+            State.id
+          );
 
           break;
 
         case "rooms":
-
           State.rooms =
             Array.isArray(
-              msg.rooms
+              data.rooms
             )
-              ? msg.rooms
+              ? data.rooms
               : [];
 
           renderRooms();
-
           break;
 
         case "room_joined":
-
           State.room =
-            msg.room?.id ||
-            msg.roomId ||
+            data.room ||
             null;
 
           State.roomData =
-            msg.room ||
+            data.data ||
             null;
-
-          if (msg.id) {
-            State.id =
-              String(
-                msg.id
-              );
-          }
 
           State.joinedRoom =
             true;
 
-          setStatus(
-            "Room joined. Enter your match and scan."
+          log(
+            "Joined room:",
+            State.room
           );
 
-          updateScanUI();
-
-          updateUI();
-
+          updateCurrentRoom();
           break;
 
-        case "roster":
-
-          if (msg.room) {
-            State.roomData =
-              msg.room;
-          }
-
-          renderRooms();
-
-          updateUI();
-
-          break;
-
-        case "join":
-
-          renderRooms();
-
-          break;
-
-        case "leave":
-
-          if (msg.id) {
-            removeRemote(
-              msg.id
-            );
-          }
-
-          renderRooms();
-
-          break;
-
-        case "host_changed":
-
-          renderRooms();
-
-          break;
-
-        case "left_room":
-        case "kicked":
-
-          State.joinedRoom =
-            false;
-
+        case "room_left":
           State.room =
             null;
 
           State.roomData =
             null;
 
-          State.confirmedMatch =
+          State.joinedRoom =
             false;
 
-          stopStateLoop();
+          destroyAllRemotes();
 
-          clearRemoteBots();
+          updateCurrentRoom();
+          break;
 
-          State.botCtor =
-            null;
+        case "players":
+          if (
+            Array.isArray(
+              data.players
+            )
+          ) {
+            for (
+              const player of
+                data.players
+            ) {
+              if (
+                !player ||
+                player.id ===
+                  State.id
+              ) {
+                continue;
+              }
 
-          State.botManager =
-            null;
-
-          updateScanUI();
+              updateRemote(
+                player
+              );
+            }
+          }
 
           updateUI();
+          break;
 
-          setStatus(
-            msg.type ===
-              "kicked"
-              ? "You were kicked."
-              : "Left room."
-          );
+        case "player_join":
+          if (
+            data.player &&
+            data.player.id !==
+              State.id
+          ) {
+            updateRemote(
+              data.player
+            );
+          }
+
+          break;
+
+        case "player_leave":
+          if (
+            data.id
+          ) {
+            destroyRemote(
+              data.id
+            );
+          }
 
           break;
 
         case "state":
-
-          handleState(
-            msg
-          );
+        case "player_state":
+          if (
+            data.player &&
+            data.player.id !==
+              State.id
+          ) {
+            updateRemote(
+              data.player
+            );
+          } else if (
+            data.id &&
+            data.id !==
+              State.id
+          ) {
+            updateRemote(
+              data
+            );
+          }
 
           break;
 
         case "chat":
-
-          receiveChat(
-            msg
-          );
-
-          break;
-
-        case "rafit_warning":
-
-          setStatus(
-            "RAFIT warning: " +
-            (msg.type || "") +
-            " | RTP " +
-            (
-              msg.rtp ??
-              State.rtp
-            )
-          );
-
-          break;
-
-        case "rafit_banned":
-
-          State.confirmedMatch =
-            false;
-
-          stopStateLoop();
-
-          setStatus(
-            "RAFIT: banned."
-          );
+          if (
+            data.message
+          ) {
+            addChatMessage(
+              data.message
+            );
+          }
 
           break;
 
         case "error":
-
-          setStatus(
-            msg.code ||
-            msg.message ||
-            "Server error"
+          warn(
+            "Server error:",
+            data.message ||
+              data.error ||
+              data
           );
 
+          setStatus(
+            data.message ||
+              data.error ||
+              "Server error"
+          );
+
+          break;
+
+        default:
           break;
       }
     }
   };
-
-  /* =========================================================
-     STATE
-  ========================================================= */
-
-  function handleState(msg) {
-    const players =
-      Array.isArray(
-        msg.players
-      )
-        ? msg.players
-        : [];
-
-    /*
-     * Track IDs received from this packet.
-     * If the server sends a roster without somebody
-     * anymore, that remote player is removed.
-     */
-    const received =
-      new Set();
-
-    for (
-      const data
-      of players
-    ) {
-      if (
-        !data?.id
-      ) {
-        continue;
-      }
-
-      const id =
-        String(
-          data.id
-        );
-
-      /*
-       * Never create a bot for ourselves.
-       */
-      if (
-        State.id &&
-        id ===
-          String(
-            State.id
-          )
-      ) {
-        continue;
-      }
-
-      received.add(
-        id
-      );
-
-      let remote =
-        State.remotes.get(
-          id
-        );
-
-      /*
-       * NEW REMOTE PLAYER
-       */
-      if (!remote) {
-        remote = {
-          id,
-
-          name:
-            data.name ||
-            "Player",
-
-          team:
-            data.team ||
-            "CT",
-
-          x:
-            Number(
-              data.x
-            ) || 0,
-
-          y:
-            Number(
-              data.y
-            ) || 0,
-
-          z:
-            Number(
-              data.z
-            ) || 0,
-
-          targetX:
-            Number(
-              data.x
-            ) || 0,
-
-          targetY:
-            Number(
-              data.y
-            ) || 0,
-
-          targetZ:
-            Number(
-              data.z
-            ) || 0,
-
-          yaw:
-            Number(
-              data.yaw
-            ) || 0,
-
-          pitch:
-            Number(
-              data.pitch
-            ) || 0,
-
-          targetYaw:
-            Number(
-              data.yaw
-            ) || 0,
-
-          targetPitch:
-            Number(
-              data.pitch
-            ) || 0,
-
-          health:
-            typeof data.health ===
-            "number"
-              ? data.health
-              : 100,
-
-          alive:
-            data.alive !==
-            false,
-
-          dead:
-            data.dead ===
-            true,
-
-          avatar:
-            data.avatar ||
-            null,
-
-          bot:
-            null
-        };
-
-        State.remotes.set(
-          id,
-          remote
-        );
-
-        log(
-          "Remote player joined:",
-          remote.name,
-          id
-        );
-      }
-
-      /*
-       * Update identity.
-       */
-      remote.name =
-        data.name ||
-        remote.name;
-
-      remote.team =
-        data.team ||
-        remote.team;
-
-      /*
-       * Network target.
-       *
-       * We don't immediately overwrite x/y/z.
-       * updateBots() interpolates toward these values.
-       */
-      remote.targetX =
-        Number(
-          data.x
-        ) || 0;
-
-      remote.targetY =
-        Number(
-          data.y
-        ) || 0;
-
-      remote.targetZ =
-        Number(
-          data.z
-        ) || 0;
-
-      remote.targetYaw =
-        Number(
-          data.yaw
-        ) || 0;
-
-      remote.targetPitch =
-        Number(
-          data.pitch
-        ) || 0;
-
-      /*
-       * Health.
-       */
-      if (
-        typeof data.health ===
-        "number"
-      ) {
-        remote.health =
-          data.health;
-      }
-
-      /*
-       * Alive state.
-       */
-      remote.alive =
-        data.alive !== false &&
-        data.dead !== true &&
-        remote.health > 0;
-
-      remote.dead =
-        !remote.alive;
-
-      /*
-       * Avatar.
-       */
-      if (
-        data.avatar
-      ) {
-        remote.avatar =
-          data.avatar;
-      }
-
-      /*
-       * Create a REAL bot immediately when
-       * a remote player appears.
-       */
-      if (
-        remote.dead
-      ) {
-        if (
-          remote.bot
-        ) {
-          State.remoteBots.delete(
-            remote.bot
-          );
-
-          destroyBot(
-            remote.bot
-          );
-
-          remote.bot =
-            null;
-        }
-      } else {
-        if (
-          !remote.bot
-        ) {
-          createRemoteBot(
-            remote
-          );
-        }
-      }
-    }
-
-    /*
-     * Remove remote players that disappeared
-     * from the server state.
-     *
-     * Don't do this if the packet is empty,
-     * because an empty state packet can happen
-     * during room transitions.
-     */
-    if (
-      players.length > 0
-    ) {
-      for (
-        const id
-        of Array.from(
-          State.remotes.keys()
-        )
-      ) {
-        if (
-          !received.has(
-            id
-          )
-        ) {
-          removeRemote(
-            id
-          );
-        }
-      }
-    }
-
-    updateBots();
-  }
-
   /* =========================================================
      LOCAL PLAYER STATE
   ========================================================= */
 
-  function getLocalState() {
+  function getLocalPlayer() {
+    try {
+      if (
+        window.game &&
+        window.game.player
+      ) {
+        return window.game.player;
+      }
+    } catch {}
+
+    try {
+      if (
+        window.player
+      ) {
+        return window.player;
+      }
+    } catch {}
+
+    return null;
+  }
+
+  function readVector(
+    value
+  ) {
+    if (!value) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
+    try {
+      return {
+        x:
+          Number(
+            value.x
+          ) || 0,
+
+        y:
+          Number(
+            value.y
+          ) || 0,
+
+        z:
+          Number(
+            value.z
+          ) || 0
+      };
+    } catch {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+  }
+
+  function readLocalTransform() {
     const player =
       getLocalPlayer();
 
     if (!player) {
-      return null;
+      return {
+        position: {
+          x: 0,
+          y: 0,
+          z: 0
+        },
+
+        rotation: {
+          yaw: 0,
+          pitch: 0
+        }
+      };
     }
 
-    const p =
-      positionOf(
-        player
-      );
+    let position = {
+      x: 0,
+      y: 0,
+      z: 0
+    };
 
-    const r =
-      rotationOf(
-        player
-      );
+    let rotation = {
+      yaw: 0,
+      pitch: 0
+    };
 
-    let health =
-      100;
+    try {
+      if (
+        player.position
+      ) {
+        position =
+          readVector(
+            player.position
+          );
+      } else if (
+        player.transform &&
+        player.transform.position
+      ) {
+        position =
+          readVector(
+            player.transform.position
+          );
+      } else {
+        position = {
+          x:
+            Number(
+              player.x
+            ) || 0,
 
-    if (
-      typeof player.health ===
-      "number"
-    ) {
-      health =
-        player.health;
-    }
+          y:
+            Number(
+              player.y
+            ) || 0,
 
-    let alive =
-      true;
+          z:
+            Number(
+              player.z
+            ) || 0
+        };
+      }
+    } catch {}
 
-    if (
-      typeof player.alive ===
-      "boolean"
-    ) {
-      alive =
-        player.alive;
-    }
+    try {
+      if (
+        player.rotation
+      ) {
+        if (
+          typeof player.rotation ===
+          "object"
+        ) {
+          rotation = {
+            yaw:
+              Number(
+                player.rotation.yaw ??
+                player.rotation.y ??
+                0
+              ) || 0,
 
-    if (
-      typeof player.dead ===
-      "boolean"
-    ) {
-      alive =
-        !player.dead;
-    }
+            pitch:
+              Number(
+                player.rotation.pitch ??
+                0
+              ) || 0
+          };
+        }
+      }
 
-    if (
-      health <= 0
-    ) {
-      alive =
-        false;
-    }
+      if (
+        player.yaw !==
+        undefined
+      ) {
+        rotation.yaw =
+          Number(
+            player.yaw
+          ) || 0;
+      }
 
-    const team =
-      player.team ||
-      player.side ||
-      player.faction ||
-      "CT";
+      if (
+        player.pitch !==
+        undefined
+      ) {
+        rotation.pitch =
+          Number(
+            player.pitch
+          ) || 0;
+      }
+    } catch {}
 
     return {
-      x:
-        p.x,
+      position,
+      rotation
+    };
+  }
 
-      y:
-        p.y,
+  let lastSentState = null;
 
-      z:
-        p.z,
+  function stateChanged(
+    next
+  ) {
+    if (
+      !lastSentState
+    ) {
+      return true;
+    }
 
-      yaw:
-        r.yaw,
+    const a =
+      lastSentState.position;
 
-      pitch:
-        r.pitch,
+    const b =
+      next.position;
 
-      alive,
+    const ar =
+      lastSentState.rotation;
 
-      dead:
-        !alive,
+    const br =
+      next.rotation;
 
-      health,
+    if (
+      !a ||
+      !b ||
+      !ar ||
+      !br
+    ) {
+      return true;
+    }
+
+    return (
+      a.x !== b.x ||
+      a.y !== b.y ||
+      a.z !== b.z ||
+      ar.yaw !== br.yaw ||
+      ar.pitch !== br.pitch
+    );
+  }
+
+  function sendLocalState() {
+    if (
+      !State.connected ||
+      !State.joinedRoom
+    ) {
+      return;
+    }
+
+    if (
+      !State.id
+    ) {
+      return;
+    }
+
+    const transform =
+      readLocalTransform();
+
+    if (
+      !stateChanged(
+        transform
+      )
+    ) {
+      return;
+    }
+
+    lastSentState =
+      JSON.parse(
+        JSON.stringify(
+          transform
+        )
+      );
+
+    Network.send({
+      type:
+        "state",
+
+      id:
+        State.id,
 
       name:
         State.name,
 
-      team,
-
       avatar:
-        State.localAvatar
-    };
+        State.localAvatar,
+
+      position:
+        transform.position,
+
+      rotation:
+        transform.rotation
+    });
   }
 
-  /* =========================================================
-     STATE SEND LOOP
-  ========================================================= */
+  let stateInterval =
+    null;
 
-  function startStateLoop() {
-    stopStateLoop();
+  function startStateSync() {
+    if (
+      stateInterval
+    ) {
+      return;
+    }
 
-    State.stateTimer =
+    stateInterval =
       setInterval(
         () => {
-          if (
-            !State.joinedRoom
-          ) {
-            return;
+          try {
+            sendLocalState();
+          } catch (e) {
+            warn(
+              "State sync failed:",
+              e
+            );
           }
-
-          if (
-            !State.confirmedMatch
-          ) {
-            return;
-          }
-
-          if (
-            !isInsideMatch()
-          ) {
-            return;
-          }
-
-          const state =
-            getLocalState();
-
-          if (!state) {
-            return;
-          }
-
-          send(
-            "state",
-            {
-              state
-            }
-          );
         },
         50
       );
   }
 
-  function stopStateLoop() {
+  function stopStateSync() {
     if (
-      State.stateTimer
+      stateInterval
     ) {
       clearInterval(
-        State.stateTimer
+        stateInterval
       );
 
-      State.stateTimer =
+      stateInterval =
         null;
     }
   }
 
   /* =========================================================
-     MATCH MONITOR LOOP
+     REMOTE UPDATE LOOP
   ========================================================= */
 
-  function startMatchMonitor() {
+  function refreshRemoteBots() {
     if (
-      State.monitorTimer
+      !State.remotes ||
+      !State.remotes.size
     ) {
-      clearInterval(
-        State.monitorTimer
-      );
+      return;
     }
 
-    State.monitorTimer =
+    for (
+      const remote of
+        State.remotes.values()
+    ) {
+      if (
+        !remote
+      ) {
+        continue;
+      }
+
+      try {
+        setupRemoteBot(
+          remote
+        );
+      } catch (e) {
+        warn(
+          "Failed to refresh remote:",
+          remote.id,
+          e
+        );
+      }
+    }
+  }
+
+  let remoteRefreshInterval =
+    null;
+
+  function startRemoteRefresh() {
+    if (
+      remoteRefreshInterval
+    ) {
+      return;
+    }
+
+    remoteRefreshInterval =
       setInterval(
         () => {
           try {
-            monitorMatch();
-          } catch (e) {
-            warn(
-              "Match monitor:",
-              e
-            );
-          }
+            refreshRemoteBots();
+          } catch {}
         },
-        250
+        100
       );
+  }
+
+  function stopRemoteRefresh() {
+    if (
+      remoteRefreshInterval
+    ) {
+      clearInterval(
+        remoteRefreshInterval
+      );
+
+      remoteRefreshInterval =
+        null;
+    }
   }
 
   /* =========================================================
      CHAT
   ========================================================= */
 
-  function receiveChat(msg) {
-    if (!msg) {
-      return;
+  function sendChat(
+    message
+  ) {
+    if (
+      !message
+    ) {
+      return false;
     }
 
-    const name =
-      msg.name ||
-      msg.player ||
-      "Player";
-
-    const text =
+    message =
       String(
-        msg.text ||
-        ""
-      ).slice(
-        0,
-        300
-      );
-
-    if (!text) {
-      return;
-    }
-
-    /*
-     * Notification sound only for other players.
-     */
-    const senderId =
-      msg.id ||
-      msg.playerId ||
-      msg.senderId ||
-      null;
+        message
+      ).trim();
 
     if (
-      !senderId ||
-      String(
-        senderId
-      ) !==
-      String(
-        State.id
-      )
+      !message
     ) {
-      if (State.chatSoundEnabled !== false) {   playChatNotification(); }
+      return false;
     }
 
-    /*
-     * Chat remains completely separate from
-     * the Connections menu.
-     */
-    createChat();
+    if (
+      message.length >
+      500
+    ) {
+      message =
+        message.slice(
+          0,
+          500
+        );
+    }
 
-    const container =
-      document.querySelector(
-        "#connections-game-chat .conn-chat-messages"
-      );
+    return Network.send({
+      type:
+        "chat",
 
-    if (!container) {
+      message: {
+        id:
+          State.id,
+
+        name:
+          State.name,
+
+        avatar:
+          State.localAvatar,
+
+        text:
+          message,
+
+        timestamp:
+          Date.now()
+      }
+    });
+  }
+
+  function addChatMessage(
+    message
+  ) {
+    if (
+      !message
+    ) {
       return;
     }
+
+    let text =
+      "";
+
+    let name =
+      "Player";
+
+    if (
+      typeof message ===
+      "string"
+    ) {
+      text =
+        message;
+    } else {
+      text =
+        String(
+          message.text ||
+          message.message ||
+          ""
+        );
+
+      name =
+        String(
+          message.name ||
+          "Player"
+        );
+    }
+
+    if (
+      !text
+    ) {
+      return;
+    }
+
+    if (
+      typeof window.__connectionsChatLog !==
+      "object"
+    ) {
+      window.__connectionsChatLog =
+        [];
+    }
+
+    window.__connectionsChatLog.push({
+      name,
+      text,
+      timestamp:
+        Date.now()
+    });
+
+    if (
+      window.__connectionsChatLog.length >
+      100
+    ) {
+      window.__connectionsChatLog.shift();
+    }
+
+    renderChat();
+  }
+
+  function renderChat() {
+    const box =
+      document.getElementById(
+        "connections-chat-messages"
+      );
+
+    if (
+      !box
+    ) {
+      return;
+    }
+
+    const logData =
+      window.__connectionsChatLog ||
+      [];
+
+    box.innerHTML =
+      "";
+
+    for (
+      const entry of
+        logData
+    ) {
+      const row =
+        document.createElement(
+          "div"
+        );
+
+      row.style.cssText =
+        [
+          "padding:4px 0",
+          "word-break:break-word"
+        ].join(";");
+
+      const name =
+        document.createElement(
+          "span"
+        );
+
+      name.textContent =
+        entry.name +
+        ": ";
+
+      name.style.fontWeight =
+        "700";
+
+      const text =
+        document.createElement(
+          "span"
+        );
+
+      text.textContent =
+        entry.text;
+
+      row.appendChild(
+        name
+      );
+
+      row.appendChild(
+        text
+      );
+
+      box.appendChild(
+        row
+      );
+    }
+
+    box.scrollTop =
+      box.scrollHeight;
+  }
+
+  /* =========================================================
+     ROOM ACTIONS
+  ========================================================= */
+
+  function requestRooms() {
+    return Network.send({
+      type:
+        "rooms"
+    });
+  }
+
+  function createRoom(
+    name
+  ) {
+    name =
+      String(
+        name ||
+        ""
+      ).trim();
+
+    if (
+      !name
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "room_create",
+
+      name
+    });
+  }
+
+  function joinRoom(
+    room
+  ) {
+    if (
+      !room
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "room_join",
+
+      room:
+        String(
+          room
+        )
+    });
+  }
+
+  function leaveRoom() {
+    if (
+      !State.joinedRoom
+    ) {
+      return false;
+    }
+
+    const sent =
+      Network.send({
+        type:
+          "room_leave"
+      });
+
+    if (
+      sent
+    ) {
+      destroyAllRemotes();
+
+      State.room =
+        null;
+
+      State.roomData =
+        null;
+
+      State.joinedRoom =
+        false;
+
+      updateCurrentRoom();
+    }
+
+    return sent;
+  }
+
+  /* =========================================================
+     ROOM / PLAYER HELPERS
+  ========================================================= */
+
+  function getRemoteCount() {
+    try {
+      return State.remotes.size;
+    } catch {
+      return 0;
+    }
+  }
+
+  function getRoomPlayerCount() {
+    let count =
+      getRemoteCount();
+
+    if (
+      State.joinedRoom
+    ) {
+      count++;
+    }
+
+    return count;
+  }
+
+  function updateCurrentRoom() {
+    try {
+      const room =
+        document.getElementById(
+          "connections-current-room"
+        );
+
+      if (
+        room
+      ) {
+        room.textContent =
+          State.joinedRoom
+            ? (
+                "Room: " +
+                (
+                  State.room ||
+                  "unknown"
+                )
+              )
+            : "No room";
+      }
+
+      const players =
+        document.getElementById(
+          "connections-player-count"
+        );
+
+      if (
+        players
+      ) {
+        players.textContent =
+          String(
+            getRoomPlayerCount()
+          );
+      }
+    } catch {}
+  }
+
+  function updateUI() {
+    try {
+      updateCurrentRoom();
+    } catch {}
+
+    try {
+      const status =
+        document.getElementById(
+          "connections-status"
+        );
+
+      if (
+        status
+      ) {
+        if (
+          State.connected
+        ) {
+          status.textContent =
+            State.joinedRoom
+              ? "Connected"
+              : "Connected - no room";
+        } else if (
+          State.connecting
+        ) {
+          status.textContent =
+            "Connecting...";
+        } else {
+          status.textContent =
+            "Disconnected";
+        }
+      }
+    } catch {}
+
+    try {
+      renderRooms();
+    } catch {}
+
+    try {
+      renderChat();
+    } catch {}
+  }
+
+  /* =========================================================
+     ROOM LIST
+  ========================================================= */
+
+  function renderRooms() {
+    const container =
+      document.getElementById(
+        "connections-room-list"
+      );
+
+    if (
+      !container
+    ) {
+      return;
+    }
+
+    container.innerHTML =
+      "";
+
+    const rooms =
+      Array.isArray(
+        State.rooms
+      )
+        ? State.rooms
+        : [];
+
+    if (
+      !rooms.length
+    ) {
+      const empty =
+        document.createElement(
+          "div"
+        );
+
+      empty.textContent =
+        "No rooms available.";
+
+      empty.style.cssText =
+        [
+          "opacity:.6",
+          "padding:12px"
+        ].join(";");
+
+      container.appendChild(
+        empty
+      );
+
+      return;
+    }
+
+    for (
+      const room of
+        rooms
+    ) {
+      if (
+        !room
+      ) {
+        continue;
+      }
+
+      const id =
+        typeof room ===
+        "string"
+          ? room
+          : (
+              room.id ||
+              room.name ||
+              room.room
+            );
+
+      if (
+        !id
+      ) {
+        continue;
+      }
+
+      const row =
+        document.createElement(
+          "div"
+        );
+
+      row.style.cssText =
+        [
+          "display:flex",
+          "align-items:center",
+          "justify-content:space-between",
+          "gap:8px",
+          "padding:8px",
+          "margin-bottom:6px",
+          "border:1px solid rgba(255,255,255,.08)",
+          "border-radius:8px"
+        ].join(";");
+
+      const label =
+        document.createElement(
+          "span"
+        );
+
+      label.textContent =
+        String(
+          room.name ||
+          room.id ||
+          id
+        );
+
+      const button =
+        document.createElement(
+          "button"
+        );
+
+      button.textContent =
+        "Join";
+
+      button.type =
+        "button";
+
+      button.style.cssText =
+        [
+          "cursor:pointer",
+          "border:0",
+          "border-radius:6px",
+          "padding:5px 10px",
+          "background:#7289da",
+          "color:#fff"
+        ].join(";");
+
+      button.addEventListener(
+        "click",
+        () => {
+          joinRoom(
+            id
+          );
+        }
+      );
+
+      row.appendChild(
+        label
+      );
+
+      row.appendChild(
+        button
+      );
+
+      container.appendChild(
+        row
+      );
+    }
+  }
+
+  /* =========================================================
+     NETWORK LIFECYCLE
+  ========================================================= */
+
+  function startMultiplayer() {
+    startStateSync();
+    startRemoteRefresh();
+
+    if (
+      !State.connected &&
+      !State.connecting
+    ) {
+      Network.connect();
+    }
+  }
+
+  function stopMultiplayer() {
+    stopStateSync();
+    stopRemoteRefresh();
+
+    destroyAllRemotes();
+
+    if (
+      State.ws
+    ) {
+      try {
+        State.ws.close();
+      } catch {}
+    }
+
+    State.ws =
+      null;
+
+    State.connected =
+      false;
+
+    State.connecting =
+      false;
+  }
+
+  /* =========================================================
+     INITIAL MULTIPLAYER BOOT
+  ========================================================= */
+
+  try {
+    startMultiplayer();
+  } catch (e) {
+    err(
+      "Multiplayer startup failed:",
+      e
+    );
+  }
+  /* =========================================================
+     PLAYER NAME / AVATAR
+  ========================================================= */
+
+  function loadLocalIdentity() {
+    let name =
+      null;
+
+    let avatar =
+      null;
+
+    try {
+      name =
+        localStorage.getItem(
+          "connections-player-name"
+        );
+    } catch {}
+
+    try {
+      avatar =
+        localStorage.getItem(
+          "pp-avatar"
+        );
+    } catch {}
+
+    if (
+      !name ||
+      !String(name).trim()
+    ) {
+      name =
+        "Player";
+    }
+
+    State.name =
+      String(
+        name
+      ).trim().slice(
+        0,
+        32
+      );
+
+    State.localAvatar =
+      avatar ||
+      null;
+  }
+
+  function setLocalName(
+    name
+  ) {
+    name =
+      String(
+        name ||
+        ""
+      ).trim();
+
+    if (
+      !name
+    ) {
+      name =
+        "Player";
+    }
+
+    name =
+      name.slice(
+        0,
+        32
+      );
+
+    State.name =
+      name;
+
+    try {
+      localStorage.setItem(
+        "connections-player-name",
+        name
+      );
+    } catch {}
+
+    if (
+      State.connected
+    ) {
+      Network.send({
+        type:
+          "identity",
+
+        name:
+          State.name,
+
+        avatar:
+          State.localAvatar
+      });
+    }
+
+    updateUI();
+
+    return name;
+  }
+
+  function loadAvatarState() {
+    try {
+      const avatar =
+        localStorage.getItem(
+          "pp-avatar"
+        );
+
+      if (
+        avatar
+      ) {
+        State.localAvatar =
+          avatar;
+      }
+    } catch {}
+  }
+
+  function sendIdentity() {
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "identity",
+
+      name:
+        State.name,
+
+      avatar:
+        State.localAvatar
+    });
+  }
+
+  function setupIdentityWatcher() {
+    let lastName =
+      State.name;
+
+    let lastAvatar =
+      State.localAvatar;
+
+    setInterval(
+      () => {
+        let currentName =
+          lastName;
+
+        let currentAvatar =
+          lastAvatar;
+
+        try {
+          const storedName =
+            localStorage.getItem(
+              "connections-player-name"
+            );
+
+          if (
+            storedName
+          ) {
+            currentName =
+              String(
+                storedName
+              ).trim().slice(
+                0,
+                32
+              );
+          }
+        } catch {}
+
+        try {
+          const storedAvatar =
+            localStorage.getItem(
+              "pp-avatar"
+            );
+
+          currentAvatar =
+            storedAvatar ||
+            null;
+        } catch {}
+
+        if (
+          currentName !==
+          lastName
+        ) {
+          State.name =
+            currentName ||
+            "Player";
+
+          lastName =
+            State.name;
+
+          sendIdentity();
+        }
+
+        if (
+          currentAvatar !==
+          lastAvatar
+        ) {
+          State.localAvatar =
+            currentAvatar;
+
+          lastAvatar =
+            currentAvatar;
+
+          sendIdentity();
+        }
+      },
+      1000
+    );
+  }
+
+  /* =========================================================
+     CHAT UI
+  ========================================================= */
+
+  function createChatUI() {
+    if (
+      document.getElementById(
+        "connections-chat"
+      )
+    ) {
+      return;
+    }
+
+    const root =
+      document.createElement(
+        "div"
+      );
+
+    root.id =
+      "connections-chat";
+
+    root.style.cssText =
+      [
+        "position:absolute",
+        "left:20px",
+        "bottom:20px",
+        "width:320px",
+        "max-width:calc(100vw - 40px)",
+        "background:rgba(15,15,20,.94)",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:10px",
+        "padding:10px",
+        "color:#fff",
+        "font-family:Arial,sans-serif",
+        "font-size:13px",
+        "z-index:2147483646",
+        "box-sizing:border-box",
+        "display:none",
+        "backdrop-filter:blur(8px)"
+      ].join(";");
+
+    const messages =
+      document.createElement(
+        "div"
+      );
+
+    messages.id =
+      "connections-chat-messages";
+
+    messages.style.cssText =
+      [
+        "height:160px",
+        "overflow-y:auto",
+        "margin-bottom:8px",
+        "padding:4px"
+      ].join(";");
 
     const row =
       document.createElement(
@@ -2614,2758 +3245,7204 @@
       );
 
     row.style.cssText =
-      `
-        color:#fff;
-        font-size:14px;
-        line-height:19px;
-        opacity:1;
-        margin-top:2px;
-        text-shadow:
-          0 1px 2px #000;
-      `;
+      [
+        "display:flex",
+        "gap:6px"
+      ].join(";");
 
-    const sender =
+    const input =
       document.createElement(
-        "span"
+        "input"
       );
 
-    sender.textContent =
-      name +
-      ": ";
+    input.id =
+      "connections-chat-input";
 
-    sender.style.cssText =
-      `
-        color:#7289da;
-        font-weight:700;
-      `;
+    input.type =
+      "text";
 
-    const message =
+    input.placeholder =
+      "type a message...";
+
+    input.maxLength =
+      500;
+
+    input.style.cssText =
+      [
+        "flex:1",
+        "min-width:0",
+        "background:#202024",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:6px",
+        "padding:7px 9px",
+        "color:#fff",
+        "outline:none",
+        "box-sizing:border-box"
+      ].join(";");
+
+    const send =
       document.createElement(
-        "span"
+        "button"
       );
 
-    message.textContent =
-      text;
+    send.type =
+      "button";
 
-    row.appendChild(
-      sender
+    send.textContent =
+      "Send";
+
+    send.style.cssText =
+      [
+        "border:0",
+        "border-radius:6px",
+        "padding:7px 10px",
+        "background:#7289da",
+        "color:#fff",
+        "cursor:pointer"
+      ].join(";");
+
+    send.addEventListener(
+      "click",
+      () => {
+        const value =
+          input.value.trim();
+
+        if (
+          !value
+        ) {
+          return;
+        }
+
+        if (
+          sendChat(
+            value
+          )
+        ) {
+          input.value =
+            "";
+        }
+      }
+    );
+
+    input.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Enter"
+        ) {
+          event.preventDefault();
+
+          send.click();
+        }
+      }
     );
 
     row.appendChild(
-      message
+      input
     );
 
-    container.appendChild(
+    row.appendChild(
+      send
+    );
+
+    root.appendChild(
+      messages
+    );
+
+    root.appendChild(
       row
     );
 
-    while (
-      container.children.length >
-      8
-    ) {
-      container.removeChild(
-        container.firstChild
-      );
-    }
-
-    setTimeout(
-      () => {
-        row.style.transition =
-          "opacity .4s";
-
-        row.style.opacity =
-          "0";
-
-        setTimeout(
-          () => {
-            try {
-              row.remove();
-            } catch {}
-          },
-          450
-        );
-      },
-      7000
+    document.body.appendChild(
+      root
     );
   }
 
-  function sendChat(text) {
-    const value =
-      String(
-        text ||
-        ""
-      )
-      .trim()
-      .slice(
-        0,
-        300
+  function toggleChat(
+    force
+  ) {
+    const chat =
+      document.getElementById(
+        "connections-chat"
       );
 
-    if (!value) {
+    if (
+      !chat
+    ) {
       return;
     }
 
-    send(
-      "chat",
-      {
-        text:
-          value
-      }
-    );
+    if (
+      typeof force ===
+      "boolean"
+    ) {
+      chat.style.display =
+        force
+          ? "block"
+          : "none";
+
+      return;
+    }
+
+    chat.style.display =
+      chat.style.display ===
+      "none"
+        ? "block"
+        : "none";
   }
 
   /* =========================================================
-     CHAT NOTIFICATION SOUND
+     IDENTITY UI
   ========================================================= */
 
-  function playChatNotification() {
-    try {
-      if (
-        !State.chatSound.enabled
-      ) {
-        return;
-      }
-
-      const AC =
-        W.AudioContext ||
-        W.webkitAudioContext;
-
-      if (!AC) {
-        return;
-      }
-
-      if (
-        !State.chatSound.context
-      ) {
-        State.chatSound.context =
-          new AC();
-      }
-
-      const ctx =
-        State.chatSound.context;
-
-      if (
-        ctx.state ===
-        "suspended"
-      ) {
-        ctx.resume().catch(
-          () => {}
-        );
-      }
-
-      const now =
-        ctx.currentTime;
-
-      const osc =
-        ctx.createOscillator();
-
-      const gain =
-        ctx.createGain();
-
-      switch (
-        State.chatSound.type
-      ) {
-        case "soft":
-
-          osc.type =
-            "sine";
-
-          osc.frequency.setValueAtTime(
-            520,
-            now
-          );
-
-          osc.frequency.exponentialRampToValueAtTime(
-            720,
-            now + 0.08
-          );
-
-          break;
-
-        case "blip":
-
-          osc.type =
-            "square";
-
-          osc.frequency.setValueAtTime(
-            720,
-            now
-          );
-
-          osc.frequency.exponentialRampToValueAtTime(
-            980,
-            now + 0.06
-          );
-
-          break;
-
-        case "click":
-
-          osc.type =
-            "triangle";
-
-          osc.frequency.setValueAtTime(
-            900,
-            now
-          );
-
-          break;
-
-        default:
-
-          osc.type =
-            "sine";
-
-          osc.frequency.setValueAtTime(
-            420,
-            now
-          );
-
-          osc.frequency.exponentialRampToValueAtTime(
-            680,
-            now + 0.07
-          );
-
-          break;
-      }
-
-      gain.gain.setValueAtTime(
-        0.0001,
-        now
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        Math.max(
-          0.0001,
-          State.chatSound.volume
-        ),
-        now + 0.008
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        now + 0.14
-      );
-
-      osc.connect(
-        gain
-      );
-
-      gain.connect(
-        ctx.destination
-      );
-
-      osc.start(
-        now
-      );
-
-      osc.stop(
-        now + 0.15
-      );
-
-    } catch (e) {
-      warn(
-        "Chat notification:",
-        e
-      );
-    }
-  }
-  /* =========================================================
-   MATCH SCANNER
-========================================================= */
-
-function findBotConstructor() {
-  try {
-    if (State.botCtor) return State.botCtor;
-
-    const g = getGame();
-    const mgr = getBotManager();
-    const bots = getBotArray();
-
-    if (!g || !mgr || !Array.isArray(bots)) {
-      return null;
-    }
-
-    const found = bots.find(
-      b =>
-        b &&
-        b.team !== undefined &&
-        typeof b.constructor === "function"
-    );
-
-    if (found) {
-      State.botCtor = found.constructor;
-
-      log(
-        "Bot constructor found:",
-        State.botCtor.name || "(anonymous)"
-      );
-
-      return State.botCtor;
-    }
-  } catch (e) {
-    warn("findBotConstructor failed:", e);
-  }
-
-  return null;
-}
-
-function destroyGameBot(bot) {
-  if (!bot) return;
-
-  try {
-    bot.alive = false;
-  } catch (e) {}
-
-  try {
-    bot.dead = true;
-  } catch (e) {}
-
-  try {
-    if (bot.cs2Agent && bot.cs2Agent.root) {
-      const root = bot.cs2Agent.root;
-
-      if (root.parent) {
-        root.parent.remove(root);
-      }
-    }
-  } catch (e) {}
-
-  try {
-    if (typeof bot.destroy === "function") {
-      bot.destroy();
-    }
-  } catch (e) {}
-}
-
-function removeAllOriginalBots() {
-  try {
-    const arr = getBotArray();
-
-    if (!arr) {
-      warn("Could not get bot array.");
-      return 0;
-    }
-
-    const originals = arr.slice();
-
-    State.originalBots = originals;
-
-    for (const bot of originals) {
-      destroyGameBot(bot);
-
-      const index = arr.indexOf(bot);
-
-      if (index >= 0) {
-        arr.splice(index, 1);
-      }
-    }
-
-    State.botPool = [];
-
-    log(
-      "Removed original bots:",
-      originals.length
-    );
-
-    return originals.length;
-  } catch (e) {
-    warn(
-      "removeAllOriginalBots failed:",
-      e
-    );
-
-    return 0;
-  }
-}
-
-function disableRemoteAI(bot) {
-  if (!bot) return;
-
-  const possibleObjects = [
-    bot,
-    bot.ai,
-    bot.agent,
-    bot.cs2Agent,
-    bot.controller
-  ];
-
-  for (const obj of possibleObjects) {
-    if (!obj) continue;
-
-    try {
-      if ("enabled" in obj) {
-        obj.enabled = false;
-      }
-    } catch (e) {}
-
-    try {
-      if ("active" in obj) {
-        obj.active = false;
-      }
-    } catch (e) {}
-
-    try {
-      if ("isAI" in obj) {
-        obj.isAI = false;
-      }
-    } catch (e) {}
-
-    try {
-      if ("canThink" in obj) {
-        obj.canThink = false;
-      }
-    } catch (e) {}
-
-    try {
-      if ("thinking" in obj) {
-        obj.thinking = false;
-      }
-    } catch (e) {}
-  }
-}
-
-function spawnRemoteBot(remote) {
-  try {
-    if (!remote) return null;
-
-    const g = getGame();
-
-    if (!g) {
-      warn("Cannot spawn remote bot: game missing.");
-      return null;
-    }
-
-    const mgr = getBotManager();
-    const arr = getBotArray();
-    const ctor = findBotConstructor();
-
-    if (!mgr || !arr || !ctor) {
-      warn(
-        "Cannot spawn remote bot:",
-        {
-          manager: !!mgr,
-          array: !!arr,
-          ctor: !!ctor
-        }
-      );
-
-      return null;
-    }
-
-    const team =
-      remote.team ||
-      "CT";
-
-    const name =
-      remote.name ||
-      "Player";
-
-    let bot = null;
-
-    try {
-      bot = new ctor(
-        g,
-        team,
-        name,
-        "normal"
-      );
-    } catch (e) {
-      warn(
-        "Remote bot constructor failed:",
-        e
-      );
-      return null;
-    }
-
-    if (!bot) return null;
-
-    try {
-      arr.push(bot);
-    } catch (e) {
-      warn(
-        "Could not add remote bot to manager:",
-        e
-      );
-    }
-
-    try {
-      if (typeof bot.spawn === "function") {
-        bot.spawn();
-      }
-    } catch (e) {
-      warn(
-        "Remote bot spawn failed:",
-        e
-      );
-    }
-
-    disableRemoteAI(bot);
-
-    remote.bot = bot;
-
-    applyBotData(
-      bot,
-      remote
-    );
-
-    try {
-      rebuildAvatars();
-    } catch (e) {}
-
-    log(
-      "Created remote bot:",
-      remote.id,
-      remote.name
-    );
-
-    return bot;
-  } catch (e) {
-    warn(
-      "spawnRemoteBot failed:",
-      e
-    );
-
-    return null;
-  }
-}
-
-function applyBotData(bot, remote) {
-  if (!bot || !remote) return;
-
-  try {
-    bot.name =
-      remote.name ||
-      bot.name ||
-      "Player";
-  } catch (e) {}
-
-  try {
-    bot.playerName =
-      remote.name ||
-      bot.playerName ||
-      "Player";
-  } catch (e) {}
-
-  try {
-    bot.team =
-      remote.team ||
-      bot.team ||
-      "CT";
-  } catch (e) {}
-
-  try {
-    bot.health =
-      typeof remote.health === "number"
-        ? remote.health
-        : 100;
-  } catch (e) {}
-
-  try {
-    bot.alive =
-      remote.alive !== false;
-  } catch (e) {}
-
-  try {
-    bot.dead =
-      remote.dead === true;
-  } catch (e) {}
-
-  try {
-    bot.isPlayer = true;
-  } catch (e) {}
-
-  try {
-    bot.avatar =
-      remote.avatar || null;
-  } catch (e) {}
-
-  try {
-    bot.avatarUrl =
-      remote.avatar || null;
-  } catch (e) {}
-
-  try {
-    setPosition(
-      bot,
-      remote.x,
-      remote.y,
-      remote.z
-    );
-  } catch (e) {}
-
-  try {
-    setRotation(
-      bot,
-      remote.yaw,
-      remote.pitch
-    );
-  } catch (e) {}
-
-  disableRemoteAI(bot);
-}
-
-function updateRemoteBots() {
-  try {
-    for (const id in State.remoteBots) {
-      const remote =
-        State.remoteBots[id];
-
-      if (!remote) continue;
-
-      if (
-        remote.dead ||
-        remote.alive === false
-      ) {
-        if (remote.bot) {
-          destroyGameBot(
-            remote.bot
-          );
-
-          const arr =
-            getBotArray();
-
-          if (arr) {
-            const index =
-              arr.indexOf(
-                remote.bot
-              );
-
-            if (index >= 0) {
-              arr.splice(
-                index,
-                1
-              );
-            }
-          }
-
-          remote.bot = null;
-        }
-
-        continue;
-      }
-
-      if (!remote.bot) {
-        spawnRemoteBot(remote);
-        continue;
-      }
-
-      applyBotData(
-        remote.bot,
-        remote
-      );
-    }
-
-    rebuildAvatars();
-  } catch (e) {
-    warn(
-      "updateRemoteBots failed:",
-      e
-    );
-  }
-}
-
-function purgeNonRemoteBots() {
-  try {
-    if (!State.confirmedMatch) return;
-
-    const arr =
-      getBotArray();
-
-    if (!arr) return;
-
-    const allowed =
-      new Set();
-
-    for (const id in State.remoteBots) {
-      const remote =
-        State.remoteBots[id];
-
-      if (
-        remote &&
-        remote.bot
-      ) {
-        allowed.add(
-          remote.bot
-        );
-      }
-    }
-
-    for (
-      let i = arr.length - 1;
-      i >= 0;
-      i--
-    ) {
-      const bot = arr[i];
-
-      if (!bot) {
-        arr.splice(i, 1);
-        continue;
-      }
-
-      if (!allowed.has(bot)) {
-        destroyGameBot(bot);
-        arr.splice(i, 1);
-      }
-    }
-  } catch (e) {
-    warn(
-      "purgeNonRemoteBots failed:",
-      e
-    );
-  }
-}
-
-function removeRemote(id) {
-  try {
-    const remote =
-      State.remoteBots[id];
-
-    if (!remote) return;
-
-    if (remote.bot) {
-      const bot =
-        remote.bot;
-
-      destroyGameBot(bot);
-
-      const arr =
-        getBotArray();
-
-      if (arr) {
-        const index =
-          arr.indexOf(bot);
-
-        if (index >= 0) {
-          arr.splice(
-            index,
-            1
-          );
-        }
-      }
-
-      remote.bot = null;
-    }
-
-    delete State.remoteBots[id];
-
-    try {
-      rebuildAvatars();
-    } catch (e) {}
-  } catch (e) {
-    warn(
-      "removeRemote failed:",
-      e
-    );
-  }
-}
-
-function clearRemoteBots() {
-  try {
-    for (const id in State.remoteBots) {
-      const remote =
-        State.remoteBots[id];
-
-      if (
-        remote &&
-        remote.bot
-      ) {
-        destroyGameBot(
-          remote.bot
-        );
-
-        const arr =
-          getBotArray();
-
-        if (arr) {
-          const index =
-            arr.indexOf(
-              remote.bot
-            );
-
-          if (index >= 0) {
-            arr.splice(
-              index,
-              1
-            );
-          }
-        }
-      }
-    }
-  } catch (e) {
-    warn(
-      "clearRemoteBots failed:",
-      e
-    );
-  }
-
-  State.remoteBots = {};
-}
-
-function rebuildAvatars() {
-  try {
-    const g = getGame();
-
-    if (!g) return;
-
-    const hud = g.hud;
-
+  function createIdentityUI() {
     if (
-      hud &&
-      typeof hud.buildAvatars === "function"
+      document.getElementById(
+        "connections-identity"
+      )
     ) {
-      hud.buildAvatars();
-    }
-  } catch (e) {}
-}
-
-function confirmMatch() {
-  if (!State.joinedRoom) {
-    setStatus(
-      "Join a room first."
-    );
-    return;
-  }
-
-  if (!isInsideMatch()) {
-    setStatus(
-      "You must be inside a real match first."
-    );
-    return;
-  }
-
-  const mgr =
-    getBotManager();
-
-  const arr =
-    getBotArray();
-
-  if (!mgr || !arr) {
-    setStatus(
-      "Bot manager not found."
-    );
-
-    warn(
-      "window.game:",
-      getGame()
-    );
-
-    return;
-  }
-
-  log(
-    "Match detected. Scanning bot manager..."
-  );
-
-  /*
-   * VERY IMPORTANT:
-   *
-   * Find the real constructor BEFORE
-   * deleting the original bots.
-   */
-  const ctor =
-    findBotConstructor();
-
-  if (!ctor) {
-    setStatus(
-      "Could not find bot constructor."
-    );
-
-    return;
-  }
-
-  State.botManager =
-    mgr;
-
-  /*
-   * Remove the original game bots.
-   */
-  const removed =
-    removeAllOriginalBots();
-
-  State.confirmedMatch = true;
-
-  setStatus(
-    "Match confirmed. Multiplayer ready."
-  );
-
-  updateScanUI();
-
-  startStateLoop();
-
-  log(
-    "Bot constructor:",
-    ctor.name || "(anonymous)"
-  );
-
-  log(
-    "Original bots removed:",
-    removed
-  );
-
-  log(
-    "Connections multiplayer ready."
-  );
-
-  rebuildAvatars();
-}
-
-function monitorMatch() {
-  if (
-    State.confirmedMatch &&
-    !isInsideMatch()
-  ) {
-    State.confirmedMatch =
-      false;
-
-    stopStateLoop();
-
-    clearRemoteBots();
-
-    State.originalBots = [];
-    State.botPool = [];
-    State.botManager = null;
-    State.botCtor = null;
-
-    updateScanUI();
-
-    return;
-  }
-
-  if (
-    State.confirmedMatch
-  ) {
-    updateRemoteBots();
-    purgeNonRemoteBots();
-  }
-}
-
-
-/* =========================================================
-   CHAT - IN GAME ONLY
-========================================================= */
-
-function createChat() {
-  if (
-    document.getElementById(
-      "connections-game-chat"
-    )
-  ) {
-    return;
-  }
-
-  const box =
-    document.createElement("div");
-
-  box.id =
-    "connections-game-chat";
-
-  box.innerHTML = `
-    <div class="conn-chat-messages"></div>
-
-    <input
-      class="conn-chat-input"
-      maxlength="300"
-      autocomplete="off"
-      placeholder="Say something..."
-    >
-  `;
-
-  box.style.cssText = `
-    position:fixed;
-    left:20px;
-    bottom:20px;
-    width:360px;
-    max-width:calc(100vw - 40px);
-    z-index:999998;
-    pointer-events:none;
-    font-family:Arial,sans-serif;
-  `;
-
-  const messages =
-    box.querySelector(
-      ".conn-chat-messages"
-    );
-
-  messages.style.cssText = `
-    max-height:180px;
-    overflow:hidden;
-    margin-bottom:8px;
-    text-shadow:
-      0 1px 3px #000,
-      0 0 4px #000;
-  `;
-
-  const input =
-    box.querySelector(
-      ".conn-chat-input"
-    );
-
-  input.style.cssText = `
-    display:none;
-    pointer-events:auto;
-    width:100%;
-    height:34px;
-    border:1px solid #343744;
-    border-radius:8px;
-    background:rgba(12,13,17,.94);
-    color:#fff;
-    padding:0 10px;
-    outline:none;
-  `;
-
-  document.body.appendChild(box);
-
-  input.addEventListener(
-    "keydown",
-    e => {
-      if (e.key !== "Enter") {
-        if (e.key === "Escape") {
-          closeChat();
-        }
-
-        return;
-      }
-
-      e.preventDefault();
-
-      const text =
-        input.value.trim();
-
-      if (text) {
-        send(
-          "chat",
-          {
-            text
-          }
-        );
-      }
-
-      input.value = "";
-
-      closeChat();
-    }
-  );
-}
-
-function openChat() {
-  if (!isInsideMatch()) {
-    return;
-  }
-
-  createChat();
-
-  const input =
-    document.querySelector(
-      "#connections-game-chat .conn-chat-input"
-    );
-
-  if (!input) return;
-
-  input.style.display =
-    "block";
-
-  input.focus();
-}
-
-function closeChat() {
-  const input =
-    document.querySelector(
-      "#connections-game-chat .conn-chat-input"
-    );
-
-  if (!input) return;
-
-  input.style.display =
-    "none";
-
-  input.blur();
-}
-
-function playChatNotification() {
-  try {
-    const AudioContext =
-      window.AudioContext ||
-      window.webkitAudioContext;
-
-    if (!AudioContext) return;
-
-    if (!State.chatAudioContext) {
-      State.chatAudioContext =
-        new AudioContext();
+      return;
     }
 
-    const ctx =
-      State.chatAudioContext;
-
-    if (
-      ctx.state === "suspended"
-    ) {
-      ctx.resume().catch(
-        () => {}
-      );
-    }
-
-    const osc =
-      ctx.createOscillator();
-
-    const gain =
-      ctx.createGain();
-
-    osc.type =
-      State.chatSound ||
-      "pop";
-
-    const now =
-      ctx.currentTime;
-
-    osc.frequency.setValueAtTime(
-      620,
-      now
-    );
-
-    osc.frequency.exponentialRampToValueAtTime(
-      880,
-      now + 0.07
-    );
-
-    gain.gain.setValueAtTime(
-      0.0001,
-      now
-    );
-
-    gain.gain.exponentialRampToValueAtTime(
-      Number(
-        State.chatVolume ?? 0.08
-      ),
-      now + 0.01
-    );
-
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      now + 0.11
-    );
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.start(now);
-    osc.stop(now + 0.12);
-  } catch (e) {}
-}
-
-function receiveChat(msg) {
-  const name =
-    msg.name ||
-    msg.player ||
-    "Player";
-
-  const text =
-    String(
-      msg.text || ""
-    ).slice(0, 300);
-
-  if (!text) return;
-
-  createChat();
-
-  const container =
-    document.querySelector(
-      "#connections-game-chat .conn-chat-messages"
-    );
-
-  if (!container) return;
-
-  const row =
-    document.createElement("div");
-
-  row.style.cssText = `
-    color:#fff;
-    font-size:14px;
-    line-height:19px;
-    opacity:1;
-  `;
-
-  const sender =
-    document.createElement("span");
-
-  sender.textContent =
-    name + ": ";
-
-  sender.style.cssText = `
-    color:#7289da;
-    font-weight:700;
-  `;
-
-  const message =
-    document.createElement("span");
-
-  message.textContent =
-    text;
-
-  row.appendChild(sender);
-  row.appendChild(message);
-
-  container.appendChild(row);
-
-  while (
-    container.children.length > 8
-  ) {
-    container.removeChild(
-      container.firstChild
-    );
-  }
-
-  if (State.chatSoundEnabled !== false) {   playChatNotification(); }
-
-  setTimeout(
-    () => {
-      row.style.transition =
-        "opacity .4s";
-
-      row.style.opacity =
-        "0";
-
-      setTimeout(
-        () => {
-          row.remove();
-        },
-        450
-      );
-    },
-    7000
-  );
-}
-
-
-/* =========================================================
-   UI
-========================================================= */
-
-GM_addStyle(`
-  #connections-panel,
-  #connections-panel * {
-    box-sizing:border-box;
-  }
-
-  #connections-panel {
-    position:fixed;
-    top:50%;
-    left:50%;
-    transform:translate(-50%,-50%);
-    width:780px;
-    max-width:calc(100vw - 30px);
-    max-height:calc(100vh - 30px);
-    overflow:auto;
-    z-index:999999;
-    background:#101116;
-    color:#eee;
-    border:1px solid #2c2f3a;
-    border-radius:16px;
-    box-shadow:0 20px 80px rgba(0,0,0,.65);
-    font-family:Arial,sans-serif;
-    padding:18px;
-    display:none;
-  }
-
-  #connections-panel::-webkit-scrollbar {
-    width:8px;
-  }
-
-  #connections-panel::-webkit-scrollbar-thumb {
-    background:#2c2f3a;
-    border-radius:10px;
-  }
-
-  .conn-header {
-    display:flex;
-    align-items:center;
-    gap:12px;
-    margin-bottom:18px;
-    cursor:move;
-    user-select:none;
-  }
-
-  .conn-logo {
-    width:48px;
-    height:48px;
-    object-fit:contain;
-    border-radius:10px;
-  }
-
-  .conn-title {
-    font-size:22px;
-    font-weight:800;
-  }
-
-  .conn-subtitle {
-    color:#8d91a0;
-    font-size:12px;
-    margin-top:2px;
-  }
-
-  .conn-close {
-    margin-left:auto;
-    width:34px;
-    height:34px;
-    border:1px solid #30333f;
-    border-radius:9px;
-    background:#181a21;
-    color:#aaa;
-    font-size:22px;
-    cursor:pointer;
-  }
-
-  .conn-close:hover {
-    background:#22252e;
-    color:#fff;
-  }
-
-  .conn-section {
-    margin-top:14px;
-    padding:14px;
-    border:1px solid #292c36;
-    border-radius:12px;
-    background:#14161d;
-  }
-
-  .conn-section-title {
-    color:#777c8c;
-    font-size:11px;
-    font-weight:800;
-    letter-spacing:1.2px;
-    margin-bottom:10px;
-  }
-
-  .conn-match-title {
-    font-size:16px;
-    font-weight:700;
-    margin-bottom:5px;
-  }
-
-  .conn-match-description {
-    color:#969aa8;
-    font-size:12px;
-    line-height:18px;
-    margin-bottom:12px;
-  }
-
-  .conn-btn {
-    border:1px solid #383c49;
-    border-radius:8px;
-    background:#181a21;
-    color:#eee;
-    padding:9px 12px;
-    cursor:pointer;
-  }
-
-  .conn-btn:hover {
-    background:#22252e;
-  }
-
-  .conn-btn.primary {
-    background:#7289da;
-    border-color:#7289da;
-    color:#fff;
-  }
-
-  .conn-btn.primary:hover {
-    background:#687bc5;
-  }
-
-  .conn-btn:disabled {
-    opacity:.5;
-    cursor:not-allowed;
-  }
-
-  .conn-status {
-    display:flex;
-    align-items:center;
-    gap:8px;
-    font-size:13px;
-    font-weight:700;
-  }
-
-  .conn-dot {
-    width:8px;
-    height:8px;
-    border-radius:50%;
-    display:inline-block;
-  }
-
-  .conn-dot.online {
-    background:#55d187;
-    box-shadow:0 0 10px rgba(85,209,135,.55);
-  }
-
-  .conn-dot.offline {
-    background:#777;
-  }
-
-  .conn-status-text {
-    margin-top:8px;
-    color:#8e93a1;
-    font-size:12px;
-  }
-
-  .conn-input {
-    width:100%;
-    height:36px;
-    border:1px solid #30333f;
-    border-radius:8px;
-    background:#0f1015;
-    color:#fff;
-    outline:none;
-    padding:0 10px;
-  }
-
-  .conn-input:focus {
-    border-color:#7289da;
-  }
-
-  .conn-color {
-    width:46px;
-    height:36px;
-    border:1px solid #30333f;
-    border-radius:8px;
-    background:#0f1015;
-  }
-
-  .conn-profile {
-    display:flex;
-    gap:8px;
-    margin-bottom:8px;
-  }
-
-  .conn-profile .conn-input {
-    flex:1;
-  }
-
-  .conn-create-row {
-    display:flex;
-    gap:8px;
-  }
-
-  .conn-segments {
-    display:flex;
-    flex-direction:column;
-    gap:7px;
-    margin-top:8px;
-  }
-
-  .conn-segment {
-    display:grid;
-    grid-template-columns:
-      minmax(120px,1fr)
-      70px
-      70px
-      46px
-      auto
-      40px;
-    gap:6px;
-    align-items:center;
-  }
-
-  .segment-ct,
-  .segment-tt {
-    height:36px;
-    border:1px solid #30333f;
-    border-radius:8px;
-    background:#0f1015;
-    color:#fff;
-    padding:0 8px;
-  }
-
-  .segment-color {
-    width:46px;
-    height:36px;
-    border:1px solid #30333f;
-    border-radius:8px;
-    background:#0f1015;
-  }
-
-  .conn-check {
-    display:flex;
-    align-items:center;
-    gap:7px;
-    margin-top:9px;
-    color:#ccc;
-    font-size:13px;
-  }
-
-  .conn-tag {
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    padding:3px 7px;
-    border-radius:6px;
-    border:1px solid #353947;
-    background:#1b1e27;
-    color:#bfc3d0;
-    font-size:10px;
-    font-weight:800;
-    white-space:nowrap;
-  }
-
-  .conn-tag.rafit {
-    color:#fff;
-    border-color:#7289da;
-    background:#7289da22;
-  }
-
-  .conn-tag.rtp {
-    color:#aab0c0;
-  }
-
-  .conn-brand {
-    margin-left:auto;
-    display:flex;
-    align-items:center;
-    gap:5px;
-  }
-
-  .conn-room-card {
-    border:1px solid #292c36;
-    border-radius:10px;
-    background:#101219;
-    padding:11px;
-    margin-bottom:8px;
-  }
-
-  .conn-room-head {
-    display:flex;
-    align-items:center;
-    gap:6px;
-  }
-
-  .conn-room-name {
-    font-weight:800;
-    flex:1;
-  }
-
-  .conn-room-meta {
-    color:#858a99;
-    font-size:11px;
-    margin-top:5px;
-  }
-
-  .conn-room-players {
-    margin-top:7px;
-    color:#cdd0d8;
-    font-size:12px;
-    line-height:18px;
-  }
-
-  .conn-room-actions {
-    margin-top:9px;
-  }
-
-  .conn-current-player {
-    display:flex;
-    align-items:center;
-    gap:7px;
-    margin-top:6px;
-    font-size:12px;
-  }
-
-  .conn-player-name {
-    font-weight:700;
-    flex:1;
-  }
-
-  .conn-kick {
-    border:1px solid #55363b;
-    border-radius:6px;
-    background:#24161a;
-    color:#e58b95;
-    padding:4px 7px;
-    cursor:pointer;
-  }
-
-  .conn-footer {
-    margin-top:14px;
-    color:#777c8c;
-    font-size:11px;
-    line-height:17px;
-  }
-`);
-
-
-function buildUI() {
-  if (
-    document.getElementById(
-      "connections-panel"
-    )
-  ) {
-    return;
-  }
-
-  const panel =
-    document.createElement("div");
-
-  panel.id =
-    "connections-panel";
-
-  panel.innerHTML = `
-    <div class="conn-header">
-      <img
-        class="conn-logo"
-        src="${RAFIT_LOGO}"
-      >
-
-      <div>
-        <div class="conn-title">
-          Connections
-        </div>
-
-        <div class="conn-subtitle">
-          Multiplayer
-        </div>
-      </div>
-
-      <div class="conn-brand">
-        <span class="conn-tag rafit">
-          RAFIT
-        </span>
-
-        <span class="conn-tag rtp">
-          RTP ${State.rtp}
-        </span>
-      </div>
-
-      <button class="conn-close">
-        ×
-      </button>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        MATCH CHECK
-      </div>
-
-      <div class="conn-match-title">
-        Multiplayer Match Scanner
-      </div>
-
-      <div class="conn-match-description">
-        Enter a real match first, then click the button.
-        Connections will scan the game and remove the
-        original bots so remote players can be rendered.
-      </div>
-
-      <button
-        id="conn-match-btn"
-        class="conn-btn primary"
-      >
-        I AM INSIDE A MATCH
-      </button>
-
-      <div
-        id="conn-match-status"
-        class="conn-status-text"
-      >
-        Not confirmed.
-      </div>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        CONNECTION
-      </div>
-
-      <div class="conn-status">
-        <span
-          id="conn-dot"
-          class="conn-dot offline"
-        ></span>
-
-        <span id="conn-connection-text">
-          OFFLINE
-        </span>
-      </div>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        PROFILE
-      </div>
-
-      <div class="conn-profile">
-        <input
-          id="conn-name"
-          class="conn-input"
-          placeholder="Player name"
-          maxlength="24"
-        >
-
-        <input
-          id="conn-name-color"
-          class="conn-color"
-          type="color"
-        >
-      </div>
-
-      <button
-        id="conn-save-profile"
-        class="conn-btn"
-      >
-        Save Profile
-      </button>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        CREATE ROOM
-      </div>
-
-      <div class="conn-create-row">
-        <input
-          id="conn-room-name"
-          class="conn-input"
-          placeholder="Room name"
-          maxlength="32"
-        >
-      </div>
-
-      <div
-        id="conn-segments"
-        class="conn-segments"
-      ></div>
-
-      <button
-        id="conn-add-segment"
-        class="conn-btn"
-        style="margin-top:8px"
-      >
-        + Add segment
-      </button>
-
-      <label class="conn-check">
-        <input
-          id="conn-rafit"
-          type="checkbox"
-          checked
-        >
-        RAFIT
-      </label>
-
-      <label class="conn-check">
-        <input
-          id="conn-professional"
-          type="checkbox"
-        >
-        Professional
-      </label>
-
-      <button
-        id="conn-create-room"
-        class="conn-btn primary"
-        style="margin-top:10px"
-      >
-        Create Room
-      </button>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        CHAT NOTIFICATIONS
-      </div>
-
-      <label class="conn-check">
-        <input
-          id="conn-chat-sound-enabled"
-          type="checkbox"
-        >
-        Sound
-      </label>
-
-      <select
-        id="conn-chat-sound"
-        class="conn-input"
-        style="margin-top:7px"
-      >
-        <option value="sine">Sine</option>
-        <option value="square">Square</option>
-        <option value="sawtooth">Saw</option>
-        <option value="triangle">Soft</option>
-      </select>
-
-      <input
-        id="conn-chat-volume"
-        type="range"
-        min="0"
-        max="0.2"
-        step="0.01"
-        style="width:100%;margin-top:8px"
-      >
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        ROOMS
-      </div>
-
-      <div id="conn-rooms">
-        Loading rooms...
-      </div>
-    </div>
-
-    <div class="conn-section">
-      <div class="conn-section-title">
-        CURRENT ROOM
-      </div>
-
-      <div
-        id="conn-current-room"
-        class="conn-status-text"
-      >
-        Not in a room.
-      </div>
-
-      <button
-        id="conn-leave-room"
-        class="conn-btn"
-        style="margin-top:8px"
-      >
-        Leave Room
-      </button>
-
-      <div
-        id="conn-current-players"
-        style="margin-top:9px"
-      ></div>
-    </div>
-
-    <div class="conn-footer">
-      <span id="conn-status">
-        Offline
-      </span>
-
-      <br>
-
-      Backspace = open/close
-    </div>
-  `;
-
-  document.body.appendChild(panel);
-
-  State.UI.panel =
-    panel;
-
-  State.UI.matchBtn =
-    panel.querySelector(
-      "#conn-match-btn"
-    );
-
-  State.UI.rooms =
-    panel.querySelector(
-      "#conn-rooms"
-    );
-
-  State.UI.currentRoom =
-    panel.querySelector(
-      "#conn-current-room"
-    );
-
-  State.UI.currentPlayers =
-    panel.querySelector(
-      "#conn-current-players"
-    );
-
-  State.UI.status =
-    panel.querySelector(
-      "#conn-status"
-    );
-
-  State.UI.matchStatus =
-    panel.querySelector(
-      "#conn-match-status"
-    );
-
-  bindUI();
-
-  addSegment();
-}
-
-function bindUI() {
-  const panel =
-    State.UI.panel;
-
-  panel.querySelector(
-    ".conn-close"
-  ).onclick = () => {
-    toggleUI(false);
-  };
-
-  State.UI.matchBtn.onclick =
-    confirmMatch;
-
-  panel.querySelector(
-    "#conn-save-profile"
-  ).onclick = () => {
-    const name =
-      panel.querySelector(
-        "#conn-name"
-      ).value.trim();
-
-    const color =
-      panel.querySelector(
-        "#conn-name-color"
-      ).value;
-
-    if (name) {
-      State.name =
-        name;
-    }
-
-    if (color) {
-      State.nameColor =
-        color;
-    }
-
-    saveProfile();
-
-    setStatus(
-      "Profile saved."
-    );
-  };
-
-  panel.querySelector(
-    "#conn-add-segment"
-  ).onclick =
-    addSegment;
-
-  panel.querySelector(
-    "#conn-create-room"
-  ).onclick =
-    createRoomFromUI;
-
-  panel.querySelector(
-    "#conn-leave-room"
-  ).onclick = () => {
-    Network.leaveRoom();
-  };
-
-  panel.querySelector(
-    "#conn-name"
-  ).value =
-    State.name;
-
-  panel.querySelector(
-    "#conn-name-color"
-  ).value =
-    State.nameColor;
-
-  const soundEnabled =
-    panel.querySelector(
-      "#conn-chat-sound-enabled"
-    );
-
-  const soundSelect =
-    panel.querySelector(
-      "#conn-chat-sound"
-    );
-
-  const volume =
-    panel.querySelector(
-      "#conn-chat-volume"
-    );
-
-  soundEnabled.checked =
-    State.chatSoundEnabled !== false;
-
-  soundSelect.value =
-    State.chatSound ||
-    "sine";
-
-  volume.value =
-    String(
-      State.chatVolume ?? 0.08
-    );
-
-  soundEnabled.onchange =
-    () => {
-      State.chatSoundEnabled =
-        soundEnabled.checked;
-
-      try {
-        localStorage.setItem(
-          "connections-chat-sound-enabled",
-          String(
-            State.chatSoundEnabled
-          )
-        );
-      } catch (e) {}
-    };
-
-  soundSelect.onchange =
-    () => {
-      State.chatSound =
-        soundSelect.value;
-
-      try {
-        localStorage.setItem(
-          "connections-chat-sound",
-          State.chatSound
-        );
-      } catch (e) {}
-    };
-
-  volume.oninput =
-    () => {
-      State.chatVolume =
-        Number(
-          volume.value
-        );
-
-      try {
-        localStorage.setItem(
-          "connections-chat-volume",
-          String(
-            State.chatVolume
-          )
-        );
-      } catch (e) {}
-    };
-
-  makeDraggable(panel);
-}
-
-function addSegment(
-  defaults = {}
-) {
-  const container =
-    document.getElementById(
-      "conn-segments"
-    );
-
-  if (!container) return;
-
-  const row =
-    document.createElement("div");
-
-  row.className =
-    "conn-segment";
-
-  row.innerHTML = `
-    <input
-      class="conn-input segment-name"
-      placeholder="Segment"
-      value="${defaults.name || "Segment"}"
-    >
-
-    <input
-      type="number"
-      class="segment-ct"
-      min="0"
-      max="32"
-      value="${defaults.ct ?? 5}"
-    >
-
-    <input
-      type="number"
-      class="segment-tt"
-      min="0"
-      max="32"
-      value="${defaults.tt ?? 5}"
-    >
-
-    <input
-      type="color"
-      class="segment-color"
-      value="${defaults.color || "#7289da"}"
-    >
-
-    <span class="conn-tag">
-      CT/TT
-    </span>
-
-    <button
-      class="conn-btn segment-remove"
-    >
-      ×
-    </button>
-  `;
-
-  row.querySelector(
-    ".segment-remove"
-  ).onclick = () => {
-    row.remove();
-  };
-
-  container.appendChild(
-    row
-  );
-}
-
-function createRoomFromUI() {
-  const name =
-    document.getElementById(
-      "conn-room-name"
-    )?.value.trim();
-
-  if (!name) {
-    setStatus(
-      "Enter a room name."
-    );
-
-    return;
-  }
-
-  const segments = [
-    ...document.querySelectorAll(
-      "#conn-segments .conn-segment"
-    )
-  ].map(
-    row => ({
-      name:
-        row.querySelector(
-          ".segment-name"
-        ).value ||
-        "Segment",
-
-      ct:
-        Number(
-          row.querySelector(
-            ".segment-ct"
-          ).value
-        ) || 0,
-
-      tt:
-        Number(
-          row.querySelector(
-            ".segment-tt"
-          ).value
-        ) || 0,
-
-      color:
-        row.querySelector(
-          ".segment-color"
-        ).value ||
-        "#7289da"
-    })
-  );
-
-  const rafit =
-    document.getElementById(
-      "conn-rafit"
-    ).checked;
-
-  const professional =
-    document.getElementById(
-      "conn-professional"
-    ).checked;
-
-  Network.createRoom({
-    name,
-    segments,
-    rafit,
-    professional,
-    rtp: State.rtp
-  });
-}
-
-function renderRooms() {
-  const container =
-    State.UI.rooms;
-
-  if (!container) return;
-
-  if (!State.rooms.length) {
-    container.innerHTML = `
-      <div class="conn-status-text">
-        No rooms available.
-      </div>
-    `;
-
-    return;
-  }
-
-  container.innerHTML =
-    "";
-
-  for (
-    const room of State.rooms
-  ) {
-    const card =
+    const root =
       document.createElement(
         "div"
       );
 
-    card.className =
-      "conn-room-card";
+    root.id =
+      "connections-identity";
 
-    const players =
-      Array.isArray(
-        room.players
-      )
-        ? room.players
-        : [];
+    root.style.cssText =
+      [
+        "position:absolute",
+        "right:20px",
+        "bottom:20px",
+        "width:230px",
+        "background:rgba(15,15,20,.94)",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:10px",
+        "padding:10px",
+        "color:#fff",
+        "font-family:Arial,sans-serif",
+        "font-size:13px",
+        "z-index:2147483646",
+        "box-sizing:border-box",
+        "display:none",
+        "backdrop-filter:blur(8px)"
+      ].join(";");
 
-    const playerText =
-      players.length
-        ? players
-            .map(
-              p => {
-                const color =
-                  p.color ||
-                  p.nameColor ||
-                  "#7289da";
-
-                return `
-                  <div>
-                    <span
-                      style="
-                        color:${escapeHtml(color)};
-                        font-weight:700;
-                      "
-                    >
-                      ${escapeHtml(
-                        p.name ||
-                        "Player"
-                      )}
-                    </span>
-                  </div>
-                `;
-              }
-            )
-            .join("")
-        : "No players";
-
-    card.innerHTML = `
-      <div class="conn-room-head">
-        <div class="conn-room-name">
-          ${escapeHtml(
-            room.name ||
-            "Room"
-          )}
-        </div>
-
-        ${
-          room.rafit
-            ? `<span class="conn-tag rafit">RAFIT</span>`
-            : ""
-        }
-
-        ${
-          room.professional
-            ? `<span class="conn-tag">Professional</span>`
-            : ""
-        }
-
-        <span class="conn-tag rtp">
-          RTP ${Number(
-            room.rtp || 0
-          )}
-        </span>
-      </div>
-
-      <div class="conn-room-meta">
-        ${players.length} player(s)
-      </div>
-
-      <div class="conn-room-players">
-        ${playerText}
-      </div>
-
-      <div class="conn-room-actions">
-        <button class="conn-btn join-room">
-          Join
-        </button>
-      </div>
-    `;
-
-    card.querySelector(
-      ".join-room"
-    ).onclick = () => {
-      Network.joinRoom(
-        room.id ||
-        room.roomId
+    const title =
+      document.createElement(
+        "div"
       );
-    };
 
-    container.appendChild(
-      card
+    title.textContent =
+      "player";
+
+    title.style.cssText =
+      [
+        "font-weight:700",
+        "margin-bottom:8px"
+      ].join(";");
+
+    const input =
+      document.createElement(
+        "input"
+      );
+
+    input.id =
+      "connections-name-input";
+
+    input.type =
+      "text";
+
+    input.value =
+      State.name ||
+      "Player";
+
+    input.maxLength =
+      32;
+
+    input.placeholder =
+      "player name";
+
+    input.style.cssText =
+      [
+        "width:100%",
+        "box-sizing:border-box",
+        "background:#202024",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:6px",
+        "padding:7px 9px",
+        "color:#fff",
+        "outline:none"
+      ].join(";");
+
+    const save =
+      document.createElement(
+        "button"
+      );
+
+    save.type =
+      "button";
+
+    save.textContent =
+      "Save";
+
+    save.style.cssText =
+      [
+        "width:100%",
+        "margin-top:7px",
+        "border:0",
+        "border-radius:6px",
+        "padding:7px",
+        "background:#7289da",
+        "color:#fff",
+        "cursor:pointer"
+      ].join(";");
+
+    save.addEventListener(
+      "click",
+      () => {
+        setLocalName(
+          input.value
+        );
+      }
     );
-  }
-}
 
-function updateCurrentRoom() {
-  if (
-    !State.UI.currentRoom
-  ) {
-    return;
-  }
+    input.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Enter"
+        ) {
+          event.preventDefault();
 
-  if (!State.joinedRoom) {
-    State.UI.currentRoom.innerHTML =
-      "Not in a room.";
-
-    State.UI.currentPlayers.innerHTML =
-      "";
-
-    return;
-  }
-
-  const room =
-    State.roomData ||
-    {};
-
-  State.UI.currentRoom.innerHTML = `
-    <strong>
-      ${escapeHtml(
-        room.name ||
-        State.room ||
-        "Current Room"
-      )}
-    </strong>
-  `;
-
-  const players =
-    Array.isArray(
-      room.players
-    )
-      ? room.players
-      : [];
-
-  State.UI.currentPlayers.innerHTML =
-    players
-      .map(
-        p => {
-          const id =
-            String(
-              p.id || ""
-            );
-
-          const color =
-            p.color ||
-            p.nameColor ||
-            "#7289da";
-
-          const isMe =
-            State.id &&
-            id ===
-              String(
-                State.id
-              );
-
-          return `
-            <div class="conn-current-player">
-              <span
-                class="conn-player-name"
-                style="color:${escapeHtml(color)}"
-              >
-                ${escapeHtml(
-                  p.name ||
-                  "Player"
-                )}
-              </span>
-
-              ${
-                isMe
-                  ? `<span class="conn-tag">YOU</span>`
-                  : ""
-              }
-
-              ${
-                !isMe &&
-                room.host ===
-                  State.id
-                  ? `
-                    <button
-                      class="conn-kick"
-                      data-kick="${escapeHtml(id)}"
-                    >
-                      Kick
-                    </button>
-                  `
-                  : ""
-              }
-            </div>
-          `;
+          save.click();
         }
-      )
-      .join("");
-
-  State.UI.currentPlayers
-    .querySelectorAll(
-      "[data-kick]"
-    )
-    .forEach(
-      btn => {
-        btn.onclick =
-          () => {
-            Network.kick(
-              btn.dataset.kick
-            );
-          };
       }
     );
-}
 
-function updateScanUI() {
-  if (
-    !State.UI.matchBtn
+    root.appendChild(
+      title
+    );
+
+    root.appendChild(
+      input
+    );
+
+    root.appendChild(
+      save
+    );
+
+    document.body.appendChild(
+      root
+    );
+  }
+
+  function toggleIdentity(
+    force
   ) {
-    return;
-  }
+    const identity =
+      document.getElementById(
+        "connections-identity"
+      );
 
-  if (
-    State.confirmedMatch
-  ) {
-    State.UI.matchBtn.textContent =
-      "MATCH CONFIRMED";
-
-    State.UI.matchBtn.disabled =
-      true;
-
-    State.UI.matchStatus.textContent =
-      `Ready • ${State.originalBots.length} original bots captured`;
-  } else {
-    State.UI.matchBtn.textContent =
-      "I AM INSIDE A MATCH";
-
-    State.UI.matchBtn.disabled =
-      false;
-
-    State.UI.matchStatus.textContent =
-      State.joinedRoom
-        ? "Not confirmed."
-        : "Join a room first.";
-  }
-}
-
-function updateUI() {
-  if (!State.UI.panel)
-    return;
-
-  const dot =
-    State.UI.panel.querySelector(
-      "#conn-dot"
-    );
-
-  const connectionText =
-    State.UI.panel.querySelector(
-      "#conn-connection-text"
-    );
-
-  if (State.connected) {
-    dot.className =
-      "conn-dot online";
-
-    connectionText.textContent =
-      "ONLINE";
-  } else {
-    dot.className =
-      "conn-dot offline";
-
-    connectionText.textContent =
-      "OFFLINE";
-  }
-
-  updateScanUI();
-  updateCurrentRoom();
-  renderRooms();
-
-  const rtp =
-    State.UI.panel.querySelector(
-      ".conn-tag.rtp"
-    );
-
-  if (rtp) {
-    rtp.textContent =
-      `RTP ${State.rtp}`;
-  }
-}
-
-function setStatus(text) {
-  if (
-    State.UI.status
-  ) {
-    State.UI.status.textContent =
-      text;
-  }
-
-  log(text);
-}
-
-function toggleUI(force) {
-  const panel =
-    State.UI.panel;
-
-  if (!panel) return;
-
-  const visible =
-    force !== undefined
-      ? force
-      : panel.style.display !==
-        "block";
-
-  panel.style.display =
-    visible
-      ? "block"
-      : "none";
-
-  if (visible) {
-    updateUI();
-  }
-}
-
-
-/* =========================================================
-   DRAG
-========================================================= */
-
-function makeDraggable(panel) {
-  const header =
-    panel.querySelector(
-      ".conn-header"
-    );
-
-  if (!header) return;
-
-  let dragging =
-    false;
-
-  let ox = 0;
-  let oy = 0;
-
-  header.addEventListener(
-    "mousedown",
-    e => {
-      if (
-        e.target.closest(
-          ".conn-close"
-        )
-      ) {
-        return;
-      }
-
-      dragging =
-        true;
-
-      const rect =
-        panel.getBoundingClientRect();
-
-      ox =
-        e.clientX -
-        rect.left;
-
-      oy =
-        e.clientY -
-        rect.top;
-
-      panel.style.transform =
-        "none";
-
-      panel.style.left =
-        rect.left +
-        "px";
-
-      panel.style.top =
-        rect.top +
-        "px";
-
-      e.preventDefault();
-    }
-  );
-
-  document.addEventListener(
-    "mousemove",
-    e => {
-      if (!dragging)
-        return;
-
-      panel.style.left =
-        Math.max(
-          5,
-          Math.min(
-            window.innerWidth -
-              panel.offsetWidth -
-              5,
-            e.clientX -
-              ox
-          )
-        ) + "px";
-
-      panel.style.top =
-        Math.max(
-          5,
-          Math.min(
-            window.innerHeight -
-              panel.offsetHeight -
-              5,
-            e.clientY -
-              oy
-          )
-        ) + "px";
-    }
-  );
-
-  document.addEventListener(
-    "mouseup",
-    () => {
-      dragging = false;
-    }
-  );
-}
-
-
-/* =========================================================
-   INPUT / HOTKEYS
-========================================================= */
-
-document.addEventListener(
-  "keydown",
-  e => {
     if (
-      e.key === "Backspace" &&
-      !e.target.matches(
-        "input,textarea,select"
-      )
+      !identity
     ) {
-      e.preventDefault();
-
-      toggleUI();
-
       return;
     }
 
     if (
-      e.key.toLowerCase() === "y" &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      !e.target.matches(
-        "input,textarea,select"
+      typeof force ===
+      "boolean"
+    ) {
+      identity.style.display =
+        force
+          ? "block"
+          : "none";
+
+      return;
+    }
+
+    identity.style.display =
+      identity.style.display ===
+      "none"
+        ? "block"
+        : "none";
+  }
+
+  /* =========================================================
+     KEYBOARD CONTROLS
+  ========================================================= */
+
+  function setupKeyboard() {
+    document.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.repeat
+        ) {
+          return;
+        }
+
+        if (
+          event.key ===
+          "F8"
+        ) {
+          event.preventDefault();
+
+          toggleChat();
+        }
+
+        if (
+          event.key ===
+          "F9"
+        ) {
+          event.preventDefault();
+
+          toggleIdentity();
+        }
+      },
+      true
+    );
+  }
+
+  /* =========================================================
+     DOM INITIALIZATION
+  ========================================================= */
+
+  function initializeDOM() {
+    if (
+      !document.body
+    ) {
+      return;
+    }
+
+    createChatUI();
+    createIdentityUI();
+
+    renderChat();
+    updateUI();
+  }
+
+  function waitForDOM() {
+    if (
+      document.body
+    ) {
+      initializeDOM();
+
+      return;
+    }
+
+    const observer =
+      new MutationObserver(
+        () => {
+          if (
+            document.body
+          ) {
+            observer.disconnect();
+
+            initializeDOM();
+          }
+        }
+      );
+
+    observer.observe(
+      document.documentElement,
+      {
+        childList:
+          true,
+
+        subtree:
+          true
+      }
+    );
+  }
+
+  /* =========================================================
+     FINAL INITIALIZATION
+  ========================================================= */
+
+  loadLocalIdentity();
+  loadAvatarState();
+
+  setupIdentityWatcher();
+  setupKeyboard();
+
+  waitForDOM();
+
+  log(
+    "Connections multiplayer system initialized."
+  );
+  /* =========================================================
+     MAIN MENU INTEGRATION
+  ========================================================= */
+
+  function createMultiplayerPanel() {
+    if (
+      document.getElementById(
+        "connections-multiplayer-panel"
       )
     ) {
-      if (
-        isInsideMatch()
-      ) {
-        e.preventDefault();
-
-        openChat();
-      }
+      return;
     }
-  },
-  true
-);
 
+    const panel =
+      document.createElement(
+        "div"
+      );
 
-/* =========================================================
-   UTIL
-========================================================= */
+    panel.id =
+      "connections-multiplayer-panel";
 
-function escapeHtml(value) {
-  return String(
-    value ?? ""
-  )
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-    .replaceAll(
-      "'",
-      "&#039;"
+    panel.style.cssText =
+      [
+        "position:fixed",
+        "top:50%",
+        "left:50%",
+        "transform:translate(-50%,-50%)",
+        "width:420px",
+        "max-width:calc(100vw - 30px)",
+        "max-height:calc(100vh - 30px)",
+        "overflow:hidden",
+        "background:rgba(15,15,20,.97)",
+        "border:1px solid rgba(255,255,255,.12)",
+        "border-radius:14px",
+        "box-shadow:0 20px 60px rgba(0,0,0,.5)",
+        "color:#fff",
+        "font-family:Arial,sans-serif",
+        "z-index:2147483647",
+        "display:none",
+        "box-sizing:border-box"
+      ].join(";");
+
+    const header =
+      document.createElement(
+        "div"
+      );
+
+    header.style.cssText =
+      [
+        "display:flex",
+        "align-items:center",
+        "justify-content:space-between",
+        "padding:14px 16px",
+        "border-bottom:1px solid rgba(255,255,255,.08)"
+      ].join(";");
+
+    const title =
+      document.createElement(
+        "div"
+      );
+
+    title.textContent =
+      "connections multiplayer";
+
+    title.style.cssText =
+      [
+        "font-size:16px",
+        "font-weight:700"
+      ].join(";");
+
+    const close =
+      document.createElement(
+        "button"
+      );
+
+    close.type =
+      "button";
+
+    close.textContent =
+      "×";
+
+    close.style.cssText =
+      [
+        "border:0",
+        "background:transparent",
+        "color:#aaa",
+        "font-size:22px",
+        "cursor:pointer",
+        "line-height:1"
+      ].join(";");
+
+    close.addEventListener(
+      "click",
+      () => {
+        toggleMultiplayerPanel(
+          false
+        );
+      }
     );
-}
 
+    header.appendChild(
+      title
+    );
 
-/* =========================================================
-   INIT
-========================================================= */
+    header.appendChild(
+      close
+    );
 
-function init() {
-  try {
-    const enabled =
-      localStorage.getItem(
-        "connections-chat-sound-enabled"
+    const body =
+      document.createElement(
+        "div"
+      );
+
+    body.style.cssText =
+      [
+        "padding:14px",
+        "overflow-y:auto",
+        "max-height:calc(100vh - 100px)"
+      ].join(";");
+
+    const status =
+      document.createElement(
+        "div"
+      );
+
+    status.id =
+      "connections-status";
+
+    status.textContent =
+      "Disconnected";
+
+    status.style.cssText =
+      [
+        "font-size:12px",
+        "opacity:.7",
+        "margin-bottom:12px"
+      ].join(";");
+
+    const roomInfo =
+      document.createElement(
+        "div"
+      );
+
+    roomInfo.style.cssText =
+      [
+        "padding:10px",
+        "background:rgba(255,255,255,.04)",
+        "border-radius:8px",
+        "margin-bottom:12px"
+      ].join(";");
+
+    const currentRoom =
+      document.createElement(
+        "div"
+      );
+
+    currentRoom.id =
+      "connections-current-room";
+
+    currentRoom.textContent =
+      "No room";
+
+    currentRoom.style.fontWeight =
+      "700";
+
+    const playerCount =
+      document.createElement(
+        "div"
+      );
+
+    playerCount.style.cssText =
+      [
+        "font-size:12px",
+        "opacity:.65",
+        "margin-top:4px"
+      ].join(";");
+
+    const countValue =
+      document.createElement(
+        "span"
+      );
+
+    countValue.id =
+      "connections-player-count";
+
+    countValue.textContent =
+      "0";
+
+    playerCount.textContent =
+      "players: ";
+
+    playerCount.appendChild(
+      countValue
+    );
+
+    roomInfo.appendChild(
+      currentRoom
+    );
+
+    roomInfo.appendChild(
+      playerCount
+    );
+
+    const createRow =
+      document.createElement(
+        "div"
+      );
+
+    createRow.style.cssText =
+      [
+        "display:flex",
+        "gap:7px",
+        "margin-bottom:12px"
+      ].join(";");
+
+    const roomInput =
+      document.createElement(
+        "input"
+      );
+
+    roomInput.id =
+      "connections-room-input";
+
+    roomInput.type =
+      "text";
+
+    roomInput.placeholder =
+      "room name";
+
+    roomInput.maxLength =
+      64;
+
+    roomInput.style.cssText =
+      [
+        "flex:1",
+        "min-width:0",
+        "background:#202024",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:7px",
+        "padding:8px 9px",
+        "color:#fff",
+        "outline:none"
+      ].join(";");
+
+    const createButton =
+      document.createElement(
+        "button"
+      );
+
+    createButton.type =
+      "button";
+
+    createButton.textContent =
+      "Create";
+
+    createButton.style.cssText =
+      [
+        "border:0",
+        "border-radius:7px",
+        "padding:8px 11px",
+        "background:#7289da",
+        "color:#fff",
+        "cursor:pointer"
+      ].join(";");
+
+    createButton.addEventListener(
+      "click",
+      () => {
+        const name =
+          roomInput.value.trim();
+
+        if (
+          !name
+        ) {
+          return;
+        }
+
+        createRoom(
+          name
+        );
+
+        roomInput.value =
+          "";
+      }
+    );
+
+    roomInput.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Enter"
+        ) {
+          event.preventDefault();
+
+          createButton.click();
+        }
+      }
+    );
+
+    createRow.appendChild(
+      roomInput
+    );
+
+    createRow.appendChild(
+      createButton
+    );
+
+    const refreshButton =
+      document.createElement(
+        "button"
+      );
+
+    refreshButton.type =
+      "button";
+
+    refreshButton.textContent =
+      "Refresh rooms";
+
+    refreshButton.style.cssText =
+      [
+        "width:100%",
+        "border:1px solid rgba(255,255,255,.1)",
+        "border-radius:7px",
+        "padding:8px",
+        "background:rgba(255,255,255,.04)",
+        "color:#fff",
+        "cursor:pointer",
+        "margin-bottom:10px"
+      ].join(";");
+
+    refreshButton.addEventListener(
+      "click",
+      () => {
+        requestRooms();
+      }
+    );
+
+    const leaveButton =
+      document.createElement(
+        "button"
+      );
+
+    leaveButton.type =
+      "button";
+
+    leaveButton.textContent =
+      "Leave room";
+
+    leaveButton.style.cssText =
+      [
+        "width:100%",
+        "border:0",
+        "border-radius:7px",
+        "padding:8px",
+        "background:#29292f",
+        "color:#fff",
+        "cursor:pointer",
+        "margin-bottom:12px"
+      ].join(";");
+
+    leaveButton.addEventListener(
+      "click",
+      () => {
+        leaveRoom();
+      }
+    );
+
+    const roomsTitle =
+      document.createElement(
+        "div"
+      );
+
+    roomsTitle.textContent =
+      "available rooms";
+
+    roomsTitle.style.cssText =
+      [
+        "font-weight:700",
+        "font-size:12px",
+        "text-transform:uppercase",
+        "opacity:.6",
+        "margin-bottom:7px"
+      ].join(";");
+
+    const rooms =
+      document.createElement(
+        "div"
+      );
+
+    rooms.id =
+      "connections-room-list";
+
+    rooms.style.cssText =
+      [
+        "max-height:180px",
+        "overflow-y:auto",
+        "margin-bottom:12px"
+      ].join(";");
+
+    body.appendChild(
+      status
+    );
+
+    body.appendChild(
+      roomInfo
+    );
+
+    body.appendChild(
+      createRow
+    );
+
+    body.appendChild(
+      refreshButton
+    );
+
+    body.appendChild(
+      leaveButton
+    );
+
+    body.appendChild(
+      roomsTitle
+    );
+
+    body.appendChild(
+      rooms
+    );
+
+    panel.appendChild(
+      header
+    );
+
+    panel.appendChild(
+      body
+    );
+
+    document.body.appendChild(
+      panel
+    );
+
+    renderRooms();
+    updateUI();
+  }
+
+  function toggleMultiplayerPanel(
+    force
+  ) {
+    const panel =
+      document.getElementById(
+        "connections-multiplayer-panel"
       );
 
     if (
-      enabled !== null
+      !panel
     ) {
-      State.chatSoundEnabled =
-        enabled !== "false";
+      createMultiplayerPanel();
+
+      return toggleMultiplayerPanel(
+        force
+      );
     }
-  } catch (e) {}
+
+    if (
+      typeof force ===
+      "boolean"
+    ) {
+      panel.style.display =
+        force
+          ? "block"
+          : "none";
+
+      return;
+    }
+
+    panel.style.display =
+      panel.style.display ===
+      "none"
+        ? "block"
+        : "none";
+  }
+
+  /* =========================================================
+     GLOBAL API
+  ========================================================= */
+
+  const ConnectionsAPI = {
+    state:
+      State,
+
+    network:
+      Network,
+
+    connect:
+      () => {
+        Network.connect();
+      },
+
+    disconnect:
+      () => {
+        stopMultiplayer();
+      },
+
+    rooms:
+      () => {
+        requestRooms();
+      },
+
+    createRoom:
+      room => {
+        return createRoom(
+          room
+        );
+      },
+
+    joinRoom:
+      room => {
+        return joinRoom(
+          room
+        );
+      },
+
+    leaveRoom:
+      () => {
+        return leaveRoom();
+      },
+
+    sendChat:
+      message => {
+        return sendChat(
+          message
+        );
+      },
+
+    setName:
+      name => {
+        return setLocalName(
+          name
+        );
+      },
+
+    open:
+      () => {
+        toggleMultiplayerPanel(
+          true
+        );
+      },
+
+    close:
+      () => {
+        toggleMultiplayerPanel(
+          false
+        );
+      },
+
+    toggle:
+      () => {
+        toggleMultiplayerPanel();
+      }
+  };
 
   try {
-    const sound =
-      localStorage.getItem(
-        "connections-chat-sound"
-      );
-
-    if (sound) {
-      State.chatSound =
-        sound;
-    }
-  } catch (e) {}
+    window.Connections =
+      ConnectionsAPI;
+  } catch {}
 
   try {
-    const volume =
-      localStorage.getItem(
-        "connections-chat-volume"
+    window.__Connections =
+      ConnectionsAPI;
+  } catch {}
+
+  /* =========================================================
+     GLOBAL EVENTS
+  ========================================================= */
+
+  window.addEventListener(
+    "connections:open",
+    () => {
+      toggleMultiplayerPanel(
+        true
       );
-
-    if (volume !== null) {
-      State.chatVolume =
-        Number(volume);
     }
-  } catch (e) {}
+  );
 
-  buildUI();
+  window.addEventListener(
+    "connections:close",
+    () => {
+      toggleMultiplayerPanel(
+        false
+      );
+    }
+  );
 
-  Network.connect();
+  window.addEventListener(
+    "connections:toggle",
+    () => {
+      toggleMultiplayerPanel();
+    }
+  );
+
+  /* =========================================================
+     INITIAL PANEL
+  ========================================================= */
+
+  try {
+    createMultiplayerPanel();
+  } catch (e) {
+    err(
+      "Could not create multiplayer panel:",
+      e
+    );
+  }
+
+  /* =========================================================
+     CONNECTION EVENTS
+  ========================================================= */
+
+  function handleConnectionState() {
+    updateUI();
+
+    if (
+      State.connected
+    ) {
+      try {
+        sendIdentity();
+      } catch {}
+
+      try {
+        requestRooms();
+      } catch {}
+    }
+  }
+
+  const originalConnect =
+    Network.connect;
 
   if (
-    State.monitorTimer
+    typeof originalConnect ===
+    "function"
   ) {
-    clearInterval(
-      State.monitorTimer
+    Network.connect =
+      function () {
+        const result =
+          originalConnect.apply(
+            Network,
+            arguments
+          );
+
+        setTimeout(
+          () => {
+            handleConnectionState();
+          },
+          250
+        );
+
+        return result;
+      };
+  }
+
+  /* =========================================================
+     PERIODIC UI SYNC
+  ========================================================= */
+
+  setInterval(
+    () => {
+      try {
+        updateCurrentRoom();
+        updateUI();
+      } catch {}
+    },
+    1000
+  );
+
+  /* =========================================================
+     FINAL READY STATE
+  ========================================================= */
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent(
+        "connections:ready",
+        {
+          detail: {
+            api:
+              ConnectionsAPI
+          }
+        }
+      )
+    );
+  } catch {}
+
+  log(
+    "Connections API ready."
+  );
+
+  log(
+    "Use window.Connections to access multiplayer."
+  );
+  /* =========================================================
+     PLAYER LIST
+  ========================================================= */
+
+  function getPlayerList() {
+    const players = [];
+
+    try {
+      if (
+        State.id
+      ) {
+        players.push({
+          id:
+            State.id,
+
+          name:
+            State.name ||
+            "Player",
+
+          avatar:
+            State.localAvatar ||
+            null,
+
+          local:
+            true
+        });
+      }
+    } catch {}
+
+    try {
+      for (
+        const remote of
+          State.remotes.values()
+      ) {
+        if (
+          !remote ||
+          !remote.id
+        ) {
+          continue;
+        }
+
+        players.push({
+          id:
+            remote.id,
+
+          name:
+            remote.name ||
+            "Player",
+
+          avatar:
+            remote.avatar ||
+            null,
+
+          local:
+            false,
+
+          position:
+            remote.position ||
+            null,
+
+          rotation:
+            remote.rotation ||
+            null
+        });
+      }
+    } catch {}
+
+    return players;
+  }
+
+  function renderPlayerList() {
+    const container =
+      document.getElementById(
+        "connections-player-list"
+      );
+
+    if (
+      !container
+    ) {
+      return;
+    }
+
+    container.innerHTML =
+      "";
+
+    const players =
+      getPlayerList();
+
+    if (
+      !players.length
+    ) {
+      const empty =
+        document.createElement(
+          "div"
+        );
+
+      empty.textContent =
+        "No players.";
+
+      empty.style.cssText =
+        [
+          "opacity:.5",
+          "padding:8px"
+        ].join(";");
+
+      container.appendChild(
+        empty
+      );
+
+      return;
+    }
+
+    for (
+      const player of
+        players
+    ) {
+      const row =
+        document.createElement(
+          "div"
+        );
+
+      row.style.cssText =
+        [
+          "display:flex",
+          "align-items:center",
+          "gap:8px",
+          "padding:7px",
+          "border-radius:7px",
+          "background:rgba(255,255,255,.035)",
+          "margin-bottom:5px"
+        ].join(";");
+
+      const avatar =
+        document.createElement(
+          "div"
+        );
+
+      avatar.style.cssText =
+        [
+          "width:30px",
+          "height:30px",
+          "border-radius:50%",
+          "overflow:hidden",
+          "background:#25252b",
+          "display:flex",
+          "align-items:center",
+          "justify-content:center",
+          "flex-shrink:0"
+        ].join(";");
+
+      if (
+        player.avatar
+      ) {
+        const image =
+          document.createElement(
+            "img"
+          );
+
+        image.src =
+          player.avatar;
+
+        image.alt =
+          "";
+
+        image.style.cssText =
+          [
+            "width:100%",
+            "height:100%",
+            "object-fit:cover"
+          ].join(";");
+
+        image.onerror =
+          () => {
+            image.remove();
+
+            avatar.textContent =
+              "👤";
+          };
+
+        avatar.appendChild(
+          image
+        );
+      } else {
+        avatar.textContent =
+          "👤";
+      }
+
+      const info =
+        document.createElement(
+          "div"
+        );
+
+      info.style.cssText =
+        [
+          "min-width:0",
+          "flex:1"
+        ].join(";");
+
+      const name =
+        document.createElement(
+          "div"
+        );
+
+      name.textContent =
+        player.name;
+
+      name.style.cssText =
+        [
+          "font-weight:600",
+          "white-space:nowrap",
+          "overflow:hidden",
+          "text-overflow:ellipsis"
+        ].join(";");
+
+      const state =
+        document.createElement(
+          "div"
+        );
+
+      state.textContent =
+        player.local
+          ? "you"
+          : "online";
+
+      state.style.cssText =
+        [
+          "font-size:10px",
+          "opacity:.5"
+        ].join(";");
+
+      info.appendChild(
+        name
+      );
+
+      info.appendChild(
+        state
+      );
+
+      row.appendChild(
+        avatar
+      );
+
+      row.appendChild(
+        info
+      );
+
+      container.appendChild(
+        row
+      );
+    }
+  }
+
+  /* =========================================================
+     PLAYER LIST PANEL
+  ========================================================= */
+
+  function createPlayerList() {
+    if (
+      document.getElementById(
+        "connections-player-list"
+      )
+    ) {
+      return;
+    }
+
+    const panel =
+      document.getElementById(
+        "connections-multiplayer-panel"
+      );
+
+    if (
+      !panel
+    ) {
+      return;
+    }
+
+    const body =
+      panel.querySelector(
+        "div"
+      );
+
+    if (
+      !body
+    ) {
+      return;
+    }
+
+    const title =
+      document.createElement(
+        "div"
+      );
+
+    title.textContent =
+      "players";
+
+    title.style.cssText =
+      [
+        "font-weight:700",
+        "font-size:12px",
+        "text-transform:uppercase",
+        "opacity:.6",
+        "margin-top:4px",
+        "margin-bottom:7px"
+      ].join(";");
+
+    const list =
+      document.createElement(
+        "div"
+      );
+
+    list.id =
+      "connections-player-list";
+
+    list.style.cssText =
+      [
+        "max-height:160px",
+        "overflow-y:auto",
+        "margin-bottom:12px"
+      ].join(";");
+
+    body.appendChild(
+      title
+    );
+
+    body.appendChild(
+      list
+    );
+
+    renderPlayerList();
+  }
+
+  /* =========================================================
+     REMOTE INTERPOLATION
+  ========================================================= */
+
+  function clonePosition(
+    position
+  ) {
+    if (
+      !position
+    ) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
+    return {
+      x:
+        Number(
+          position.x
+        ) || 0,
+
+      y:
+        Number(
+          position.y
+        ) || 0,
+
+      z:
+        Number(
+          position.z
+        ) || 0
+    };
+  }
+
+  function cloneRotation(
+    rotation
+  ) {
+    if (
+      !rotation
+    ) {
+      return {
+        yaw: 0,
+        pitch: 0
+      };
+    }
+
+    return {
+      yaw:
+        Number(
+          rotation.yaw
+        ) || 0,
+
+      pitch:
+        Number(
+          rotation.pitch
+        ) || 0
+    };
+  }
+
+  function prepareRemoteInterpolation(
+    remote,
+    position,
+    rotation
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    const nextPosition =
+      clonePosition(
+        position
+      );
+
+    const nextRotation =
+      cloneRotation(
+        rotation
+      );
+
+    if (
+      !remote.renderPosition
+    ) {
+      remote.renderPosition =
+        clonePosition(
+          nextPosition
+        );
+    }
+
+    if (
+      !remote.renderRotation
+    ) {
+      remote.renderRotation =
+        cloneRotation(
+          nextRotation
+        );
+    }
+
+    remote.targetPosition =
+      nextPosition;
+
+    remote.targetRotation =
+      nextRotation;
+  }
+
+  function interpolateNumber(
+    current,
+    target,
+    amount
+  ) {
+    return (
+      current +
+      (
+        target -
+        current
+      ) *
+      amount
     );
   }
 
-  State.monitorTimer =
+  function interpolateRemote(
+    remote
+  ) {
+    if (
+      !remote ||
+      !remote.targetPosition ||
+      !remote.targetRotation
+    ) {
+      return;
+    }
+
+    if (
+      !remote.renderPosition
+    ) {
+      remote.renderPosition =
+        clonePosition(
+          remote.targetPosition
+        );
+    }
+
+    if (
+      !remote.renderRotation
+    ) {
+      remote.renderRotation =
+        cloneRotation(
+          remote.targetRotation
+        );
+    }
+
+    const p =
+      remote.renderPosition;
+
+    const target =
+      remote.targetPosition;
+
+    const r =
+      remote.renderRotation;
+
+    const targetR =
+      remote.targetRotation;
+
+    const amount =
+      0.35;
+
+    p.x =
+      interpolateNumber(
+        p.x,
+        target.x,
+        amount
+      );
+
+    p.y =
+      interpolateNumber(
+        p.y,
+        target.y,
+        amount
+      );
+
+    p.z =
+      interpolateNumber(
+        p.z,
+        target.z,
+        amount
+      );
+
+    r.yaw =
+      interpolateNumber(
+        r.yaw,
+        targetR.yaw,
+        amount
+      );
+
+    r.pitch =
+      interpolateNumber(
+        r.pitch,
+        targetR.pitch,
+        amount
+      );
+
+    try {
+      if (
+        remote.bot
+      ) {
+        setPosition(
+          remote.bot,
+          p.x,
+          p.y,
+          p.z
+        );
+
+        setRotation(
+          remote.bot,
+          r.yaw,
+          r.pitch
+        );
+      }
+    } catch {}
+  }
+
+  function updateAllRemoteInterpolation() {
+    try {
+      for (
+        const remote of
+          State.remotes.values()
+      ) {
+        interpolateRemote(
+          remote
+        );
+      }
+    } catch {}
+  }
+
+  let interpolationFrame =
+    null;
+
+  function startInterpolation() {
+    if (
+      interpolationFrame
+    ) {
+      return;
+    }
+
+    const tick =
+      () => {
+        try {
+          updateAllRemoteInterpolation();
+        } catch {}
+
+        interpolationFrame =
+          requestAnimationFrame(
+            tick
+          );
+      };
+
+    interpolationFrame =
+      requestAnimationFrame(
+        tick
+      );
+  }
+
+  function stopInterpolation() {
+    if (
+      interpolationFrame
+    ) {
+      cancelAnimationFrame(
+        interpolationFrame
+      );
+
+      interpolationFrame =
+        null;
+    }
+  }
+
+  /* =========================================================
+     PATCH REMOTE UPDATE
+  ========================================================= */
+
+  const originalUpdateRemote =
+    updateRemote;
+
+  updateRemote =
+    function (
+      data
+    ) {
+      originalUpdateRemote(
+        data
+      );
+
+      if (
+        !data ||
+        !data.id ||
+        data.id ===
+          State.id
+      ) {
+        return;
+      }
+
+      const remote =
+        State.remotes.get(
+          data.id
+        );
+
+      if (
+        !remote
+      ) {
+        return;
+      }
+
+      prepareRemoteInterpolation(
+        remote,
+        data.position ||
+          remote.position,
+        data.rotation ||
+          remote.rotation
+      );
+    };
+
+  /* =========================================================
+     PATCH REMOTE CREATION
+  ========================================================= */
+
+  const originalSetupRemoteBot =
+    setupRemoteBot;
+
+  setupRemoteBot =
+    function (
+      remote
+    ) {
+      const bot =
+        originalSetupRemoteBot(
+          remote
+        );
+
+      if (
+        remote
+      ) {
+        prepareRemoteInterpolation(
+          remote,
+          remote.position,
+          remote.rotation
+        );
+      }
+
+      return bot;
+    };
+
+  /* =========================================================
+     PLAYER UI SYNC
+  ========================================================= */
+
+  setInterval(
+    () => {
+      try {
+        renderPlayerList();
+      } catch {}
+
+      try {
+        updateCurrentRoom();
+      } catch {}
+    },
+    500
+  );
+
+  /* =========================================================
+     ROOM JOIN RESET
+  ========================================================= */
+
+  function resetRoomState() {
+    lastSentState =
+      null;
+
+    try {
+      window.__connectionsChatLog =
+        [];
+    } catch {}
+
+    destroyAllRemotes();
+
+    updateUI();
+
+    renderPlayerList();
+    renderChat();
+  }
+
+  /* =========================================================
+     PATCH ROOM ACTIONS
+  ========================================================= */
+
+  const originalJoinRoom =
+    joinRoom;
+
+  joinRoom =
+    function (
+      room
+    ) {
+      const result =
+        originalJoinRoom(
+          room
+        );
+
+      if (
+        result
+      ) {
+        resetRoomState();
+      }
+
+      return result;
+    };
+
+  const originalLeaveRoom =
+    leaveRoom;
+
+  leaveRoom =
+    function () {
+      const result =
+        originalLeaveRoom();
+
+      if (
+        result
+      ) {
+        resetRoomState();
+      }
+
+      return result;
+    };
+
+  /* =========================================================
+     START RENDER SYSTEM
+  ========================================================= */
+
+  try {
+    startInterpolation();
+  } catch (e) {
+    warn(
+      "Interpolation startup failed:",
+      e
+    );
+  }
+
+  try {
+    createPlayerList();
+  } catch (e) {
+    warn(
+      "Player list creation failed:",
+      e
+    );
+  }
+
+  try {
+    renderPlayerList();
+  } catch {}
+
+  /* =========================================================
+     FINAL MULTIPLAYER READY EVENT
+  ========================================================= */
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent(
+        "connections:multiplayer-ready",
+        {
+          detail: {
+            connected:
+              State.connected,
+
+            room:
+              State.room,
+
+            players:
+              getPlayerList()
+          }
+        }
+      )
+    );
+  } catch {}
+
+  log(
+    "Multiplayer player system ready."
+  );
+  /* =========================================================
+     PLAYER AVATAR SYNC
+  ========================================================= */
+
+  function applyRemoteAvatar(
+    remote
+  ) {
+    if (
+      !remote ||
+      !remote.bot
+    ) {
+      return;
+    }
+
+    const avatar =
+      remote.avatar ||
+      null;
+
+    try {
+      remote.bot.__connectionsAvatar =
+        avatar;
+    } catch {}
+
+    try {
+      if (
+        typeof window.__connectionsApplyAvatar ===
+        "function"
+      ) {
+        window.__connectionsApplyAvatar(
+          remote.bot,
+          avatar,
+          remote
+        );
+      }
+    } catch (e) {
+      warn(
+        "Remote avatar application failed:",
+        e
+      );
+    }
+  }
+
+  function refreshRemoteAvatars() {
+    try {
+      for (
+        const remote of
+          State.remotes.values()
+      ) {
+        applyRemoteAvatar(
+          remote
+        );
+      }
+    } catch {}
+  }
+
+  /* =========================================================
+     PATCH REMOTE DATA
+  ========================================================= */
+
+  function syncRemoteVisuals(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    try {
+      if (
+        remote.bot
+      ) {
+        remote.bot.__connectionsId =
+          remote.id;
+
+        remote.bot.__connectionsName =
+          remote.name ||
+          "Player";
+
+        remote.bot.__connectionsAvatar =
+          remote.avatar ||
+          null;
+      }
+    } catch {}
+
+    applyRemoteAvatar(
+      remote
+    );
+  }
+
+  const previousUpdateRemote =
+    updateRemote;
+
+  updateRemote =
+    function (
+      data
+    ) {
+      previousUpdateRemote(
+        data
+      );
+
+      if (
+        !data ||
+        !data.id ||
+        data.id ===
+          State.id
+      ) {
+        return;
+      }
+
+      const remote =
+        State.remotes.get(
+          data.id
+        );
+
+      if (
+        remote
+      ) {
+        syncRemoteVisuals(
+          remote
+        );
+      }
+    };
+
+  /* =========================================================
+     REMOTE CLEANUP
+  ========================================================= */
+
+  function cleanupInvalidRemotes() {
+    const remove = [];
+
+    try {
+      for (
+        const [
+          id,
+          remote
+        ] of
+          State.remotes.entries()
+      ) {
+        if (
+          !remote ||
+          !id
+        ) {
+          remove.push(
+            id
+          );
+
+          continue;
+        }
+
+        if (
+          remote.bot ===
+          null
+        ) {
+          continue;
+        }
+
+        try {
+          if (
+            remote.bot.destroyed
+          ) {
+            remove.push(
+              id
+            );
+          }
+        } catch {}
+      }
+    } catch {}
+
+    for (
+      const id of
+        remove
+    ) {
+      try {
+        destroyRemote(
+          id
+        );
+      } catch {}
+    }
+  }
+
+  let cleanupInterval =
+    null;
+
+  function startRemoteCleanup() {
+    if (
+      cleanupInterval
+    ) {
+      return;
+    }
+
+    cleanupInterval =
+      setInterval(
+        () => {
+          try {
+            cleanupInvalidRemotes();
+          } catch {}
+        },
+        2000
+      );
+  }
+
+  function stopRemoteCleanup() {
+    if (
+      cleanupInterval
+    ) {
+      clearInterval(
+        cleanupInterval
+      );
+
+      cleanupInterval =
+        null;
+    }
+  }
+
+  /* =========================================================
+     ROOM STATE HANDLING
+  ========================================================= */
+
+  function handleRoomJoined(
+    room,
+    roomData
+  ) {
+    State.room =
+      room ||
+      null;
+
+    State.roomData =
+      roomData ||
+      null;
+
+    State.joinedRoom =
+      true;
+
+    lastSentState =
+      null;
+
+    destroyAllRemotes();
+
+    try {
+      requestRooms();
+    } catch {}
+
+    try {
+      sendIdentity();
+    } catch {}
+
+    updateCurrentRoom();
+    renderPlayerList();
+  }
+
+  function handleRoomLeft() {
+    State.room =
+      null;
+
+    State.roomData =
+      null;
+
+    State.joinedRoom =
+      false;
+
+    lastSentState =
+      null;
+
+    destroyAllRemotes();
+
+    try {
+      window.__connectionsChatLog =
+        [];
+    } catch {}
+
+    updateCurrentRoom();
+    renderPlayerList();
+    renderChat();
+  }
+
+  /* =========================================================
+     ROOM MESSAGE PATCH
+  ========================================================= */
+
+  const previousHandleMessage =
+    Network.handleMessage;
+
+  Network.handleMessage =
+    function (
+      raw
+    ) {
+      let parsed =
+        null;
+
+      try {
+        parsed =
+          typeof raw ===
+          "string"
+            ? JSON.parse(
+                raw
+              )
+            : raw;
+      } catch {}
+
+      if (
+        parsed &&
+        typeof parsed ===
+          "object"
+      ) {
+        if (
+          parsed.type ===
+          "room_joined"
+        ) {
+          handleRoomJoined(
+            parsed.room,
+            parsed.data
+          );
+        }
+
+        if (
+          parsed.type ===
+          "room_left"
+        ) {
+          handleRoomLeft();
+        }
+
+        if (
+          parsed.type ===
+          "player_join"
+        ) {
+          renderPlayerList();
+        }
+
+        if (
+          parsed.type ===
+          "player_leave"
+        ) {
+          renderPlayerList();
+        }
+
+        if (
+          parsed.type ===
+          "players"
+        ) {
+          setTimeout(
+            () => {
+              renderPlayerList();
+              refreshRemoteAvatars();
+            },
+            0
+          );
+        }
+
+        if (
+          parsed.type ===
+          "state" ||
+          parsed.type ===
+          "player_state"
+        ) {
+          setTimeout(
+            () => {
+              renderPlayerList();
+            },
+            0
+          );
+        }
+      }
+
+      return previousHandleMessage(
+        raw
+      );
+    };
+
+  /* =========================================================
+     CONNECTION RECONNECT HANDLING
+  ========================================================= */
+
+  let reconnectTimer =
+    null;
+
+  function scheduleReconnect() {
+    if (
+      reconnectTimer
+    ) {
+      return;
+    }
+
+    reconnectTimer =
+      setTimeout(
+        () => {
+          reconnectTimer =
+            null;
+
+          if (
+            !State.connected &&
+            !State.connecting
+          ) {
+            try {
+              Network.connect();
+            } catch {}
+          }
+        },
+        3000
+      );
+  }
+
+  function monitorConnection() {
+    if (
+      State.connected
+    ) {
+      return;
+    }
+
+    if (
+      State.connecting
+    ) {
+      return;
+    }
+
+    scheduleReconnect();
+  }
+
+  let connectionMonitor =
     setInterval(
-      monitorMatch,
-      250
+      () => {
+        try {
+          monitorConnection();
+        } catch {}
+      },
+      5000
     );
 
-  log(
-    `Connections ${VERSION} loaded.`
-  );
+  /* =========================================================
+     WINDOW VISIBILITY
+  ========================================================= */
 
-  log(
-    "Backspace = open/close"
-  );
-}
-
-if (
-  document.readyState ===
-  "loading"
-) {
   document.addEventListener(
-    "DOMContentLoaded",
-    init,
-    {
-      once: true
+    "visibilitychange",
+    () => {
+      if (
+        document.hidden
+      ) {
+        return;
+      }
+
+      try {
+        if (
+          State.connected &&
+          State.joinedRoom
+        ) {
+          lastSentState =
+            null;
+
+          sendLocalState();
+
+          sendIdentity();
+        }
+      } catch {}
     }
   );
-  } else {
-    init();
+
+  /* =========================================================
+     PAGE UNLOAD
+  ========================================================= */
+
+  function shutdownConnections() {
+    try {
+      stopStateSync();
+    } catch {}
+
+    try {
+      stopRemoteRefresh();
+    } catch {}
+
+    try {
+      stopInterpolation();
+    } catch {}
+
+    try {
+      stopRemoteCleanup();
+    } catch {}
+
+    try {
+      if (
+        connectionMonitor
+      ) {
+        clearInterval(
+          connectionMonitor
+        );
+
+        connectionMonitor =
+          null;
+      }
+    } catch {}
+
+    try {
+      if (
+        reconnectTimer
+      ) {
+        clearTimeout(
+          reconnectTimer
+        );
+
+        reconnectTimer =
+          null;
+      }
+    } catch {}
+
+    try {
+      destroyAllRemotes();
+    } catch {}
   }
+
+  window.addEventListener(
+    "beforeunload",
+    () => {
+      shutdownConnections();
+    }
+  );
+
+  window.addEventListener(
+    "pagehide",
+    () => {
+      shutdownConnections();
+    }
+  );
+
+  /* =========================================================
+     START CLEANUP
+  ========================================================= */
+
+  try {
+    startRemoteCleanup();
+  } catch (e) {
+    warn(
+      "Remote cleanup startup failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     FINAL API EXTENSIONS
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.players =
+        () => {
+          return getPlayerList();
+        };
+
+      window.Connections.remotes =
+        () => {
+          return Array.from(
+            State.remotes.values()
+          );
+        };
+
+      window.Connections.chat =
+        message => {
+          return sendChat(
+            message
+          );
+        };
+
+      window.Connections.openChat =
+        () => {
+          toggleChat(
+            true
+          );
+        };
+
+      window.Connections.closeChat =
+        () => {
+          toggleChat(
+            false
+          );
+        };
+
+      window.Connections.openIdentity =
+        () => {
+          toggleIdentity(
+            true
+          );
+        };
+
+      window.Connections.closeIdentity =
+        () => {
+          toggleIdentity(
+            false
+          );
+        };
+
+      window.Connections.multiplayer =
+        () => {
+          toggleMultiplayerPanel(
+            true
+          );
+        };
+    }
+  } catch (e) {
+    warn(
+      "API extension failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     FINAL STATUS
+  ========================================================= */
+
+  try {
+    updateUI();
+    updateCurrentRoom();
+    renderPlayerList();
+    renderChat();
+    refreshRemoteAvatars();
+  } catch {}
+
+  log(
+    "Connections multiplayer layer fully initialized."
+  );
+  /* =========================================================
+     MULTIPLAYER EVENT BUS
+  ========================================================= */
+
+  const MultiplayerEvents = {
+    listeners: new Map(),
+
+    on(
+      event,
+      callback
+    ) {
+      if (
+        typeof callback !==
+        "function"
+      ) {
+        return () => {};
+      }
+
+      if (
+        !this.listeners.has(
+          event
+        )
+      ) {
+        this.listeners.set(
+          event,
+          new Set()
+        );
+      }
+
+      const set =
+        this.listeners.get(
+          event
+        );
+
+      set.add(
+        callback
+      );
+
+      return () => {
+        set.delete(
+          callback
+        );
+      };
+    },
+
+    emit(
+      event,
+      data
+    ) {
+      const set =
+        this.listeners.get(
+          event
+        );
+
+      if (
+        !set
+      ) {
+        return;
+      }
+
+      for (
+        const callback of
+          Array.from(set)
+      ) {
+        try {
+          callback(
+            data
+          );
+        } catch (e) {
+          warn(
+            "Multiplayer event error:",
+            event,
+            e
+          );
+        }
+      }
+    },
+
+    clear(
+      event
+    ) {
+      if (
+        event ===
+        undefined
+      ) {
+        this.listeners.clear();
+        return;
+      }
+
+      this.listeners.delete(
+        event
+      );
+    }
+  };
+
+  /* =========================================================
+     NETWORK EVENT EMISSION
+  ========================================================= */
+
+  function emitNetworkEvent(
+    event,
+    data
+  ) {
+    try {
+      MultiplayerEvents.emit(
+        event,
+        data
+      );
+    } catch {}
+  }
+
+  /* =========================================================
+     CONNECTION STATE EVENTS
+  ========================================================= */
+
+  emitNetworkEvent(
+    "initialized",
+    {
+      id:
+        State.id,
+
+      connected:
+        State.connected
+    }
+  );
+
+  /* =========================================================
+     PLAYER STATE HELPERS
+  ========================================================= */
+
+  function getPlayerById(
+    id
+  ) {
+    if (
+      !id
+    ) {
+      return null;
+    }
+
+    if (
+      id ===
+      State.id
+    ) {
+      return {
+        id:
+          State.id,
+
+        name:
+          State.name,
+
+        avatar:
+          State.localAvatar,
+
+        local:
+          true
+      };
+    }
+
+    try {
+      return (
+        State.remotes.get(
+          id
+        ) ||
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function hasPlayer(
+    id
+  ) {
+    return !!getPlayerById(
+      id
+    );
+  }
+
+  /* =========================================================
+     PLAYER EVENTS
+  ========================================================= */
+
+  function notifyPlayerJoin(
+    player
+  ) {
+    if (
+      !player ||
+      !player.id
+    ) {
+      return;
+    }
+
+    emitNetworkEvent(
+      "playerJoin",
+      player
+    );
+
+    emitNetworkEvent(
+      "player_join",
+      player
+    );
+  }
+
+  function notifyPlayerLeave(
+    id
+  ) {
+    if (
+      !id
+    ) {
+      return;
+    }
+
+    emitNetworkEvent(
+      "playerLeave",
+      {
+        id
+      }
+    );
+
+    emitNetworkEvent(
+      "player_leave",
+      {
+        id
+      }
+    );
+  }
+
+  function notifyPlayerState(
+    player
+  ) {
+    if (
+      !player ||
+      !player.id
+    ) {
+      return;
+    }
+
+    emitNetworkEvent(
+      "playerState",
+      player
+    );
+
+    emitNetworkEvent(
+      "player_state",
+      player
+    );
+  }
+
+  /* =========================================================
+     MESSAGE EVENT PATCH
+  ========================================================= */
+
+  const eventHandleMessage =
+    Network.handleMessage;
+
+  Network.handleMessage =
+    function (
+      raw
+    ) {
+      let data =
+        null;
+
+      try {
+        data =
+          typeof raw ===
+          "string"
+            ? JSON.parse(
+                raw
+              )
+            : raw;
+      } catch {}
+
+      if (
+        data &&
+        typeof data ===
+          "object"
+      ) {
+        switch (
+          data.type
+        ) {
+          case "welcome":
+            emitNetworkEvent(
+              "connected",
+              data
+            );
+            break;
+
+          case "rooms":
+            emitNetworkEvent(
+              "rooms",
+              data.rooms ||
+                []
+            );
+            break;
+
+          case "room_joined":
+            emitNetworkEvent(
+              "roomJoined",
+              data
+            );
+            break;
+
+          case "room_left":
+            emitNetworkEvent(
+              "roomLeft",
+              data
+            );
+            break;
+
+          case "player_join":
+            if (
+              data.player
+            ) {
+              notifyPlayerJoin(
+                data.player
+              );
+            }
+            break;
+
+          case "player_leave":
+            notifyPlayerLeave(
+              data.id
+            );
+            break;
+
+          case "state":
+          case "player_state":
+            if (
+              data.player
+            ) {
+              notifyPlayerState(
+                data.player
+              );
+            } else if (
+              data.id
+            ) {
+              notifyPlayerState(
+                data
+              );
+            }
+            break;
+
+          case "chat":
+            emitNetworkEvent(
+              "chat",
+              data.message ||
+                data
+            );
+            break;
+
+          case "error":
+            emitNetworkEvent(
+              "error",
+              data
+            );
+            break;
+        }
+      }
+
+      return eventHandleMessage(
+        raw
+      );
+    };
+
+  /* =========================================================
+     PUBLIC EVENT API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.on =
+        (
+          event,
+          callback
+        ) => {
+          return MultiplayerEvents.on(
+            event,
+            callback
+          );
+        };
+
+      window.Connections.off =
+        (
+          event,
+          callback
+        ) => {
+          const set =
+            MultiplayerEvents.listeners.get(
+              event
+            );
+
+          if (
+            !set
+          ) {
+            return;
+          }
+
+          set.delete(
+            callback
+          );
+        };
+
+      window.Connections.emit =
+        (
+          event,
+          data
+        ) => {
+          MultiplayerEvents.emit(
+            event,
+            data
+          );
+        };
+
+      window.Connections.getPlayer =
+        id => {
+          return getPlayerById(
+            id
+          );
+        };
+
+      window.Connections.hasPlayer =
+        id => {
+          return hasPlayer(
+            id
+          );
+        };
+    }
+  } catch (e) {
+    warn(
+      "Could not expose event API:",
+      e
+    );
+  }
+
+  /* =========================================================
+     ROOM PLAYER SNAPSHOT
+  ========================================================= */
+
+  function getRoomSnapshot() {
+    const players =
+      getPlayerList();
+
+    return {
+      room:
+        State.room ||
+        null,
+
+      joined:
+        !!State.joinedRoom,
+
+      connected:
+        !!State.connected,
+
+      playerCount:
+        players.length,
+
+      players:
+        players
+    };
+  }
+
+  function emitRoomSnapshot() {
+    emitNetworkEvent(
+      "snapshot",
+      getRoomSnapshot()
+    );
+  }
+
+  setInterval(
+    () => {
+      try {
+        emitRoomSnapshot();
+      } catch {}
+    },
+    1000
+  );
+
+  /* =========================================================
+     LOCAL STATE SNAPSHOT
+  ========================================================= */
+
+  function getLocalSnapshot() {
+    const transform =
+      readLocalTransform();
+
+    return {
+      id:
+        State.id,
+
+      name:
+        State.name,
+
+      avatar:
+        State.localAvatar,
+
+      position:
+        transform.position,
+
+      rotation:
+        transform.rotation,
+
+      room:
+        State.room,
+
+      connected:
+        State.connected,
+
+      joined:
+        State.joinedRoom
+    };
+  }
+
+  try {
+    window.Connections.getLocal =
+      () => {
+        return getLocalSnapshot();
+      };
+  } catch {}
+
+  /* =========================================================
+     DEBUG INFORMATION
+  ========================================================= */
+
+  function getDebugInfo() {
+    return {
+      connected:
+        !!State.connected,
+
+      connecting:
+        !!State.connecting,
+
+      id:
+        State.id,
+
+      name:
+        State.name,
+
+      room:
+        State.room,
+
+      joinedRoom:
+        !!State.joinedRoom,
+
+      rooms:
+        Array.isArray(
+          State.rooms
+        )
+          ? State.rooms.length
+          : 0,
+
+      remotes:
+        State.remotes
+          ? State.remotes.size
+          : 0,
+
+      remoteBots:
+        State.remoteBots
+          ? State.remoteBots.size
+          : 0
+    };
+  }
+
+  try {
+    window.Connections.debug =
+      () => {
+        const info =
+          getDebugInfo();
+
+        log(
+          "Debug:",
+          info
+        );
+
+        return info;
+      };
+  } catch {}
+
+  /* =========================================================
+     DEBUG COMMANDS
+  ========================================================= */
+
+  function debugDumpPlayers() {
+    const players =
+      getPlayerList();
+
+    log(
+      "Players:",
+      players
+    );
+
+    return players;
+  }
+
+  function debugDumpRemotes() {
+    const remotes =
+      Array.from(
+        State.remotes.values()
+      );
+
+    log(
+      "Remotes:",
+      remotes
+    );
+
+    return remotes;
+  }
+
+  try {
+    window.Connections.dumpPlayers =
+      debugDumpPlayers;
+
+    window.Connections.dumpRemotes =
+      debugDumpRemotes;
+  } catch {}
+
+  /* =========================================================
+     FINAL MULTIPLAYER HOOK
+  ========================================================= */
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent(
+        "connections:network-ready",
+        {
+          detail: {
+            state:
+              getDebugInfo(),
+
+            players:
+              getPlayerList()
+          }
+        }
+      )
+    );
+  } catch {}
+
+  log(
+    "Connections network event system ready."
+  );
+  /* =========================================================
+     SERVER HEARTBEAT
+  ========================================================= */
+
+  let heartbeatInterval =
+    null;
+
+  function sendHeartbeat() {
+    if (
+      !State.connected
+    ) {
+      return;
+    }
+
+    Network.send({
+      type:
+        "heartbeat",
+
+      id:
+        State.id,
+
+      timestamp:
+        Date.now()
+    });
+  }
+
+  function startHeartbeat() {
+    if (
+      heartbeatInterval
+    ) {
+      return;
+    }
+
+    heartbeatInterval =
+      setInterval(
+        () => {
+          try {
+            sendHeartbeat();
+          } catch (e) {
+            warn(
+              "Heartbeat failed:",
+              e
+            );
+          }
+        },
+        10000
+      );
+  }
+
+  function stopHeartbeat() {
+    if (
+      heartbeatInterval
+    ) {
+      clearInterval(
+        heartbeatInterval
+      );
+
+      heartbeatInterval =
+        null;
+    }
+  }
+
+  /* =========================================================
+     CONNECTION HEALTH
+  ========================================================= */
+
+  let lastServerActivity =
+    Date.now();
+
+  function markServerActivity() {
+    lastServerActivity =
+      Date.now();
+  }
+
+  function getConnectionAge() {
+    return (
+      Date.now() -
+      lastServerActivity
+    );
+  }
+
+  function isConnectionHealthy() {
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    return (
+      getConnectionAge() <
+      30000
+    );
+  }
+
+  /* =========================================================
+     NETWORK MESSAGE ACTIVITY
+  ========================================================= */
+
+  const previousNetworkHandler =
+    Network.handleMessage;
+
+  Network.handleMessage =
+    function (
+      raw
+    ) {
+      markServerActivity();
+
+      return previousNetworkHandler(
+        raw
+      );
+    };
+
+  /* =========================================================
+     CONNECTION HEALTH MONITOR
+  ========================================================= */
+
+  let healthInterval =
+    null;
+
+  function startHealthMonitor() {
+    if (
+      healthInterval
+    ) {
+      return;
+    }
+
+    healthInterval =
+      setInterval(
+        () => {
+          try {
+            if (
+              State.connected &&
+              !isConnectionHealthy()
+            ) {
+              warn(
+                "Multiplayer connection appears stale."
+              );
+
+              try {
+                if (
+                  State.ws
+                ) {
+                  State.ws.close();
+                }
+              } catch {}
+            }
+          } catch {}
+        },
+        5000
+      );
+  }
+
+  function stopHealthMonitor() {
+    if (
+      healthInterval
+    ) {
+      clearInterval(
+        healthInterval
+      );
+
+      healthInterval =
+        null;
+    }
+  }
+
+  /* =========================================================
+     PLAYER POSITION VALIDATION
+  ========================================================= */
+
+  function validNumber(
+    value
+  ) {
+    return (
+      typeof value ===
+        "number" &&
+      Number.isFinite(
+        value
+      )
+    );
+  }
+
+  function validPosition(
+    position
+  ) {
+    if (
+      !position ||
+      typeof position !==
+        "object"
+    ) {
+      return false;
+    }
+
+    return (
+      validNumber(
+        Number(position.x)
+      ) &&
+      validNumber(
+        Number(position.y)
+      ) &&
+      validNumber(
+        Number(position.z)
+      )
+    );
+  }
+
+  function validRotation(
+    rotation
+  ) {
+    if (
+      !rotation ||
+      typeof rotation !==
+        "object"
+    ) {
+      return false;
+    }
+
+    return (
+      validNumber(
+        Number(rotation.yaw)
+      ) &&
+      validNumber(
+        Number(rotation.pitch)
+      )
+    );
+  }
+
+  function sanitizePosition(
+    position
+  ) {
+    if (
+      !validPosition(
+        position
+      )
+    ) {
+      return {
+        x: 0,
+        y: 0,
+        z: 0
+      };
+    }
+
+    return {
+      x:
+        Number(
+          position.x
+        ),
+
+      y:
+        Number(
+          position.y
+        ),
+
+      z:
+        Number(
+          position.z
+        )
+    };
+  }
+
+  function sanitizeRotation(
+    rotation
+  ) {
+    if (
+      !validRotation(
+        rotation
+      )
+    ) {
+      return {
+        yaw: 0,
+        pitch: 0
+      };
+    }
+
+    return {
+      yaw:
+        Number(
+          rotation.yaw
+        ),
+
+      pitch:
+        Number(
+          rotation.pitch
+        )
+    };
+  }
+
+  /* =========================================================
+     REMOTE STATE SANITIZATION
+  ========================================================= */
+
+  function sanitizeRemoteData(
+    data
+  ) {
+    if (
+      !data ||
+      typeof data !==
+        "object"
+    ) {
+      return null;
+    }
+
+    if (
+      !data.id
+    ) {
+      return null;
+    }
+
+    if (
+      data.id ===
+      State.id
+    ) {
+      return null;
+    }
+
+    const result = {
+      id:
+        String(
+          data.id
+        ),
+
+      name:
+        String(
+          data.name ||
+          "Player"
+        ).slice(
+          0,
+          32
+        ),
+
+      avatar:
+        data.avatar ||
+        null,
+
+      position:
+        sanitizePosition(
+          data.position
+        ),
+
+      rotation:
+        sanitizeRotation(
+          data.rotation
+        )
+    };
+
+    return result;
+  }
+
+  /* =========================================================
+     SAFE REMOTE UPDATE
+  ========================================================= */
+
+  function safelyUpdateRemote(
+    data
+  ) {
+    const sanitized =
+      sanitizeRemoteData(
+        data
+      );
+
+    if (
+      !sanitized
+    ) {
+      return null;
+    }
+
+    try {
+      updateRemote(
+        sanitized
+      );
+    } catch (e) {
+      warn(
+        "Remote update failed:",
+        e
+      );
+
+      return null;
+    }
+
+    return (
+      State.remotes.get(
+        sanitized.id
+      ) ||
+      null
+    );
+  }
+
+  /* =========================================================
+     REMOTE MESSAGE FILTER
+  ========================================================= */
+
+  function shouldAcceptRemote(
+    data
+  ) {
+    if (
+      !data ||
+      !data.id
+    ) {
+      return false;
+    }
+
+    if (
+      data.id ===
+      State.id
+    ) {
+      return false;
+    }
+
+    if (
+      !State.joinedRoom
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /* =========================================================
+     PATCH STATE PROCESSING
+  ========================================================= */
+
+  const previousStateHandler =
+    Network.handleMessage;
+
+  Network.handleMessage =
+    function (
+      raw
+    ) {
+      let data =
+        null;
+
+      try {
+        data =
+          typeof raw ===
+          "string"
+            ? JSON.parse(
+                raw
+              )
+            : raw;
+      } catch {}
+
+      if (
+        data &&
+        (
+          data.type ===
+            "state" ||
+          data.type ===
+            "player_state"
+        )
+      ) {
+        const player =
+          data.player ||
+          data;
+
+        if (
+          shouldAcceptRemote(
+            player
+          )
+        ) {
+          safelyUpdateRemote(
+            player
+          );
+        }
+
+        return;
+      }
+
+      return previousStateHandler(
+        raw
+      );
+    };
+
+  /* =========================================================
+     ROOM SNAPSHOT REQUEST
+  ========================================================= */
+
+  function requestRoomSnapshot() {
+    if (
+      !State.connected ||
+      !State.joinedRoom
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "room_state",
+
+      room:
+        State.room
+    });
+  }
+
+  /* =========================================================
+     PERIODIC ROOM SYNC
+  ========================================================= */
+
+  let roomSyncInterval =
+    null;
+
+  function startRoomSync() {
+    if (
+      roomSyncInterval
+    ) {
+      return;
+    }
+
+    roomSyncInterval =
+      setInterval(
+        () => {
+          try {
+            if (
+              State.connected &&
+              State.joinedRoom
+            ) {
+              requestRoomSnapshot();
+            }
+          } catch {}
+        },
+        5000
+      );
+  }
+
+  function stopRoomSync() {
+    if (
+      roomSyncInterval
+    ) {
+      clearInterval(
+        roomSyncInterval
+      );
+
+      roomSyncInterval =
+        null;
+    }
+  }
+
+  /* =========================================================
+     MULTIPLAYER STARTUP EXTENSIONS
+  ========================================================= */
+
+  try {
+    startHeartbeat();
+  } catch (e) {
+    warn(
+      "Heartbeat startup failed:",
+      e
+    );
+  }
+
+  try {
+    startHealthMonitor();
+  } catch (e) {
+    warn(
+      "Health monitor startup failed:",
+      e
+    );
+  }
+
+  try {
+    startRoomSync();
+  } catch (e) {
+    warn(
+      "Room sync startup failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     SHUTDOWN EXTENSIONS
+  ========================================================= */
+
+  const previousShutdown =
+    shutdownConnections;
+
+  shutdownConnections =
+    function () {
+      try {
+        stopHeartbeat();
+      } catch {}
+
+      try {
+        stopHealthMonitor();
+      } catch {}
+
+      try {
+        stopRoomSync();
+      } catch {}
+
+      try {
+        previousShutdown();
+      } catch {}
+    };
+
+  /* =========================================================
+     EXTENDED PUBLIC API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.heartbeat =
+        () => {
+          sendHeartbeat();
+        };
+
+      window.Connections.health =
+        () => {
+          return {
+            connected:
+              State.connected,
+
+            healthy:
+              isConnectionHealthy(),
+
+            lastActivity:
+              lastServerActivity,
+
+            age:
+              getConnectionAge()
+          };
+        };
+
+      window.Connections.snapshot =
+        () => {
+          return getRoomSnapshot();
+        };
+
+      window.Connections.syncRoom =
+        () => {
+          return requestRoomSnapshot();
+        };
+    }
+  } catch (e) {
+    warn(
+      "Extended API setup failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     FINAL READY CHECK
+  ========================================================= */
+
+  try {
+    updateUI();
+    updateCurrentRoom();
+    renderPlayerList();
+    refreshRemoteAvatars();
+  } catch {}
+
+  log(
+    "Connections synchronization layer ready."
+  );
+  /* =========================================================
+     MULTIPLAYER RATE LIMITING
+  ========================================================= */
+
+  const NetworkRate = {
+    lastState:
+      0,
+
+    lastChat:
+      0,
+
+    lastRoomRequest:
+      0,
+
+    stateInterval:
+      50,
+
+    chatInterval:
+      250,
+
+    roomInterval:
+      500,
+
+    canState() {
+      const now =
+        Date.now();
+
+      if (
+        now -
+          this.lastState <
+        this.stateInterval
+      ) {
+        return false;
+      }
+
+      this.lastState =
+        now;
+
+      return true;
+    },
+
+    canChat() {
+      const now =
+        Date.now();
+
+      if (
+        now -
+          this.lastChat <
+        this.chatInterval
+      ) {
+        return false;
+      }
+
+      this.lastChat =
+        now;
+
+      return true;
+    },
+
+    canRoomRequest() {
+      const now =
+        Date.now();
+
+      if (
+        now -
+          this.lastRoomRequest <
+        this.roomInterval
+      ) {
+        return false;
+      }
+
+      this.lastRoomRequest =
+        now;
+
+      return true;
+    }
+  };
+
+  /* =========================================================
+     SAFE NETWORK SEND
+  ========================================================= */
+
+  function safeNetworkSend(
+    packet
+  ) {
+    if (
+      !packet ||
+      typeof packet !==
+        "object"
+    ) {
+      return false;
+    }
+
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    try {
+      return Network.send(
+        packet
+      );
+    } catch (e) {
+      warn(
+        "Network send failed:",
+        e
+      );
+
+      return false;
+    }
+  }
+
+  /* =========================================================
+     SAFE CHAT SEND
+  ========================================================= */
+
+  function safeSendChat(
+    message
+  ) {
+    if (
+      !NetworkRate.canChat()
+    ) {
+      return false;
+    }
+
+    if (
+      typeof message !==
+      "string"
+    ) {
+      return false;
+    }
+
+    message =
+      message
+        .trim()
+        .slice(
+          0,
+          256
+        );
+
+    if (
+      !message
+    ) {
+      return false;
+    }
+
+    return safeNetworkSend({
+      type:
+        "chat",
+
+      message:
+        message
+    });
+  }
+
+  /* =========================================================
+     PATCH CHAT
+  ========================================================= */
+
+  const previousSendChat =
+    sendChat;
+
+  sendChat =
+    function (
+      message
+    ) {
+      return safeSendChat(
+        message
+      );
+    };
+
+  /* =========================================================
+     LOCAL STATE PACKET
+  ========================================================= */
+
+  function buildLocalStatePacket() {
+    const transform =
+      readLocalTransform();
+
+    return {
+      type:
+        "state",
+
+      id:
+        State.id,
+
+      name:
+        State.name,
+
+      avatar:
+        State.localAvatar,
+
+      position:
+        sanitizePosition(
+          transform.position
+        ),
+
+      rotation:
+        sanitizeRotation(
+          transform.rotation
+        ),
+
+      timestamp:
+        Date.now()
+    };
+  }
+
+  /* =========================================================
+     STATE TRANSMISSION
+  ========================================================= */
+
+  function transmitLocalState() {
+    if (
+      !State.connected ||
+      !State.joinedRoom
+    ) {
+      return false;
+    }
+
+    if (
+      !NetworkRate.canState()
+    ) {
+      return false;
+    }
+
+    const packet =
+      buildLocalStatePacket();
+
+    return safeNetworkSend(
+      packet
+    );
+  }
+
+  /* =========================================================
+     STATE LOOP
+  ========================================================= */
+
+  let stateTransmitTimer =
+    null;
+
+  function startStateTransmission() {
+    if (
+      stateTransmitTimer
+    ) {
+      return;
+    }
+
+    stateTransmitTimer =
+      setInterval(
+        () => {
+          try {
+            transmitLocalState();
+          } catch (e) {
+            warn(
+              "State transmission error:",
+              e
+            );
+          }
+        },
+        50
+      );
+  }
+
+  function stopStateTransmission() {
+    if (
+      stateTransmitTimer
+    ) {
+      clearInterval(
+        stateTransmitTimer
+      );
+
+      stateTransmitTimer =
+        null;
+    }
+  }
+
+  /* =========================================================
+     ROOM REQUEST WRAPPERS
+  ========================================================= */
+
+  function safeRequestRooms() {
+    if (
+      !NetworkRate.canRoomRequest()
+    ) {
+      return false;
+    }
+
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    try {
+      return requestRooms();
+    } catch (e) {
+      warn(
+        "Room request failed:",
+        e
+      );
+
+      return false;
+    }
+  }
+
+  function safeCreateRoom(
+    name
+  ) {
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    if (
+      typeof name !==
+      "string"
+    ) {
+      name =
+        "Room";
+    }
+
+    name =
+      name
+        .trim()
+        .slice(
+          0,
+          32
+        );
+
+    if (
+      !name
+    ) {
+      name =
+        "Room";
+    }
+
+    return Network.send({
+      type:
+        "room_create",
+
+      name:
+        name
+    });
+  }
+
+  function safeJoinRoom(
+    roomId
+  ) {
+    if (
+      !State.connected
+    ) {
+      return false;
+    }
+
+    if (
+      !roomId
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "room_join",
+
+      room:
+        String(
+          roomId
+        )
+    });
+  }
+
+  function safeLeaveRoom() {
+    if (
+      !State.connected ||
+      !State.joinedRoom
+    ) {
+      return false;
+    }
+
+    return Network.send({
+      type:
+        "room_leave"
+    });
+  }
+
+  /* =========================================================
+     PUBLIC NETWORK API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.send =
+        safeNetworkSend;
+
+      window.Connections.sendChat =
+        safeSendChat;
+
+      window.Connections.sendState =
+        transmitLocalState;
+
+      window.Connections.requestRooms =
+        safeRequestRooms;
+
+      window.Connections.createRoom =
+        safeCreateRoom;
+
+      window.Connections.joinRoom =
+        safeJoinRoom;
+
+      window.Connections.leaveRoom =
+        safeLeaveRoom;
+    }
+  } catch (e) {
+    warn(
+      "Could not expose network API:",
+      e
+    );
+  }
+
+  /* =========================================================
+     CONNECTION LIFECYCLE
+  ========================================================= */
+
+  function handleMultiplayerConnected() {
+    lastServerActivity =
+      Date.now();
+
+    try {
+      startHeartbeat();
+    } catch {}
+
+    try {
+      startHealthMonitor();
+    } catch {}
+
+    try {
+      startStateTransmission();
+    } catch {}
+
+    try {
+      startRoomSync();
+    } catch {}
+
+    try {
+      safeRequestRooms();
+    } catch {}
+
+    emitNetworkEvent(
+      "connectionReady",
+      {
+        id:
+          State.id,
+
+        name:
+          State.name
+      }
+    );
+  }
+
+  function handleMultiplayerDisconnected() {
+    stopStateTransmission();
+
+    stopRoomSync();
+
+    emitNetworkEvent(
+      "connectionLost",
+      {
+        id:
+          State.id
+      }
+    );
+  }
+
+  /* =========================================================
+     CONNECTION STATE MONITOR
+  ========================================================= */
+
+  let previousConnected =
+    !!State.connected;
+
+  setInterval(
+    () => {
+      try {
+        const connected =
+          !!State.connected;
+
+        if (
+          connected &&
+          !previousConnected
+        ) {
+          handleMultiplayerConnected();
+        }
+
+        if (
+          !connected &&
+          previousConnected
+        ) {
+          handleMultiplayerDisconnected();
+        }
+
+        previousConnected =
+          connected;
+      } catch {}
+    },
+    250
+  );
+
+  /* =========================================================
+     VISIBILITY NETWORK CONTROL
+  ========================================================= */
+
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (
+        document.hidden
+      ) {
+        stopStateTransmission();
+
+        return;
+      }
+
+      if (
+        State.connected &&
+        State.joinedRoom
+      ) {
+        startStateTransmission();
+
+        try {
+          transmitLocalState();
+        } catch {}
+      }
+    }
+  );
+
+  /* =========================================================
+     ROOM JOIN STATE SYNC
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "roomJoined",
+    () => {
+      try {
+        resetRoomState();
+      } catch {}
+
+      try {
+        startStateTransmission();
+      } catch {}
+
+      try {
+        requestRoomSnapshot();
+      } catch {}
+
+      try {
+        transmitLocalState();
+      } catch {}
+    }
+  );
+
+  MultiplayerEvents.on(
+    "roomLeft",
+    () => {
+      stopStateTransmission();
+
+      try {
+        destroyAllRemotes();
+      } catch {}
+
+      try {
+        renderPlayerList();
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     PLAYER JOIN SYNC
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "playerJoin",
+    player => {
+      if (
+        !player ||
+        !player.id
+      ) {
+        return;
+      }
+
+      try {
+        safelyUpdateRemote(
+          player
+        );
+      } catch {}
+
+      try {
+        renderPlayerList();
+      } catch {}
+
+      try {
+        syncRemoteVisuals();
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     PLAYER LEAVE SYNC
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "playerLeave",
+    data => {
+      if (
+        !data ||
+        !data.id
+      ) {
+        return;
+      }
+
+      try {
+        destroyRemote(
+          data.id
+        );
+      } catch {}
+
+      try {
+        renderPlayerList();
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     PLAYER STATE SYNC
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "playerState",
+    player => {
+      if (
+        !player ||
+        !player.id
+      ) {
+        return;
+      }
+
+      try {
+        safelyUpdateRemote(
+          player
+        );
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     CHAT EVENT SYNC
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "chat",
+    message => {
+      try {
+        if (
+          typeof message ===
+          "string"
+        ) {
+          addChatMessage(
+            "Server",
+            message
+          );
+        } else if (
+          message &&
+          typeof message ===
+            "object"
+        ) {
+          addChatMessage(
+            message.name ||
+              "Player",
+
+            message.message ||
+              ""
+          );
+        }
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     DEBUG NETWORK STATUS
+  ========================================================= */
+
+  function networkStatus() {
+    return {
+      connected:
+        !!State.connected,
+
+      connecting:
+        !!State.connecting,
+
+      joined:
+        !!State.joinedRoom,
+
+      room:
+        State.room ||
+        null,
+
+      playerCount:
+        getPlayerList()
+          .length,
+
+      remotes:
+        State.remotes
+          ? State.remotes.size
+          : 0,
+
+      healthy:
+        isConnectionHealthy()
+    };
+  }
+
+  try {
+    window.Connections.networkStatus =
+      networkStatus;
+  } catch {}
+
+  /* =========================================================
+     START STATE TRANSMISSION
+  ========================================================= */
+
+  try {
+    if (
+      State.connected &&
+      State.joinedRoom
+    ) {
+      startStateTransmission();
+    }
+  } catch {}
+
+  /* =========================================================
+     FINAL SYNC CHECK
+  ========================================================= */
+
+  try {
+    renderPlayerList();
+  } catch {}
+
+  try {
+    updateCurrentRoom();
+  } catch {}
+
+  try {
+    updateUI();
+  } catch {}
+
+  log(
+    "Connections multiplayer transmission layer ready."
+  );
+  /* =========================================================
+     PLAYER INTERPOLATION TUNING
+  ========================================================= */
+
+  const InterpolationConfig = {
+    enabled:
+      true,
+
+    delay:
+      75,
+
+    speed:
+      12,
+
+    teleportDistance:
+      8,
+
+    snapDistance:
+      30
+  };
+
+  function setInterpolationEnabled(
+    enabled
+  ) {
+    InterpolationConfig.enabled =
+      !!enabled;
+  }
+
+  function setInterpolationDelay(
+    delay
+  ) {
+    const value =
+      Number(
+        delay
+      );
+
+    if (
+      !Number.isFinite(
+        value
+      )
+    ) {
+      return;
+    }
+
+    InterpolationConfig.delay =
+      Math.max(
+        0,
+        Math.min(
+          500,
+          value
+        )
+      );
+  }
+
+  function setInterpolationSpeed(
+    speed
+  ) {
+    const value =
+      Number(
+        speed
+      );
+
+    if (
+      !Number.isFinite(
+        value
+      )
+    ) {
+      return;
+    }
+
+    InterpolationConfig.speed =
+      Math.max(
+        1,
+        Math.min(
+          60,
+          value
+        )
+      );
+  }
+
+  /* =========================================================
+     VECTOR DISTANCE
+  ========================================================= */
+
+  function distanceBetween(
+    a,
+    b
+  ) {
+    if (
+      !a ||
+      !b
+    ) {
+      return Infinity;
+    }
+
+    const dx =
+      Number(
+        a.x
+      ) -
+      Number(
+        b.x
+      );
+
+    const dy =
+      Number(
+        a.y
+      ) -
+      Number(
+        b.y
+      );
+
+    const dz =
+      Number(
+        a.z
+      ) -
+      Number(
+        b.z
+      );
+
+    return Math.sqrt(
+      dx * dx +
+      dy * dy +
+      dz * dz
+    );
+  }
+
+  /* =========================================================
+     REMOTE INTERPOLATION TARGET
+  ========================================================= */
+
+  function setRemoteTarget(
+    remote,
+    position,
+    rotation
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    const targetPosition =
+      sanitizePosition(
+        position
+      );
+
+    const targetRotation =
+      sanitizeRotation(
+        rotation
+      );
+
+    if (
+      !remote.__connectionsInterpolation
+    ) {
+      remote.__connectionsInterpolation =
+        {
+          current:
+            {
+              ...targetPosition
+            },
+
+          target:
+            {
+              ...targetPosition
+            },
+
+          currentRotation:
+            {
+              ...targetRotation
+            },
+
+          targetRotation:
+            {
+              ...targetRotation
+            },
+
+          timestamp:
+            Date.now()
+        };
+
+      return;
+    }
+
+    const interpolation =
+      remote.__connectionsInterpolation;
+
+    const current =
+      interpolation.current;
+
+    const distance =
+      distanceBetween(
+        current,
+        targetPosition
+      );
+
+    if (
+      distance >
+      InterpolationConfig.snapDistance
+    ) {
+      interpolation.current =
+        {
+          ...targetPosition
+        };
+    }
+
+    interpolation.target =
+      {
+        ...targetPosition
+      };
+
+    interpolation.targetRotation =
+      {
+        ...targetRotation
+      };
+
+    interpolation.timestamp =
+      Date.now();
+  }
+
+  /* =========================================================
+     INTERPOLATION MATH
+  ========================================================= */
+
+  function lerp(
+    a,
+    b,
+    t
+  ) {
+    return (
+      a +
+      (
+        b -
+        a
+      ) *
+      t
+    );
+  }
+
+  function lerpPosition(
+    current,
+    target,
+    alpha
+  ) {
+    return {
+      x:
+        lerp(
+          current.x,
+          target.x,
+          alpha
+        ),
+
+      y:
+        lerp(
+          current.y,
+          target.y,
+          alpha
+        ),
+
+      z:
+        lerp(
+          current.z,
+          target.z,
+          alpha
+        )
+    };
+  }
+
+  function lerpRotation(
+    current,
+    target,
+    alpha
+  ) {
+    return {
+      yaw:
+        lerpAngle(
+          current.yaw,
+          target.yaw,
+          alpha
+        ),
+
+      pitch:
+        lerp(
+          current.pitch,
+          target.pitch,
+          alpha
+        )
+    };
+  }
+
+  function lerpAngle(
+    a,
+    b,
+    t
+  ) {
+    let difference =
+      b -
+      a;
+
+    while (
+      difference >
+      180
+    ) {
+      difference -=
+        360;
+    }
+
+    while (
+      difference <
+      -180
+    ) {
+      difference +=
+        360;
+    }
+
+    return (
+      a +
+      difference *
+        t
+    );
+  }
+
+  /* =========================================================
+     APPLY REMOTE TRANSFORM
+  ========================================================= */
+
+  function applyRemoteTransform(
+    remote,
+    position,
+    rotation
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    const bot =
+      remote.bot ||
+      remote.object ||
+      remote.gameObject ||
+      remote;
+
+    if (
+      !bot
+    ) {
+      return;
+    }
+
+    try {
+      if (
+        bot.transform
+      ) {
+        if (
+          bot.transform.position
+        ) {
+          bot.transform.position =
+            position;
+        }
+
+        if (
+          bot.transform.rotation
+        ) {
+          bot.transform.rotation =
+            rotation;
+        }
+
+        return;
+      }
+    } catch {}
+
+    try {
+      if (
+        typeof bot.setPosition ===
+        "function"
+      ) {
+        bot.setPosition(
+          position
+        );
+      }
+    } catch {}
+
+    try {
+      if (
+        typeof bot.setRotation ===
+        "function"
+      ) {
+        bot.setRotation(
+          rotation
+        );
+      }
+    } catch {}
+  }
+
+  /* =========================================================
+     REMOTE INTERPOLATION UPDATE
+  ========================================================= */
+
+  function updateRemoteInterpolation(
+    remote
+  ) {
+    if (
+      !remote ||
+      !remote.__connectionsInterpolation
+    ) {
+      return;
+    }
+
+    if (
+      !InterpolationConfig.enabled
+    ) {
+      return;
+    }
+
+    const interpolation =
+      remote.__connectionsInterpolation;
+
+    const current =
+      interpolation.current;
+
+    const target =
+      interpolation.target;
+
+    const currentRotation =
+      interpolation.currentRotation;
+
+    const targetRotation =
+      interpolation.targetRotation;
+
+    const alpha =
+      Math.min(
+        1,
+        InterpolationConfig.speed *
+          0.016
+      );
+
+    const nextPosition =
+      lerpPosition(
+        current,
+        target,
+        alpha
+      );
+
+    const nextRotation =
+      lerpRotation(
+        currentRotation,
+        targetRotation,
+        alpha
+      );
+
+    interpolation.current =
+      nextPosition;
+
+    interpolation.currentRotation =
+      nextRotation;
+
+    applyRemoteTransform(
+      remote,
+      nextPosition,
+      nextRotation
+    );
+  }
+
+  /* =========================================================
+     UPDATE ALL REMOTES
+  ========================================================= */
+
+  function updateRemoteInterpolations() {
+    if (
+      !State.remotes
+    ) {
+      return;
+    }
+
+    for (
+      const remote of
+        State.remotes.values()
+    ) {
+      try {
+        updateRemoteInterpolation(
+          remote
+        );
+      } catch (e) {
+        warn(
+          "Remote interpolation error:",
+          e
+        );
+      }
+    }
+  }
+
+  /* =========================================================
+     INTERPOLATION LOOP
+  ========================================================= */
+
+  let interpolationFrame =
+    null;
+
+  function interpolationLoop() {
+    try {
+      updateRemoteInterpolations();
+    } catch {}
+
+    interpolationFrame =
+      requestAnimationFrame(
+        interpolationLoop
+      );
+  }
+
+  function startInterpolationLoop() {
+    if (
+      interpolationFrame !==
+      null
+    ) {
+      return;
+    }
+
+    interpolationFrame =
+      requestAnimationFrame(
+        interpolationLoop
+      );
+  }
+
+  function stopInterpolationLoop() {
+    if (
+      interpolationFrame !==
+      null
+    ) {
+      cancelAnimationFrame(
+        interpolationFrame
+      );
+
+      interpolationFrame =
+        null;
+    }
+  }
+
+  /* =========================================================
+     PATCH REMOTE UPDATE
+  ========================================================= */
+
+  const previousSafeRemoteUpdate =
+    safelyUpdateRemote;
+
+  safelyUpdateRemote =
+    function (
+      data
+    ) {
+      const remote =
+        previousSafeRemoteUpdate(
+          data
+        );
+
+      if (
+        remote
+      ) {
+        try {
+          setRemoteTarget(
+            remote,
+            data.position,
+            data.rotation
+          );
+        } catch {}
+      }
+
+      return remote;
+    };
+
+  /* =========================================================
+     INTERPOLATION API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.interpolation =
+        {
+          get enabled() {
+            return (
+              InterpolationConfig.enabled
+            );
+          },
+
+          setEnabled:
+            setInterpolationEnabled,
+
+          setDelay:
+            setInterpolationDelay,
+
+          setSpeed:
+            setInterpolationSpeed,
+
+          config:
+            InterpolationConfig
+        };
+    }
+  } catch {}
+
+  /* =========================================================
+     REMOTE PLAYER METADATA
+  ========================================================= */
+
+  function updateRemoteMetadata(
+    remote,
+    data
+  ) {
+    if (
+      !remote ||
+      !data
+    ) {
+      return;
+    }
+
+    if (
+      data.name
+    ) {
+      remote.name =
+        String(
+          data.name
+        ).slice(
+          0,
+          32
+        );
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        data,
+        "avatar"
+      )
+    ) {
+      remote.avatar =
+        data.avatar ||
+        null;
+    }
+
+    remote.lastUpdate =
+      Date.now();
+  }
+
+  /* =========================================================
+     METADATA UPDATE PATCH
+  ========================================================= */
+
+  const previousRemoteMetadataUpdate =
+    safelyUpdateRemote;
+
+  safelyUpdateRemote =
+    function (
+      data
+    ) {
+      const remote =
+        previousRemoteMetadataUpdate(
+          data
+        );
+
+      if (
+        remote
+      ) {
+        try {
+          updateRemoteMetadata(
+            remote,
+            data
+          );
+        } catch {}
+      }
+
+      return remote;
+    };
+
+  /* =========================================================
+     REMOTE TIMEOUT
+  ========================================================= */
+
+  const RemoteTimeout =
+    15000;
+
+  function removeTimedOutRemotes() {
+    if (
+      !State.remotes
+    ) {
+      return;
+    }
+
+    const now =
+      Date.now();
+
+    for (
+      const [
+        id,
+        remote
+      ] of
+        State.remotes.entries()
+    ) {
+      if (
+        !remote
+      ) {
+        continue;
+      }
+
+      const lastUpdate =
+        Number(
+          remote.lastUpdate ||
+          remote.__connectionsInterpolation?.timestamp ||
+          now
+        );
+
+      if (
+        now -
+          lastUpdate >
+        RemoteTimeout
+      ) {
+        try {
+          destroyRemote(
+            id
+          );
+        } catch {}
+      }
+    }
+  }
+
+  setInterval(
+    () => {
+      try {
+        removeTimedOutRemotes();
+      } catch {}
+    },
+    5000
+  );
+
+  /* =========================================================
+     START INTERPOLATION
+  ========================================================= */
+
+  try {
+    startInterpolationLoop();
+  } catch (e) {
+    warn(
+      "Could not start interpolation loop:",
+      e
+    );
+  }
+
+  /* =========================================================
+     FINAL PLAYER UPDATE
+  ========================================================= */
+
+  try {
+    updateRemoteInterpolations();
+  } catch {}
+
+  log(
+    "Connections remote interpolation layer ready."
+  );
+  /* =========================================================
+     REMOTE PLAYER ENTITY CONTROL
+  ========================================================= */
+
+  function getRemoteEntity(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return null;
+    }
+
+    return (
+      remote.bot ||
+      remote.object ||
+      remote.gameObject ||
+      remote.entity ||
+      null
+    );
+  }
+
+  function remoteEntityExists(
+    remote
+  ) {
+    const entity =
+      getRemoteEntity(
+        remote
+      );
+
+    if (
+      !entity
+    ) {
+      return false;
+    }
+
+    try {
+      if (
+        entity.destroyed ===
+        true
+      ) {
+        return false;
+      }
+    } catch {}
+
+    return true;
+  }
+
+  /* =========================================================
+     REMOTE VISIBILITY
+  ========================================================= */
+
+  function setRemoteVisible(
+    remote,
+    visible
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    remote.visible =
+      !!visible;
+
+    const entity =
+      getRemoteEntity(
+        remote
+      );
+
+    if (
+      !entity
+    ) {
+      return;
+    }
+
+    try {
+      if (
+        typeof entity.setActive ===
+        "function"
+      ) {
+        entity.setActive(
+          !!visible
+        );
+      }
+    } catch {}
+
+    try {
+      if (
+        "active" in entity
+      ) {
+        entity.active =
+          !!visible;
+      }
+    } catch {}
+
+    try {
+      if (
+        entity.style
+      ) {
+        entity.style.display =
+          visible
+            ? ""
+            : "none";
+      }
+    } catch {}
+  }
+
+  /* =========================================================
+     REMOTE PLAYER NAME
+  ========================================================= */
+
+  function getRemoteDisplayName(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return "Player";
+    }
+
+    const name =
+      remote.name;
+
+    if (
+      typeof name !==
+      "string"
+    ) {
+      return "Player";
+    }
+
+    return (
+      name
+        .trim()
+        .slice(
+          0,
+          32
+        ) ||
+      "Player"
+    );
+  }
+
+  /* =========================================================
+     REMOTE LABEL CREATION
+  ========================================================= */
+
+  function createRemoteLabel(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return null;
+    }
+
+    if (
+      remote.__connectionsLabel
+    ) {
+      return remote.__connectionsLabel;
+    }
+
+    const label =
+      document.createElement(
+        "div"
+      );
+
+    label.className =
+      "connections-remote-label";
+
+    label.textContent =
+      getRemoteDisplayName(
+        remote
+      );
+
+    label.style.cssText =
+      [
+        "position:fixed",
+        "pointer-events:none",
+        "z-index:99997",
+        "padding:3px 7px",
+        "border-radius:5px",
+        "background:rgba(0,0,0,.7)",
+        "color:#fff",
+        "font:12px Arial,sans-serif",
+        "white-space:nowrap",
+        "display:none",
+        "transform:translate(-50%,-100%)"
+      ].join(";");
+
+    document.body.appendChild(
+      label
+    );
+
+    remote.__connectionsLabel =
+      label;
+
+    return label;
+  }
+
+  /* =========================================================
+     REMOTE LABEL UPDATE
+  ========================================================= */
+
+  function updateRemoteLabel(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    const label =
+      createRemoteLabel(
+        remote
+      );
+
+    if (
+      !label
+    ) {
+      return;
+    }
+
+    label.textContent =
+      getRemoteDisplayName(
+        remote
+      );
+
+    const entity =
+      getRemoteEntity(
+        remote
+      );
+
+    if (
+      !entity
+    ) {
+      label.style.display =
+        "none";
+
+      return;
+    }
+
+    try {
+      if (
+        entity.getScreenPosition
+      ) {
+        const point =
+          entity.getScreenPosition();
+
+        if (
+          point &&
+          Number.isFinite(
+            point.x
+          ) &&
+          Number.isFinite(
+            point.y
+          )
+        ) {
+          label.style.left =
+            `${point.x}px`;
+
+          label.style.top =
+            `${point.y}px`;
+
+          label.style.display =
+            "block";
+
+          return;
+        }
+      }
+    } catch {}
+
+    try {
+      if (
+        entity.screenPosition
+      ) {
+        const point =
+          entity.screenPosition;
+
+        label.style.left =
+          `${point.x}px`;
+
+        label.style.top =
+          `${point.y}px`;
+
+        label.style.display =
+          "block";
+
+        return;
+      }
+    } catch {}
+
+    label.style.display =
+      "none";
+  }
+
+  /* =========================================================
+     REMOTE LABEL LOOP
+  ========================================================= */
+
+  let remoteLabelFrame =
+    null;
+
+  function remoteLabelLoop() {
+    if (
+      State.remotes
+    ) {
+      for (
+        const remote of
+          State.remotes.values()
+      ) {
+        try {
+          updateRemoteLabel(
+            remote
+          );
+        } catch {}
+      }
+    }
+
+    remoteLabelFrame =
+      requestAnimationFrame(
+        remoteLabelLoop
+      );
+  }
+
+  function startRemoteLabelLoop() {
+    if (
+      remoteLabelFrame !==
+      null
+    ) {
+      return;
+    }
+
+    remoteLabelFrame =
+      requestAnimationFrame(
+        remoteLabelLoop
+      );
+  }
+
+  function stopRemoteLabelLoop() {
+    if (
+      remoteLabelFrame !==
+      null
+    ) {
+      cancelAnimationFrame(
+        remoteLabelFrame
+      );
+
+      remoteLabelFrame =
+        null;
+    }
+  }
+
+  /* =========================================================
+     REMOTE VISUAL STATE
+  ========================================================= */
+
+  function updateRemoteVisualState(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    try {
+      setRemoteVisible(
+        remote,
+        true
+      );
+    } catch {}
+
+    try {
+      updateRemoteLabel(
+        remote
+      );
+    } catch {}
+  }
+
+  function updateAllRemoteVisuals() {
+    if (
+      !State.remotes
+    ) {
+      return;
+    }
+
+    for (
+      const remote of
+        State.remotes.values()
+    ) {
+      try {
+        updateRemoteVisualState(
+          remote
+        );
+      } catch {}
+    }
+  }
+
+  /* =========================================================
+     REMOTE CLEANUP LABEL
+  ========================================================= */
+
+  function removeRemoteLabel(
+    remote
+  ) {
+    if (
+      !remote
+    ) {
+      return;
+    }
+
+    const label =
+      remote.__connectionsLabel;
+
+    if (
+      !label
+    ) {
+      return;
+    }
+
+    try {
+      label.remove();
+    } catch {
+      try {
+        if (
+          label.parentNode
+        ) {
+          label.parentNode.removeChild(
+            label
+          );
+        }
+      } catch {}
+    }
+
+    remote.__connectionsLabel =
+      null;
+  }
+
+  /* =========================================================
+     PATCH REMOTE DESTROY
+  ========================================================= */
+
+  const previousDestroyRemote =
+    destroyRemote;
+
+  destroyRemote =
+    function (
+      id
+    ) {
+      let remote =
+        null;
+
+      try {
+        remote =
+          State.remotes.get(
+            id
+          );
+      } catch {}
+
+      try {
+        removeRemoteLabel(
+          remote
+        );
+      } catch {}
+
+      try {
+        previousDestroyRemote(
+          id
+        );
+      } catch (e) {
+        warn(
+          "Remote destroy failed:",
+          e
+        );
+      }
+    };
+
+  /* =========================================================
+     REMOTE VISUAL PATCH
+  ========================================================= */
+
+  const previousSyncRemoteVisuals =
+    syncRemoteVisuals;
+
+  syncRemoteVisuals =
+    function () {
+      try {
+        previousSyncRemoteVisuals();
+      } catch {}
+
+      try {
+        updateAllRemoteVisuals();
+      } catch {}
+    };
+
+  /* =========================================================
+     REMOTE UPDATE VISUAL PATCH
+  ========================================================= */
+
+  const previousUpdateRemoteMetadata =
+    updateRemoteMetadata;
+
+  updateRemoteMetadata =
+    function (
+      remote,
+      data
+    ) {
+      try {
+        previousUpdateRemoteMetadata(
+          remote,
+          data
+        );
+      } catch {}
+
+      try {
+        updateRemoteVisualState(
+          remote
+        );
+      } catch {}
+    };
+
+  /* =========================================================
+     REMOTE PLAYER COUNT
+  ========================================================= */
+
+  function getVisibleRemoteCount() {
+    if (
+      !State.remotes
+    ) {
+      return 0;
+    }
+
+    let count =
+      0;
+
+    for (
+      const remote of
+        State.remotes.values()
+    ) {
+      if (
+        remoteEntityExists(
+          remote
+        )
+      ) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  /* =========================================================
+     EXTENDED PLAYER SNAPSHOT
+  ========================================================= */
+
+  function getExtendedPlayerSnapshot() {
+    const players =
+      getPlayerList();
+
+    return players.map(
+      player => ({
+        ...player,
+
+        local:
+          player.id ===
+          State.id,
+
+        displayName:
+          player.local
+            ? State.name
+            : getRemoteDisplayName(
+                State.remotes.get(
+                  player.id
+                )
+              )
+      })
+    );
+  }
+
+  /* =========================================================
+     PUBLIC VISUAL API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.getRemoteEntity =
+        id => {
+          const remote =
+            State.remotes.get(
+              id
+            );
+
+          return getRemoteEntity(
+            remote
+          );
+        };
+
+      window.Connections.getRemoteCount =
+        () => {
+          return getVisibleRemoteCount();
+        };
+
+      window.Connections.getPlayers =
+        () => {
+          return getExtendedPlayerSnapshot();
+        };
+
+      window.Connections.refreshVisuals =
+        () => {
+          syncRemoteVisuals();
+          updateAllRemoteVisuals();
+        };
+    }
+  } catch (e) {
+    warn(
+      "Visual API setup failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     PLAYER LIST REFRESH LOOP
+  ========================================================= */
+
+  let playerRefreshTimer =
+    null;
+
+  function startPlayerRefreshLoop() {
+    if (
+      playerRefreshTimer
+    ) {
+      return;
+    }
+
+    playerRefreshTimer =
+      setInterval(
+        () => {
+          try {
+            renderPlayerList();
+          } catch {}
+
+          try {
+            updateCurrentRoom();
+          } catch {}
+        },
+        1000
+      );
+  }
+
+  function stopPlayerRefreshLoop() {
+    if (
+      playerRefreshTimer
+    ) {
+      clearInterval(
+        playerRefreshTimer
+      );
+
+      playerRefreshTimer =
+        null;
+    }
+  }
+
+  /* =========================================================
+     START VISUAL SYSTEM
+  ========================================================= */
+
+  try {
+    startRemoteLabelLoop();
+  } catch {}
+
+  try {
+    startPlayerRefreshLoop();
+  } catch {}
+
+  try {
+    updateAllRemoteVisuals();
+  } catch {}
+
+  /* =========================================================
+     FINAL VISUAL READY EVENT
+  ========================================================= */
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent(
+        "connections:visuals-ready",
+        {
+          detail: {
+            players:
+              getExtendedPlayerSnapshot(),
+
+            remotes:
+              getVisibleRemoteCount()
+          }
+        }
+      )
+    );
+  } catch {}
+
+  log(
+    "Connections remote visual system ready."
+  );
+  /* =========================================================
+     MULTIPLAYER ROOM MANAGEMENT
+  ========================================================= */
+
+  const RoomManager = {
+    selected:
+      null,
+
+    busy:
+      false,
+
+    select(room) {
+      if (
+        !room
+      ) {
+        this.selected =
+          null;
+
+        return null;
+      }
+
+      this.selected =
+        room;
+
+      return room;
+    },
+
+    clear() {
+      this.selected =
+        null;
+      this.busy =
+        false;
+    },
+
+    getSelected() {
+      return this.selected;
+    }
+  };
+
+  /* =========================================================
+     ROOM NORMALIZATION
+  ========================================================= */
+
+  function normalizeRoom(
+    room
+  ) {
+    if (
+      !room ||
+      typeof room !==
+        "object"
+    ) {
+      return null;
+    }
+
+    const id =
+      room.id ||
+      room.room ||
+      room.roomId;
+
+    if (
+      !id
+    ) {
+      return null;
+    }
+
+    return {
+      id:
+        String(
+          id
+        ),
+
+      name:
+        String(
+          room.name ||
+          room.title ||
+          "Room"
+        ).slice(
+          0,
+          48
+        ),
+
+      players:
+        Number.isFinite(
+          Number(
+            room.players
+          )
+        )
+          ? Number(
+              room.players
+            )
+          : Number(
+              room.playerCount ||
+              0
+            ),
+
+      maxPlayers:
+        Number.isFinite(
+          Number(
+            room.maxPlayers
+          )
+        )
+          ? Number(
+              room.maxPlayers
+            )
+          : 16,
+
+      locked:
+        !!room.locked,
+
+      owner:
+        room.owner ||
+        null
+    };
+  }
+
+  function normalizeRooms(
+    rooms
+  ) {
+    if (
+      !Array.isArray(
+        rooms
+      )
+    ) {
+      return [];
+    }
+
+    const result =
+      [];
+
+    for (
+      const room of
+        rooms
+    ) {
+      const normalized =
+        normalizeRoom(
+          room
+        );
+
+      if (
+        normalized
+      ) {
+        result.push(
+          normalized
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /* =========================================================
+     ROOM CACHE
+  ========================================================= */
+
+  let roomCache =
+    [];
+
+  function updateRoomCache(
+    rooms
+  ) {
+    roomCache =
+      normalizeRooms(
+        rooms
+      );
+
+    State.rooms =
+      roomCache;
+
+    try {
+      renderRooms(
+        roomCache
+      );
+    } catch {}
+
+    return roomCache;
+  }
+
+  function getRoomCache() {
+    return roomCache.slice();
+  }
+
+  /* =========================================================
+     ROOM EVENT
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "rooms",
+    rooms => {
+      updateRoomCache(
+        rooms
+      );
+    }
+  );
+
+  /* =========================================================
+     ROOM SELECTION
+  ========================================================= */
+
+  function selectRoom(
+    room
+  ) {
+    const normalized =
+      normalizeRoom(
+        room
+      );
+
+    if (
+      !normalized
+    ) {
+      return null;
+    }
+
+    return RoomManager.select(
+      normalized
+    );
+  }
+
+  /* =========================================================
+     JOIN SELECTED ROOM
+  ========================================================= */
+
+  function joinSelectedRoom() {
+    const room =
+      RoomManager.getSelected();
+
+    if (
+      !room
+    ) {
+      return false;
+    }
+
+    if (
+      room.locked
+    ) {
+      warn(
+        "Selected room is locked."
+      );
+
+      return false;
+    }
+
+    return safeJoinRoom(
+      room.id
+    );
+  }
+
+  /* =========================================================
+     ROOM CREATE DIALOG
+  ========================================================= */
+
+  function createRoomPrompt() {
+    let name =
+      null;
+
+    try {
+      name =
+        window.prompt(
+          "Room name:",
+          "Connections Room"
+        );
+    } catch {}
+
+    if (
+      name ===
+      null
+    ) {
+      return false;
+    }
+
+    return safeCreateRoom(
+      name
+    );
+  }
+
+  /* =========================================================
+     ROOM LIST UI
+  ========================================================= */
+
+  function createRoomListUI() {
+    if (
+      document.getElementById(
+        "connections-room-browser"
+      )
+    ) {
+      return document.getElementById(
+        "connections-room-browser"
+      );
+    }
+
+    const root =
+      document.createElement(
+        "div"
+      );
+
+    root.id =
+      "connections-room-browser";
+
+    root.style.cssText =
+      [
+        "position:fixed",
+        "top:50%",
+        "left:50%",
+        "transform:translate(-50%,-50%)",
+        "width:420px",
+        "max-width:calc(100vw - 30px)",
+        "max-height:70vh",
+        "overflow:hidden",
+        "z-index:99996",
+        "display:none",
+        "background:#111",
+        "border:1px solid #333",
+        "border-radius:12px",
+        "box-shadow:0 15px 50px rgba(0,0,0,.55)",
+        "font-family:Arial,sans-serif",
+        "color:#fff"
+      ].join(";");
+
+    const header =
+      document.createElement(
+        "div"
+      );
+
+    header.style.cssText =
+      [
+        "display:flex",
+        "align-items:center",
+        "justify-content:space-between",
+        "padding:12px",
+        "border-bottom:1px solid #292929"
+      ].join(";");
+
+    const title =
+      document.createElement(
+        "div"
+      );
+
+    title.textContent =
+      "Multiplayer Rooms";
+
+    title.style.fontWeight =
+      "700";
+
+    const close =
+      document.createElement(
+        "button"
+      );
+
+    close.textContent =
+      "×";
+
+    close.style.cssText =
+      [
+        "border:0",
+        "background:transparent",
+        "color:#aaa",
+        "font-size:22px",
+        "cursor:pointer"
+      ].join(";");
+
+    close.onclick =
+      () => {
+        root.style.display =
+          "none";
+      };
+
+    header.appendChild(
+      title
+    );
+
+    header.appendChild(
+      close
+    );
+
+    const controls =
+      document.createElement(
+        "div"
+      );
+
+    controls.style.cssText =
+      [
+        "display:flex",
+        "gap:7px",
+        "padding:10px",
+        "border-bottom:1px solid #222"
+      ].join(";");
+
+    const create =
+      document.createElement(
+        "button"
+      );
+
+    create.textContent =
+      "Create Room";
+
+    create.style.cssText =
+      [
+        "flex:1",
+        "padding:8px",
+        "border:0",
+        "border-radius:7px",
+        "background:#7289da",
+        "color:#fff",
+        "cursor:pointer"
+      ].join(";");
+
+    create.onclick =
+      () => {
+        createRoomPrompt();
+      };
+
+    const refresh =
+      document.createElement(
+        "button"
+      );
+
+    refresh.textContent =
+      "Refresh";
+
+    refresh.style.cssText =
+      [
+        "padding:8px 12px",
+        "border:1px solid #444",
+        "border-radius:7px",
+        "background:#1b1b1b",
+        "color:#fff",
+        "cursor:pointer"
+      ].join(";");
+
+    refresh.onclick =
+      () => {
+        safeRequestRooms();
+      };
+
+    controls.appendChild(
+      create
+    );
+
+    controls.appendChild(
+      refresh
+    );
+
+    const list =
+      document.createElement(
+        "div"
+      );
+
+    list.id =
+      "connections-room-list";
+
+    list.style.cssText =
+      [
+        "padding:10px",
+        "max-height:45vh",
+        "overflow-y:auto"
+      ].join(";");
+
+    root.appendChild(
+      header
+    );
+
+    root.appendChild(
+      controls
+    );
+
+    root.appendChild(
+      list
+    );
+
+    document.body.appendChild(
+      root
+    );
+
+    return root;
+  }
+
+  /* =========================================================
+     RENDER ROOM BROWSER
+  ========================================================= */
+
+  function renderRoomBrowser(
+    rooms
+  ) {
+    const root =
+      createRoomListUI();
+
+    const list =
+      root.querySelector(
+        "#connections-room-list"
+      );
+
+    if (
+      !list
+    ) {
+      return;
+    }
+
+    list.innerHTML =
+      "";
+
+    const normalized =
+      normalizeRooms(
+        rooms
+      );
+
+    if (
+      !normalized.length
+    ) {
+      const empty =
+        document.createElement(
+          "div"
+        );
+
+      empty.textContent =
+        "No rooms available.";
+
+      empty.style.cssText =
+        [
+          "padding:20px",
+          "text-align:center",
+          "color:#888"
+        ].join(";");
+
+      list.appendChild(
+        empty
+      );
+
+      return;
+    }
+
+    for (
+      const room of
+        normalized
+    ) {
+      const item =
+        document.createElement(
+          "div"
+        );
+
+      item.style.cssText =
+        [
+          "display:flex",
+          "align-items:center",
+          "gap:10px",
+          "padding:10px",
+          "margin-bottom:7px",
+          "background:#181818",
+          "border:1px solid #292929",
+          "border-radius:8px"
+        ].join(";");
+
+      const info =
+        document.createElement(
+          "div"
+        );
+
+      info.style.flex =
+        "1";
+
+      const name =
+        document.createElement(
+          "div"
+        );
+
+      name.textContent =
+        room.name;
+
+      name.style.fontWeight =
+        "700";
+
+      const players =
+        document.createElement(
+          "div"
+        );
+
+      players.textContent =
+        `${room.players}/${room.maxPlayers}`;
+
+      players.style.cssText =
+        [
+          "margin-top:3px",
+          "font-size:11px",
+          "color:#888"
+        ].join(";");
+
+      info.appendChild(
+        name
+      );
+
+      info.appendChild(
+        players
+      );
+
+      const join =
+        document.createElement(
+          "button"
+        );
+
+      join.textContent =
+        room.locked
+          ? "Locked"
+          : "Join";
+
+      join.disabled =
+        room.locked ||
+        room.players >=
+          room.maxPlayers;
+
+      join.style.cssText =
+        [
+          "padding:7px 12px",
+          "border:0",
+          "border-radius:6px",
+          "background:#7289da",
+          "color:#fff",
+          "cursor:pointer"
+        ].join(";");
+
+      join.onclick =
+        () => {
+          selectRoom(
+            room
+          );
+
+          if (
+            joinSelectedRoom()
+          ) {
+            root.style.display =
+              "none";
+          }
+        };
+
+      item.appendChild(
+        info
+      );
+
+      item.appendChild(
+        join
+      );
+
+      list.appendChild(
+        item
+      );
+    }
+  }
+
+  /* =========================================================
+     ROOM BROWSER TOGGLE
+  ========================================================= */
+
+  function toggleRoomBrowser(
+    force
+  ) {
+    const root =
+      createRoomListUI();
+
+    if (
+      typeof force ===
+      "boolean"
+    ) {
+      root.style.display =
+        force
+          ? "block"
+          : "none";
+    } else {
+      root.style.display =
+        root.style.display ===
+        "none"
+          ? "block"
+          : "none";
+    }
+
+    if (
+      root.style.display ===
+      "block"
+    ) {
+      safeRequestRooms();
+      renderRoomBrowser(
+        roomCache
+      );
+    }
+  }
+
+  /* =========================================================
+     ROOM BROWSER API
+  ========================================================= */
+
+  try {
+    if (
+      window.Connections
+    ) {
+      window.Connections.rooms =
+        {
+          list:
+            getRoomCache,
+
+          select:
+            selectRoom,
+
+          selected:
+            () =>
+              RoomManager.getSelected(),
+
+          joinSelected:
+            joinSelectedRoom,
+
+          create:
+            createRoomPrompt,
+
+          refresh:
+            safeRequestRooms,
+
+          open:
+            () =>
+              toggleRoomBrowser(
+                true
+              ),
+
+          close:
+            () =>
+              toggleRoomBrowser(
+                false
+              ),
+
+          toggle:
+            toggleRoomBrowser
+        };
+    }
+  } catch (e) {
+    warn(
+      "Room browser API failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     ROOM BROWSER ROOM EVENT
+  ========================================================= */
+
+  const previousRenderRooms =
+    renderRooms;
+
+  renderRooms =
+    function (
+      rooms
+    ) {
+      try {
+        previousRenderRooms(
+          rooms
+        );
+      } catch {}
+
+      try {
+        renderRoomBrowser(
+          rooms
+        );
+      } catch {}
+    };
+
+  /* =========================================================
+     KEYBOARD SHORTCUT
+  ========================================================= */
+
+  document.addEventListener(
+    "keydown",
+    event => {
+      if (
+        event.key ===
+        "F7"
+      ) {
+        if (
+          event.repeat
+        ) {
+          return;
+        }
+
+        toggleRoomBrowser();
+      }
+    }
+  );
+
+  /* =========================================================
+     FINAL ROOM SYSTEM
+  ========================================================= */
+
+  try {
+    createRoomListUI();
+    renderRoomBrowser(
+      roomCache
+    );
+  } catch {}
+
+  log(
+    "Connections room browser ready."
+  );
+  /* =========================================================
+     FINAL MULTIPLAYER CONTROLLER
+  ========================================================= */
+
+  const MultiplayerController = {
+    started: false,
+
+    start() {
+      if (this.started) {
+        return;
+      }
+
+      this.started = true;
+
+      try {
+        startInterpolationLoop();
+      } catch {}
+
+      try {
+        startRemoteLabelLoop();
+      } catch {}
+
+      try {
+        startPlayerRefreshLoop();
+      } catch {}
+
+      try {
+        if (
+          State.connected &&
+          State.joinedRoom
+        ) {
+          startStateTransmission();
+        }
+      } catch {}
+
+      log(
+        "Multiplayer controller started."
+      );
+    },
+
+    stop() {
+      if (!this.started) {
+        return;
+      }
+
+      this.started = false;
+
+      try {
+        stopStateTransmission();
+      } catch {}
+
+      try {
+        stopInterpolationLoop();
+      } catch {}
+
+      try {
+        stopRemoteLabelLoop();
+      } catch {}
+
+      try {
+        stopPlayerRefreshLoop();
+      } catch {}
+
+      log(
+        "Multiplayer controller stopped."
+      );
+    },
+
+    status() {
+      return {
+        started:
+          this.started,
+
+        connected:
+          !!State.connected,
+
+        joined:
+          !!State.joinedRoom,
+
+        room:
+          State.room ||
+          null,
+
+        players:
+          getPlayerList().length,
+
+        remotes:
+          State.remotes
+            ? State.remotes.size
+            : 0
+      };
+    }
+  };
+
+  /* =========================================================
+     PUBLIC CONTROLLER
+  ========================================================= */
+
+  try {
+    window.Connections =
+      window.Connections ||
+      {};
+
+    window.Connections.multiplayerController =
+      MultiplayerController;
+
+    window.Connections.start =
+      () =>
+        MultiplayerController.start();
+
+    window.Connections.stop =
+      () =>
+        MultiplayerController.stop();
+
+    window.Connections.status =
+      () =>
+        MultiplayerController.status();
+  } catch {}
+
+  /* =========================================================
+     NETWORK CONNECT HOOK
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "connected",
+    () => {
+      try {
+        MultiplayerController.start();
+      } catch {}
+    }
+  );
+
+  MultiplayerEvents.on(
+    "connectionLost",
+    () => {
+      try {
+        stopStateTransmission();
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     ROOM STATE HOOK
+  ========================================================= */
+
+  MultiplayerEvents.on(
+    "roomJoined",
+    data => {
+      try {
+        State.joinedRoom =
+          true;
+      } catch {}
+
+      try {
+        State.room =
+          data.room ||
+          data.id ||
+          State.room;
+      } catch {}
+
+      try {
+        MultiplayerController.start();
+      } catch {}
+
+      try {
+        transmitLocalState();
+      } catch {}
+    }
+  );
+
+  MultiplayerEvents.on(
+    "roomLeft",
+    () => {
+      try {
+        State.joinedRoom =
+          false;
+      } catch {}
+
+      try {
+        stopStateTransmission();
+      } catch {}
+
+      try {
+        destroyAllRemotes();
+      } catch {}
+    }
+  );
+
+  /* =========================================================
+     PLAYER CLEANUP
+  ========================================================= */
+
+  function clearMultiplayerPlayers() {
+    try {
+      destroyAllRemotes();
+    } catch {}
+
+    try {
+      renderPlayerList();
+    } catch {}
+
+    try {
+      updateCurrentRoom();
+    } catch {}
+  }
+
+  try {
+    window.Connections.clearPlayers =
+      clearMultiplayerPlayers;
+  } catch {}
+
+  /* =========================================================
+     PAGE UNLOAD
+  ========================================================= */
+
+  function finalMultiplayerShutdown() {
+    try {
+      stopStateTransmission();
+    } catch {}
+
+    try {
+      stopInterpolationLoop();
+    } catch {}
+
+    try {
+      stopRemoteLabelLoop();
+    } catch {}
+
+    try {
+      stopPlayerRefreshLoop();
+    } catch {}
+
+    try {
+      stopHeartbeat();
+    } catch {}
+
+    try {
+      stopHealthMonitor();
+    } catch {}
+
+    try {
+      stopRoomSync();
+    } catch {}
+
+    try {
+      destroyAllRemotes();
+    } catch {}
+  }
+
+  window.addEventListener(
+    "beforeunload",
+    finalMultiplayerShutdown
+  );
+
+  window.addEventListener(
+    "pagehide",
+    finalMultiplayerShutdown
+  );
+
+  /* =========================================================
+     INITIALIZE
+  ========================================================= */
+
+  try {
+    MultiplayerController.start();
+  } catch (e) {
+    warn(
+      "Multiplayer controller failed:",
+      e
+    );
+  }
+
+  /* =========================================================
+     FINAL API
+  ========================================================= */
+
+  try {
+    window.Connections.version =
+      "multiplayer-final";
+
+    window.Connections.state =
+      State;
+
+    window.Connections.roomsList =
+      () =>
+        getRoomCache();
+
+    window.Connections.playersList =
+      () =>
+        getPlayerList();
+
+    window.Connections.isConnected =
+      () =>
+        !!State.connected;
+
+    window.Connections.isInRoom =
+      () =>
+        !!State.joinedRoom;
+  } catch {}
+
+  /* =========================================================
+     READY
+  ========================================================= */
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent(
+        "connections:ready",
+        {
+          detail: {
+            version:
+              "multiplayer-final",
+
+            connected:
+              !!State.connected,
+
+            room:
+              State.room ||
+              null,
+
+            players:
+              getPlayerList()
+          }
+        }
+      )
+    );
+  } catch {}
+
+  log(
+    "Connections multiplayer system fully initialized."
+  );
+
 })();
