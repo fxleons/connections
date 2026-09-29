@@ -1,1167 +1,1689 @@
+"use strict";
+
 const http = require("http");
 const WebSocket = require("ws");
 
-const PORT = Number(process.env.PORT || 3000);
-const HOST = "0.0.0.0";
+let RAFIT = null;
 
-const MAX_ROOMS = 100;
-const MAX_PLAYERS_PER_ROOM = 16;
-
-const server = http.createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "*");
-  res.setHeader("Content-Type", "application/json");
-
-  if (req.url === "/") {
-    return res.end(
-      JSON.stringify({
-        name: "Connections Multiplayer Server",
-        status: "online",
-        rooms: rooms.size,
-        players: getTotalPlayers()
-      })
+try {
+    RAFIT = require("./rafit.js");
+    console.log("[Connections] RAFIT loaded.");
+} catch (e) {
+    console.warn(
+        "[Connections] RAFIT unavailable:",
+        e.message
     );
-  }
-
-  if (req.url === "/health") {
-    return res.end(
-      JSON.stringify({
-        status: "ok",
-        rooms: rooms.size,
-        players: getTotalPlayers(),
-        uptime: process.uptime()
-      })
-    );
-  }
-
-  res.statusCode = 404;
-
-  res.end(
-    JSON.stringify({
-      error: "Not found"
-    })
-  );
-});
-
-const wss = new WebSocket.Server({
-  server
-});
-
-const players = new Map();
-const rooms = new Map();
-
-let nextPlayerId = 1;
-
-function log() {
-  console.log(
-    "[Connections]",
-    ...arguments
-  );
 }
 
-function makeId() {
-  return (
-    "player_" +
-    Date.now().toString(36) +
-    "_" +
-    (nextPlayerId++).toString(36)
-  );
+const HOST = "0.0.0.0";
+const PORT = Number(
+    process.env.PORT || 3000
+);
+
+const MAX_ROOMS = 100;
+const DEFAULT_MAX_PLAYERS = 8;
+const HARD_MAX_PLAYERS = 32;
+
+const rooms = new Map();
+const clients = new Map();
+
+let nextClientId = 1;
+let nextRoomId = 1;
+
+function log() {
+    console.log(
+        "[Connections]",
+        ...arguments
+    );
+}
+
+function warn() {
+    console.warn(
+        "[Connections]",
+        ...arguments
+    );
+}
+
+function makeClientId() {
+    const id =
+        "player_" +
+        Date.now().toString(36) +
+        "_" +
+        nextClientId.toString(36);
+
+    nextClientId++;
+
+    return id;
+}
+
+function makeRoomId() {
+    const id =
+        "room_" +
+        Date.now().toString(36) +
+        "_" +
+        nextRoomId.toString(36);
+
+    nextRoomId++;
+
+    return id;
 }
 
 function cleanName(name) {
-  if (
-    typeof name !== "string"
-  ) {
-    return "Player";
-  }
+    if (
+        typeof name !==
+        "string"
+    ) {
+        return "Player";
+    }
 
-  name = name
-    .trim()
-    .slice(0, 32);
+    name =
+        name
+            .replace(/[\u0000-\u001f\u007f]/g, "")
+            .trim()
+            .slice(0, 24);
 
-  return name || "Player";
+    return name || "Player";
+}
+
+function cleanRoomName(name) {
+    if (
+        typeof name !==
+        "string"
+    ) {
+        return "Connections Room";
+    }
+
+    name =
+        name
+            .replace(/[\u0000-\u001f\u007f]/g, "")
+            .trim()
+            .slice(0, 40);
+
+    return name || "Connections Room";
 }
 
 function cleanAvatar(avatar) {
-  if (
-    typeof avatar !== "string"
-  ) {
-    return null;
-  }
-
-  avatar = avatar.trim();
-
-  if (!avatar) {
-    return null;
-  }
-
-  return avatar.slice(0, 2048);
-}
-
-function cleanVector(value) {
-  if (
-    !value ||
-    typeof value !== "object"
-  ) {
-    return {
-      x: 0,
-      y: 0,
-      z: 0
-    };
-  }
-
-  return {
-    x: finiteNumber(value.x),
-    y: finiteNumber(value.y),
-    z: finiteNumber(value.z)
-  };
-}
-
-function cleanRotation(value) {
-  if (
-    !value ||
-    typeof value !== "object"
-  ) {
-    return {
-      yaw: 0,
-      pitch: 0
-    };
-  }
-
-  return {
-    yaw: finiteNumber(value.yaw),
-    pitch: finiteNumber(value.pitch)
-  };
-}
-
-function finiteNumber(value) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return 0;
-  }
-
-  return Math.max(
-    -1000000,
-    Math.min(
-      1000000,
-      number
-    )
-  );
-}
-
-function getPlayer(ws) {
-  if (!ws || !ws.__playerId) {
-    return null;
-  }
-
-  return players.get(
-    ws.__playerId
-  ) || null;
-}
-
-function getTotalPlayers() {
-  let count = 0;
-
-  for (const player of players.values()) {
     if (
-      player.ws &&
-      player.ws.readyState ===
+        typeof avatar !==
+        "string"
+    ) {
+        return null;
+    }
+
+    if (
+        !avatar.startsWith(
+            "data:image/"
+        )
+    ) {
+        return null;
+    }
+
+    if (
+        avatar.length >
+        1000000
+    ) {
+        return null;
+    }
+
+    return avatar;
+}
+
+function number(value) {
+    const n =
+        Number(value);
+
+    if (
+        !Number.isFinite(n)
+    ) {
+        return 0;
+    }
+
+    return Math.max(
+        -1000000,
+        Math.min(
+            1000000,
+            n
+        )
+    );
+}
+
+function cleanState(state) {
+    if (
+        !state ||
+        typeof state !==
+        "object"
+    ) {
+        return {
+            x: 0,
+            y: 0,
+            z: 0,
+            yaw: 0,
+            pitch: 0,
+            alive: true,
+            team: "CT",
+            name: "Player"
+        };
+    }
+
+    return {
+        x: number(state.x),
+        y: number(state.y),
+        z: number(state.z),
+
+        yaw: number(
+            state.yaw
+        ),
+
+        pitch: number(
+            state.pitch
+        ),
+
+        alive:
+            state.alive !== false,
+
+        team:
+            state.team === "T"
+                ? "T"
+                : "CT",
+
+        name:
+            cleanName(
+                state.name
+            ),
+
+        avatar:
+            cleanAvatar(
+                state.avatar
+            )
+    };
+}
+
+function safeSend(
+    ws,
+    packet
+) {
+    if (
+        !ws ||
+        ws.readyState !==
         WebSocket.OPEN
     ) {
-      count++;
-    }
-  }
-
-  return count;
-}
-
-function getRoomPlayers(room) {
-  if (!room) {
-    return [];
-  }
-
-  return Array.from(
-    room.players
-  )
-    .map(id => players.get(id))
-    .filter(Boolean);
-}
-
-function publicPlayer(player) {
-  if (!player) {
-    return null;
-  }
-
-  return {
-    id: player.id,
-    name: player.name,
-    avatar: player.avatar,
-    position: player.position,
-    rotation: player.rotation
-  };
-}
-
-function publicRoom(room) {
-  if (!room) {
-    return null;
-  }
-
-  return {
-    id: room.id,
-    name: room.name,
-    players: room.players.size,
-    playerCount: room.players.size,
-    maxPlayers: room.maxPlayers,
-    locked: room.locked,
-    owner: room.owner
-  };
-}
-
-function send(ws, data) {
-  if (
-    !ws ||
-    ws.readyState !==
-      WebSocket.OPEN
-  ) {
-    return false;
-  }
-
-  try {
-    ws.send(
-      JSON.stringify(data)
-    );
-
-    return true;
-  } catch (error) {
-    log(
-      "Send error:",
-      error.message
-    );
-
-    return false;
-  }
-}
-
-function broadcastRoom(
-  room,
-  data,
-  exceptId
-) {
-  if (!room) {
-    return;
-  }
-
-  for (const id of room.players) {
-    if (
-      exceptId &&
-      id === exceptId
-    ) {
-      continue;
+        return false;
     }
 
-    const player =
-      players.get(id);
+    try {
+        ws.send(
+            JSON.stringify(packet)
+        );
 
-    if (player) {
-      send(
-        player.ws,
-        data
-      );
+        return true;
+    } catch (e) {
+        warn(
+            "send failed:",
+            e.message
+        );
+
+        return false;
     }
-  }
 }
 
-function sendRooms(ws) {
-  send(ws, {
-    type: "rooms",
-
-    rooms:
-      Array.from(
-        rooms.values()
-      ).map(publicRoom)
-  });
-}
-
-function sendRoomPlayers(
-  room,
-  ws
-) {
-  if (!room) {
-    return;
-  }
-
-  const list =
-    getRoomPlayers(room)
-      .map(publicPlayer);
-
-  send(ws, {
-    type: "players",
-    players: list
-  });
-}
-
-function broadcastRoomPlayers(
-  room
-) {
-  if (!room) {
-    return;
-  }
-
-  const list =
-    getRoomPlayers(room)
-      .map(publicPlayer);
-
-  broadcastRoom(
+function broadcast(
     room,
-    {
-      type: "players",
-      players: list
+    packet,
+    exceptId
+) {
+    if (!room) {
+        return;
     }
-  );
+
+    for (
+        const id of
+        room.players
+    ) {
+        if (
+            exceptId &&
+            String(id) ===
+            String(exceptId)
+        ) {
+            continue;
+        }
+
+        const client =
+            clients.get(
+                String(id)
+            );
+
+        if (client) {
+            safeSend(
+                client.ws,
+                packet
+            );
+        }
+    }
+}
+
+function broadcastAll(
+    packet
+) {
+    for (
+        const client of
+        clients.values()
+    ) {
+        safeSend(
+            client.ws,
+            packet
+        );
+    }
+}
+
+function publicClient(
+    client
+) {
+    if (!client) {
+        return null;
+    }
+
+    return {
+        id: client.id,
+
+        name:
+            client.name,
+
+        avatar:
+            client.avatar,
+
+        team:
+            client.state.team,
+
+        state: {
+            x:
+                client.state.x,
+
+            y:
+                client.state.y,
+
+            z:
+                client.state.z,
+
+            yaw:
+                client.state.yaw,
+
+            pitch:
+                client.state.pitch,
+
+            alive:
+                client.state.alive,
+
+            team:
+                client.state.team,
+
+            name:
+                client.name,
+
+            avatar:
+                client.avatar
+        }
+    };
+}
+
+function publicRoom(
+    room
+) {
+    if (!room) {
+        return null;
+    }
+
+    return {
+        id:
+            room.id,
+
+        roomId:
+            room.id,
+
+        name:
+            room.name,
+
+        host:
+            room.host,
+
+        owner:
+            room.host,
+
+        maxPlayers:
+            room.maxPlayers,
+
+        players:
+            room.players.size,
+
+        playerCount:
+            room.players.size,
+
+        locked:
+            false,
+
+        createdAt:
+            room.createdAt
+    };
+}
+
+function getRoomsList() {
+    return Array.from(
+        rooms.values()
+    ).map(
+        publicRoom
+    );
+}
+
+function sendRooms(
+    ws
+) {
+    safeSend(
+        ws,
+        {
+            type: "rooms",
+            rooms:
+                getRoomsList()
+        }
+    );
+}
+
+function sendRoomsToAll() {
+    for (
+        const client of
+        clients.values()
+    ) {
+        sendRooms(
+            client.ws
+        );
+    }
+}
+
+function getRoom(
+    id
+) {
+    if (
+        id === null ||
+        id === undefined
+    ) {
+        return null;
+    }
+
+    return (
+        rooms.get(
+            String(id)
+        ) || null
+    );
 }
 
 function createRoom(
-  name,
-  ownerId
+    name,
+    maxPlayers
 ) {
-  if (
-    rooms.size >=
-    MAX_ROOMS
-  ) {
-    return null;
-  }
+    if (
+        rooms.size >=
+        MAX_ROOMS
+    ) {
+        return null;
+    }
 
-  const id =
-    "room_" +
-    Date.now().toString(36) +
-    "_" +
-    Math.random()
-      .toString(36)
-      .slice(2, 8);
+    let max =
+        Number(
+            maxPlayers
+        );
 
-  const room = {
-    id,
+    if (
+        !Number.isFinite(max)
+    ) {
+        max =
+            DEFAULT_MAX_PLAYERS;
+    }
 
-    name:
-      cleanName(name),
+    max =
+        Math.max(
+            2,
+            Math.min(
+                HARD_MAX_PLAYERS,
+                Math.floor(max)
+            )
+        );
 
-    owner:
-      ownerId || null,
+    const room = {
+        id:
+            makeRoomId(),
 
-    maxPlayers:
-      MAX_PLAYERS_PER_ROOM,
+        name:
+            cleanRoomName(
+                name
+            ),
 
-    locked:
-      false,
+        host:
+            null,
 
-    players:
-      new Set(),
+        maxPlayers:
+            max,
 
-    createdAt:
-      Date.now()
-  };
+        players:
+            new Set(),
 
-  rooms.set(
-    id,
-    room
-  );
+        createdAt:
+            Date.now()
+    };
 
-  return room;
-}
-
-function findRoom(roomId) {
-  if (!roomId) {
-    return null;
-  }
-
-  return (
-    rooms.get(
-      String(roomId)
-    ) || null
-  );
-}
-
-function leaveRoom(
-  player
-) {
-  if (
-    !player ||
-    !player.roomId
-  ) {
-    return;
-  }
-
-  const room =
-    rooms.get(
-      player.roomId
+    rooms.set(
+        room.id,
+        room
     );
 
-  if (!room) {
-    player.roomId =
-      null;
+    return room;
+}
 
-    return;
-  }
-
-  room.players.delete(
-    player.id
-  );
-
-  player.roomId =
-    null;
-
-  send(player.ws, {
-    type: "room_left"
-  });
-
-  broadcastRoom(
-    room,
-    {
-      type: "player_leave",
-      id: player.id
+function leaveCurrentRoom(
+    client,
+    notifySelf
+) {
+    if (
+        !client ||
+        !client.room
+    ) {
+        return;
     }
-  );
 
-  broadcastRoomPlayers(
-    room
-  );
+    const room =
+        getRoom(
+            client.room
+        );
 
-  if (
-    room.owner ===
-    player.id
-  ) {
-    const remaining =
-      getRoomPlayers(room);
+    const oldRoomId =
+        client.room;
 
-    if (remaining.length) {
-      room.owner =
-        remaining[0].id;
+    client.room =
+        null;
+
+    if (!room) {
+        if (notifySelf) {
+            safeSend(
+                client.ws,
+                {
+                    type:
+                        "left_room",
+                    room:
+                        oldRoomId
+                }
+            );
+        }
+
+        return;
     }
-  }
 
-  if (
-    room.players.size ===
-    0
-  ) {
-    rooms.delete(
-      room.id
+    room.players.delete(
+        client.id
     );
-  }
 
-  sendRoomsToEveryone();
+    broadcast(
+        room,
+        {
+            type:
+                "player_left",
+
+            id:
+                client.id,
+
+            playerId:
+                client.id
+        }
+    );
+
+    if (
+        room.host ===
+        client.id
+    ) {
+        const remaining =
+            Array.from(
+                room.players
+            );
+
+        if (
+            remaining.length
+        ) {
+            room.host =
+                remaining[0];
+        } else {
+            room.host =
+                null;
+        }
+    }
+
+    if (
+        notifySelf
+    ) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "left_room",
+
+                room:
+                    oldRoomId
+            }
+        );
+    }
+
+    if (
+        room.players.size ===
+        0
+    ) {
+        rooms.delete(
+            room.id
+        );
+
+        broadcastAll({
+            type:
+                "room_deleted",
+
+            room:
+                room.id,
+
+            roomId:
+                room.id,
+
+            reason:
+                "Room is empty."
+        });
+    }
+
+    sendRoomsToAll();
+}
+
+function checkRafit(
+    client,
+    professional
+) {
+    if (
+        !RAFIT ||
+        typeof RAFIT.canJoinRoom !==
+        "function"
+    ) {
+        return {
+            allowed: true
+        };
+    }
+
+    try {
+        const result =
+            RAFIT.canJoinRoom(
+                client.id,
+                !!professional
+            );
+
+        if (
+            result &&
+            result.allowed === false
+        ) {
+            return result;
+        }
+
+        return {
+            allowed: true,
+            rtp:
+                result &&
+                result.rtp
+        };
+    } catch (e) {
+        warn(
+            "RAFIT check failed:",
+            e.message
+        );
+
+        return {
+            allowed: true
+        };
+    }
 }
 
 function joinRoom(
-  player,
-  room
+    client,
+    room,
+    data
 ) {
-  if (
-    !player ||
-    !room
-  ) {
-    return false;
-  }
+    if (
+        !client ||
+        !room
+    ) {
+        return false;
+    }
 
-  if (
-    room.locked
-  ) {
-    send(player.ws, {
-      type: "error",
-      error:
-        "Room is locked."
-    });
+    const rafit =
+        checkRafit(
+            client,
+            data &&
+            data.professional
+        );
 
-    return false;
-  }
+    if (
+        !rafit.allowed
+    ) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "error",
 
-  if (
-    room.players.size >=
-    room.maxPlayers
-  ) {
-    send(player.ws, {
-      type: "error",
-      error:
-        "Room is full."
-    });
+                message:
+                    rafit.reason ||
+                    "You cannot join this room.",
 
-    return false;
-  }
+                error:
+                    rafit.reason ||
+                    "RAFIT_BLOCKED",
 
-  if (
-    player.roomId ===
-    room.id
-  ) {
-    sendRoomPlayers(
-      room,
-      player.ws
+                bannedUntil:
+                    rafit.bannedUntil ||
+                    0,
+
+                rtp:
+                    rafit.rtp
+            }
+        );
+
+        return false;
+    }
+
+    if (
+        room.players.has(
+            client.id
+        )
+    ) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "room_joined",
+
+                room:
+                    room.id,
+
+                roomId:
+                    room.id,
+
+                id:
+                    room.id,
+
+                roomData:
+                    publicRoom(room)
+            }
+        );
+
+        return true;
+    }
+
+    if (
+        room.players.size >=
+        room.maxPlayers
+    ) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "error",
+
+                message:
+                    "Room is full.",
+
+                error:
+                    "ROOM_FULL"
+            }
+        );
+
+        return false;
+    }
+
+    if (
+        client.room
+    ) {
+        leaveCurrentRoom(
+            client,
+            true
+        );
+    }
+
+    room.players.add(
+        client.id
+    );
+
+    client.room =
+        room.id;
+
+    if (
+        !room.host
+    ) {
+        room.host =
+            client.id;
+    }
+
+    safeSend(
+        client.ws,
+        {
+            type:
+                "room_joined",
+
+            room:
+                room.id,
+
+            roomId:
+                room.id,
+
+            id:
+                room.id,
+
+            roomData:
+                publicRoom(room)
+        }
+    );
+
+    /*
+     * Send the newcomer every player
+     * already inside the room.
+     */
+    for (
+        const otherId of
+        room.players
+    ) {
+        if (
+            String(otherId) ===
+            String(client.id)
+        ) {
+            continue;
+        }
+
+        const other =
+            clients.get(
+                String(otherId)
+            );
+
+        if (!other) {
+            continue;
+        }
+
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "player_joined",
+
+                id:
+                    other.id,
+
+                playerId:
+                    other.id,
+
+                name:
+                    other.name,
+
+                player:
+                    publicClient(
+                        other
+                    )
+            }
+        );
+
+        /*
+         * Give the newcomer the latest state
+         * immediately instead of waiting for
+         * the next 50ms client tick.
+         */
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "state",
+
+                id:
+                    other.id,
+
+                playerId:
+                    other.id,
+
+                state:
+                    other.state
+            }
+        );
+    }
+
+    /*
+     * Tell everybody else that the newcomer
+     * has entered.
+     */
+    broadcast(
+        room,
+        {
+            type:
+                "player_joined",
+
+            id:
+                client.id,
+
+            playerId:
+                client.id,
+
+            name:
+                client.name,
+
+            player:
+                publicClient(
+                    client
+                )
+        },
+        client.id
+    );
+
+    /*
+     * Also send the new player's current
+     * state to everybody else.
+     */
+    broadcast(
+        room,
+        {
+            type:
+                "state",
+
+            id:
+                client.id,
+
+            playerId:
+                client.id,
+
+            state:
+                client.state
+        },
+        client.id
+    );
+
+    sendRoomsToAll();
+
+    log(
+        "Player",
+        client.name,
+        "(" +
+            client.id +
+            ") joined",
+        room.name,
+        "(" +
+            room.id +
+            ")"
     );
 
     return true;
-  }
-
-  if (
-    player.roomId
-  ) {
-    leaveRoom(
-      player
-    );
-  }
-
-  room.players.add(
-    player.id
-  );
-
-  player.roomId =
-    room.id;
-
-  send(player.ws, {
-    type: "room_joined",
-
-    room: room.id,
-
-    roomData:
-      publicRoom(room)
-  });
-
-  sendRoomPlayers(
-    room,
-    player.ws
-  );
-
-  broadcastRoom(
-    room,
-    {
-      type: "player_join",
-
-      player:
-        publicPlayer(player)
-    },
-    player.id
-  );
-
-  broadcastRoomPlayers(
-    room
-  );
-
-  sendRoomsToEveryone();
-
-  return true;
-}
-
-function sendRoomsToEveryone() {
-  for (
-    const player of
-      players.values()
-  ) {
-    sendRooms(
-      player.ws
-    );
-  }
 }
 
 function handleHello(
-  ws,
-  data
+    client,
+    data
 ) {
-  const player =
-    getPlayer(ws);
+    if (
+        typeof data.name ===
+        "string"
+    ) {
+        client.name =
+            cleanName(
+                data.name
+            );
+    }
 
-  if (!player) {
-    return;
-  }
+    if (
+        Object.prototype.hasOwnProperty.call(
+            data,
+            "avatar"
+        )
+    ) {
+        client.avatar =
+            cleanAvatar(
+                data.avatar
+            );
+    }
 
-  player.name =
-    cleanName(
-      data.name
+    client.state.name =
+        client.name;
+
+    client.state.avatar =
+        client.avatar;
+
+    safeSend(
+        client.ws,
+        {
+            type:
+                "connected",
+
+            id:
+                client.id,
+
+            clientId:
+                client.id,
+
+            playerId:
+                client.id,
+
+            name:
+                client.name,
+
+            avatar:
+                client.avatar
+        }
     );
 
-  player.avatar =
-    cleanAvatar(
-      data.avatar
+    sendRooms(
+        client.ws
     );
-
-  send(ws, {
-    type: "welcome",
-
-    id:
-      player.id,
-
-    name:
-      player.name,
-
-    avatar:
-      player.avatar
-  });
-
-  sendRooms(ws);
 }
 
-function handleState(
-  ws,
-  data
+function handleListRooms(
+    client
 ) {
-  const player =
-    getPlayer(ws);
-
-  if (!player) {
-    return;
-  }
-
-  if (
-    !player.roomId
-  ) {
-    return;
-  }
-
-  player.position =
-    cleanVector(
-      data.position
+    sendRooms(
+        client.ws
     );
-
-  player.rotation =
-    cleanRotation(
-      data.rotation
-    );
-
-  if (
-    typeof data.name ===
-    "string"
-  ) {
-    player.name =
-      cleanName(
-        data.name
-      );
-  }
-
-  if (
-    Object.prototype
-      .hasOwnProperty.call(
-        data,
-        "avatar"
-      )
-  ) {
-    player.avatar =
-      cleanAvatar(
-        data.avatar
-      );
-  }
-
-  const packet = {
-    type:
-      "player_state",
-
-    player:
-      publicPlayer(
-        player
-      )
-  };
-
-  const room =
-    rooms.get(
-      player.roomId
-    );
-
-  broadcastRoom(
-    room,
-    packet,
-    player.id
-  );
-}
-
-function handleChat(
-  ws,
-  data
-) {
-  const player =
-    getPlayer(ws);
-
-  if (
-    !player ||
-    !player.roomId
-  ) {
-    return;
-  }
-
-  let message =
-    typeof data.message ===
-    "string"
-      ? data.message
-      : "";
-
-  message =
-    message
-      .trim()
-      .slice(0, 256);
-
-  if (!message) {
-    return;
-  }
-
-  const room =
-    rooms.get(
-      player.roomId
-    );
-
-  const packet = {
-    type: "chat",
-
-    id:
-      player.id,
-
-    name:
-      player.name,
-
-    message:
-      message,
-
-    timestamp:
-      Date.now()
-  };
-
-  broadcastRoom(
-    room,
-    packet
-  );
 }
 
 function handleCreateRoom(
-  ws,
-  data
+    client,
+    data
 ) {
-  const player =
-    getPlayer(ws);
+    const room =
+        createRoom(
+            data.name,
+            data.maxPlayers
+        );
 
-  if (!player) {
-    return;
-  }
+    if (!room) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "error",
 
-  const room =
-    createRoom(
-      data.name,
-      player.id
+                message:
+                    "Could not create room.",
+
+                error:
+                    "ROOM_CREATE_FAILED"
+            }
+        );
+
+        return;
+    }
+
+    joinRoom(
+        client,
+        room,
+        data
     );
-
-  if (!room) {
-    send(ws, {
-      type: "error",
-      error:
-        "Could not create room."
-    });
-
-    return;
-  }
-
-  joinRoom(
-    player,
-    room
-  );
 }
 
 function handleJoinRoom(
-  ws,
-  data
+    client,
+    data
 ) {
-  const player =
-    getPlayer(ws);
+    const id =
+        data.room ??
+        data.roomId ??
+        data.id;
 
-  if (!player) {
-    return;
-  }
+    const room =
+        getRoom(id);
 
-  const room =
-    findRoom(
-      data.room ||
-      data.roomId
+    if (!room) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "error",
+
+                message:
+                    "Room not found.",
+
+                error:
+                    "ROOM_NOT_FOUND"
+            }
+        );
+
+        return;
+    }
+
+    joinRoom(
+        client,
+        room,
+        data
     );
-
-  if (!room) {
-    send(ws, {
-      type: "error",
-      error:
-        "Room not found."
-    });
-
-    return;
-  }
-
-  joinRoom(
-    player,
-    room
-  );
 }
 
 function handleLeaveRoom(
-  ws
+    client
 ) {
-  const player =
-    getPlayer(ws);
-
-  if (!player) {
-    return;
-  }
-
-  leaveRoom(
-    player
-  );
-}
-
-function handleRoomState(
-  ws
-) {
-  const player =
-    getPlayer(ws);
-
-  if (
-    !player ||
-    !player.roomId
-  ) {
-    return;
-  }
-
-  const room =
-    rooms.get(
-      player.roomId
+    leaveCurrentRoom(
+        client,
+        true
     );
-
-  if (!room) {
-    return;
-  }
-
-  sendRoomPlayers(
-    room,
-    ws
-  );
 }
 
-function handleHeartbeat(
-  ws
+function handleState(
+    client,
+    data
 ) {
-  const player =
-    getPlayer(ws);
+    if (
+        !client.room
+    ) {
+        return;
+    }
 
-  if (!player) {
-    return;
-  }
+    const room =
+        getRoom(
+            client.room
+        );
 
-  player.lastHeartbeat =
-    Date.now();
+    if (!room) {
+        client.room =
+            null;
 
-  send(ws, {
-    type:
-      "heartbeat",
+        return;
+    }
 
-    timestamp:
-      Date.now()
-  });
+    const incoming =
+        data.state &&
+        typeof data.state ===
+        "object"
+            ? data.state
+            : data;
+
+    const previous = {
+        x:
+            client.state.x,
+
+        y:
+            client.state.y,
+
+        z:
+            client.state.z
+    };
+
+    const next =
+        cleanState(
+            incoming
+        );
+
+    /*
+     * Preserve old values if the client
+     * didn't include an avatar.
+     */
+    if (
+        !Object.prototype.hasOwnProperty.call(
+            incoming,
+            "avatar"
+        )
+    ) {
+        next.avatar =
+            client.avatar;
+    }
+
+    if (
+        typeof incoming.name !==
+        "string"
+    ) {
+        next.name =
+            client.name;
+    }
+
+    client.state =
+        next;
+
+    client.name =
+        next.name;
+
+    if (
+        Object.prototype.hasOwnProperty.call(
+            incoming,
+            "avatar"
+        )
+    ) {
+        client.avatar =
+            next.avatar;
+    }
+
+    /*
+     * Optional RAFIT movement inspection.
+     * It only logs suspicious movement;
+     * it does not kick the player here.
+     */
+    if (
+        RAFIT &&
+        typeof RAFIT.inspectMovement ===
+        "function"
+    ) {
+        try {
+            const now =
+                Date.now();
+
+            const dt =
+                Math.max(
+                    0.001,
+                    (
+                        now -
+                        client.lastStateAt
+                    ) / 1000
+                );
+
+            const movement =
+                RAFIT.inspectMovement(
+                    client.id,
+                    {
+                        x:
+                            next.x,
+
+                        y:
+                            next.y,
+
+                        z:
+                            next.z,
+
+                        lastX:
+                            previous.x,
+
+                        lastY:
+                            previous.y,
+
+                        lastZ:
+                            previous.z,
+
+                        dt
+                    }
+                );
+
+            if (
+                movement &&
+                movement.suspicious
+            ) {
+                warn(
+                    "Suspicious movement:",
+                    client.name,
+                    movement
+                );
+            }
+        } catch (e) {
+            warn(
+                "RAFIT movement check failed:",
+                e.message
+            );
+        }
+    }
+
+    client.lastStateAt =
+        Date.now();
+
+    broadcast(
+        room,
+        {
+            type:
+                "state",
+
+            id:
+                client.id,
+
+            playerId:
+                client.id,
+
+            state:
+                client.state
+        },
+        client.id
+    );
+}
+
+function handlePing(
+    client
+) {
+    safeSend(
+        client.ws,
+        {
+            type:
+                "pong",
+
+            time:
+                Date.now()
+        }
+    );
 }
 
 function handleMessage(
-  ws,
-  raw
+    client,
+    raw
 ) {
-  let data;
+    let data;
 
-  try {
-    data =
-      JSON.parse(
-        raw.toString()
-      );
-  } catch {
-    send(ws, {
-      type: "error",
-      error:
-        "Invalid JSON."
-    });
+    try {
+        data =
+            JSON.parse(
+                raw.toString()
+            );
+    } catch (e) {
+        safeSend(
+            client.ws,
+            {
+                type:
+                    "error",
 
-    return;
-  }
+                message:
+                    "Invalid JSON.",
 
-  if (
-    !data ||
-    typeof data !==
-      "object"
-  ) {
-    return;
-  }
+                error:
+                    "INVALID_JSON"
+            }
+        );
 
-  const type =
-    String(
-      data.type || ""
-    );
+        return;
+    }
 
-  switch (type) {
-    case "hello":
-      handleHello(
-        ws,
-        data
-      );
-      break;
+    if (
+        !data ||
+        typeof data !==
+        "object"
+    ) {
+        return;
+    }
 
-    case "state":
-    case "player_state":
-      handleState(
-        ws,
-        data
-      );
-      break;
+    const type =
+        String(
+            data.type || ""
+        );
 
-    case "chat":
-      handleChat(
-        ws,
-        data
-      );
-      break;
+    switch (type) {
+        case "hello":
+            handleHello(
+                client,
+                data
+            );
+            break;
 
-    case "room_create":
-    case "create_room":
-      handleCreateRoom(
-        ws,
-        data
-      );
-      break;
+        case "list_rooms":
+        case "rooms":
+            handleListRooms(
+                client
+            );
+            break;
 
-    case "room_join":
-    case "join_room":
-      handleJoinRoom(
-        ws,
-        data
-      );
-      break;
+        case "create_room":
+        case "room_create":
+            handleCreateRoom(
+                client,
+                data
+            );
+            break;
 
-    case "room_leave":
-    case "leave_room":
-      handleLeaveRoom(
-        ws
-      );
-      break;
+        case "join_room":
+        case "room_join":
+            handleJoinRoom(
+                client,
+                data
+            );
+            break;
 
-    case "room_state":
-      handleRoomState(
-        ws
-      );
-      break;
+        case "leave_room":
+        case "room_leave":
+            handleLeaveRoom(
+                client
+            );
+            break;
 
-    case "rooms":
-    case "room_list":
-      sendRooms(ws);
-      break;
+        case "state":
+        case "player_state":
+            handleState(
+                client,
+                data
+            );
+            break;
 
-    case "heartbeat":
-      handleHeartbeat(
-        ws
-      );
-      break;
+        case "ping":
+            handlePing(
+                client
+            );
+            break;
 
-    default:
-      send(ws, {
-        type: "error",
-        error:
-          "Unknown message type: " +
-          type
-      });
-      break;
-  }
+        case "heartbeat":
+            handlePing(
+                client
+            );
+            break;
+
+        default:
+            safeSend(
+                client.ws,
+                {
+                    type:
+                        "error",
+
+                    message:
+                        "Unknown message type: " +
+                        type,
+
+                    error:
+                        "UNKNOWN_MESSAGE"
+                }
+            );
+
+            break;
+    }
 }
 
-wss.on(
-  "connection",
-  ws => {
-    const id =
-      makeId();
+const server =
+    http.createServer(
+        (req, res) => {
+            res.statusCode = 200;
 
-    const player = {
-      id,
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
+            );
 
-      ws,
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "*"
+            );
 
-      name:
-        "Player",
+            res.setHeader(
+                "Content-Type",
+                "application/json; charset=utf-8"
+            );
 
-      avatar:
-        null,
+            if (
+                req.url ===
+                "/health"
+            ) {
+                res.end(
+                    JSON.stringify({
+                        name:
+                            "Connections Multiplayer Server",
 
-      roomId:
-        null,
+                        status:
+                            "online",
 
-      position: {
-        x: 0,
-        y: 0,
-        z: 0
-      },
+                        rooms:
+                            rooms.size,
 
-      rotation: {
-        yaw: 0,
-        pitch: 0
-      },
+                        players:
+                            clients.size,
 
-      lastHeartbeat:
-        Date.now(),
+                        uptime:
+                            process.uptime()
+                    })
+                );
 
-      connectedAt:
-        Date.now()
-    };
+                return;
+            }
 
-    ws.__playerId =
-      id;
+            res.end(
+                JSON.stringify({
+                    name:
+                        "Connections Multiplayer Server",
 
-    players.set(
-      id,
-      player
+                    status:
+                        "online",
+
+                    rooms:
+                        rooms.size,
+
+                    players:
+                        clients.size
+                })
+            );
+        }
     );
 
-    log(
-      "Player connected:",
-      id
-    );
-
-    send(ws, {
-      type: "welcome",
-
-      id,
-
-      name:
-        player.name,
-
-      avatar:
-        player.avatar
+const wss =
+    new WebSocket.Server({
+        server
     });
 
-    sendRooms(ws);
+wss.on(
+    "connection",
+    ws => {
+        const id =
+            makeClientId();
 
-    ws.on(
-      "message",
-      raw => {
-        try {
-          handleMessage(
+        const client = {
+            id,
+
             ws,
-            raw
-          );
-        } catch (error) {
-          log(
-            "Message error:",
-            error.message
-          );
 
-          send(ws, {
-            type: "error",
-            error:
-              "Internal server error."
-          });
-        }
-      }
-    );
+            name:
+                "Player",
 
-    ws.on(
-      "close",
-      () => {
-        const current =
-          getPlayer(ws);
+            room:
+                null,
 
-        if (!current) {
-          return;
-        }
+            avatar:
+                null,
+
+            state: {
+                x: 0,
+                y: 0,
+                z: 0,
+
+                yaw: 0,
+                pitch: 0,
+
+                alive: true,
+
+                team: "CT",
+
+                name:
+                    "Player",
+
+                avatar:
+                    null
+            },
+
+            lastStateAt:
+                Date.now(),
+
+            connectedAt:
+                Date.now()
+        };
+
+        clients.set(
+            id,
+            client
+        );
 
         log(
-          "Player disconnected:",
-          current.id
+            "Client connected:",
+            id
         );
 
-        leaveRoom(
-          current
+        safeSend(
+            ws,
+            {
+                type:
+                    "connected",
+
+                id,
+
+                clientId:
+                    id,
+
+                playerId:
+                    id
+            }
         );
 
-        players.delete(
-          current.id
+        sendRooms(
+            ws
         );
 
-        sendRoomsToEveryone();
-      }
-    );
+        ws.on(
+            "message",
+            raw => {
+                try {
+                    handleMessage(
+                        client,
+                        raw
+                    );
+                } catch (e) {
+                    console.error(
+                        "[Connections] Message handler error:",
+                        e
+                    );
 
-    ws.on(
-      "error",
-      error => {
-        log(
-          "WebSocket error:",
-          error.message
+                    safeSend(
+                        ws,
+                        {
+                            type:
+                                "error",
+
+                            message:
+                                "Internal server error.",
+
+                            error:
+                                "INTERNAL_ERROR"
+                        }
+                    );
+                }
+            }
         );
-      }
-    );
-  }
-);
 
-/* =========================================================
-   HEARTBEAT CLEANUP
-========================================================= */
+        ws.on(
+            "close",
+            () => {
+                log(
+                    "Client disconnected:",
+                    client.id,
+                    client.name
+                );
 
-setInterval(
-  () => {
-    const now =
-      Date.now();
+                leaveCurrentRoom(
+                    client,
+                    false
+                );
 
-    for (
-      const player of
-        players.values()
-    ) {
-      if (
-        now -
-          player.lastHeartbeat >
-        45000
-      ) {
-        try {
-          player.ws.terminate();
-        } catch {}
-      }
+                clients.delete(
+                    client.id
+                );
+
+                sendRoomsToAll();
+            }
+        );
+
+        ws.on(
+            "error",
+            error => {
+                warn(
+                    "WebSocket error:",
+                    client.id,
+                    error.message
+                );
+            }
+        );
     }
-  },
-  15000
 );
 
-/* =========================================================
-   SERVER START
-========================================================= */
+const heartbeat =
+    setInterval(
+        () => {
+            for (
+                const client of
+                clients.values()
+            ) {
+                if (
+                    client.ws.readyState !==
+                    WebSocket.OPEN
+                ) {
+                    continue;
+                }
+
+                try {
+                    client.ws.ping();
+                } catch {}
+            }
+        },
+        30000
+    );
+
+heartbeat.unref();
 
 server.listen(
-  PORT,
-  HOST,
-  () => {
-    log(
-      "HTTP:",
-      `http://${HOST}:${PORT}`
-    );
+    PORT,
+    HOST,
+    () => {
+        log(
+            "HTTP server:",
+            `http://${HOST}:${PORT}`
+        );
 
-    log(
-      "WS:",
-      `ws://${HOST}:${PORT}`
-    );
+        log(
+            "WebSocket:",
+            `ws://${HOST}:${PORT}`
+        );
 
-    log(
-      "ONLINE"
-    );
-  }
-);
+        log(
+            "Rooms:",
+            rooms.size
+        );
 
-/* =========================================================
-   PROCESS SAFETY
-========================================================= */
+        log(
+            "Players:",
+            clients.size
+        );
 
-process.on(
-  "uncaughtException",
-  error => {
-    console.error(
-      "[Connections] Uncaught exception:",
-      error
-    );
-  }
+        log(
+            "ONLINE"
+        );
+    }
 );
 
 process.on(
-  "unhandledRejection",
-  error => {
-    console.error(
-      "[Connections] Unhandled rejection:",
-      error
-    );
-  }
+    "SIGINT",
+    () => {
+        log(
+            "Shutting down..."
+        );
+
+        for (
+            const client of
+            clients.values()
+        ) {
+            try {
+                client.ws.close(
+                    1001,
+                    "Server shutting down"
+                );
+            } catch {}
+        }
+
+        wss.close(
+            () => {
+                server.close(
+                    () => {
+                        process.exit(
+                            0
+                        );
+                    }
+                );
+            }
+        );
+    }
+);
+
+process.on(
+    "uncaughtException",
+    error => {
+        console.error(
+            "[Connections] Uncaught exception:",
+            error
+        );
+    }
+);
+
+process.on(
+    "unhandledRejection",
+    error => {
+        console.error(
+            "[Connections] Unhandled rejection:",
+            error
+        );
+    }
 );
