@@ -23,15 +23,14 @@
 
   const State = {
     ws: null,
-
     connected: false,
     connecting: false,
 
     id: null,
+
     name:
-      localStorage.getItem(
-        "connections_name"
-      ) || "Player",
+      localStorage.getItem("connections_name") ||
+      "Player",
 
     room: null,
     rooms: [],
@@ -55,9 +54,8 @@
     dead: false,
 
     localAvatar:
-      localStorage.getItem(
-        "pp-avatar"
-      ) || null,
+      localStorage.getItem("pp-avatar") ||
+      null,
 
     UI: {},
 
@@ -69,22 +67,13 @@
   };
 
   const log = (...a) =>
-    console.log(
-      "[Connections]",
-      ...a
-    );
+    console.log("[Connections]", ...a);
 
   const warn = (...a) =>
-    console.warn(
-      "[Connections]",
-      ...a
-    );
+    console.warn("[Connections]", ...a);
 
   const error = (...a) =>
-    console.error(
-      "[Connections]",
-      ...a
-    );
+    console.error("[Connections]", ...a);
 
   function getGame() {
     if (State.game) {
@@ -185,10 +174,8 @@
     if (
       game.match &&
       (
-        game.match.isStarted ===
-          true ||
-        game.match.started ===
-          true
+        game.match.isStarted === true ||
+        game.match.started === true
       )
     ) {
       return true;
@@ -296,7 +283,7 @@
     if (
       !State.ws ||
       State.ws.readyState !==
-        WebSocket.OPEN
+      WebSocket.OPEN
     ) {
       return false;
     }
@@ -327,7 +314,7 @@
         (
           State.ws &&
           State.ws.readyState ===
-            WebSocket.OPEN
+          WebSocket.OPEN
         )
       ) {
         return;
@@ -426,9 +413,7 @@
 
         setTimeout(
           () => {
-            this.createRoom(
-              data
-            );
+            this.createRoom(data);
           },
           500
         );
@@ -455,9 +440,7 @@
 
         setTimeout(
           () => {
-            this.joinRoom(
-              roomId
-            );
+            this.joinRoom(roomId);
           },
           500
         );
@@ -486,6 +469,8 @@
 
       State.leavingRoom = true;
       State.confirmedMatch = false;
+
+      updateScanUI();
 
       stopStateLoop();
       clearRemoteBots();
@@ -526,9 +511,7 @@
 
         case "rooms":
           State.rooms =
-            Array.isArray(
-              msg.rooms
-            )
+            Array.isArray(msg.rooms)
               ? msg.rooms
               : [];
 
@@ -537,9 +520,7 @@
           break;
 
         case "room_joined":
-          this.handleRoomJoined(
-            msg
-          );
+          this.handleRoomJoined(msg);
           break;
 
         case "roster":
@@ -574,9 +555,11 @@
           State.joinedRoom = false;
           State.room = null;
           State.roomData = null;
+          State.confirmedMatch = false;
 
           stopStateLoop();
           clearRemoteBots();
+          updateScanUI();
 
           updateStatus(
             "You were kicked."
@@ -590,9 +573,11 @@
           State.room = null;
           State.roomData = null;
           State.leavingRoom = false;
+          State.confirmedMatch = false;
 
           stopStateLoop();
           clearRemoteBots();
+          updateScanUI();
 
           updateStatus(
             "Left room."
@@ -602,17 +587,15 @@
           break;
 
         case "state":
-          handleStateMessage(
-            msg
-          );
+          handleStateMessage(msg);
           break;
 
         case "rafit_warning":
           updateStatus(
             "RAFIT warning: " +
-              msg.type +
-              " | RTP " +
-              msg.rtp
+            msg.type +
+            " | RTP " +
+            msg.rtp
           );
           break;
 
@@ -623,9 +606,7 @@
           break;
 
         case "error":
-          handleServerError(
-            msg
-          );
+          handleServerError(msg);
           break;
 
         case "pong":
@@ -656,17 +637,16 @@
       );
 
       updateStatus(
-        "Room joined"
+        "Room joined. Enter your match and scan."
       );
 
       updateRoomList();
       updateUI();
+      updateScanUI();
     }
   };
 
-  function handleServerError(
-    msg
-  ) {
+  function handleServerError(msg) {
     const code =
       msg.code ||
       msg.message ||
@@ -675,16 +655,22 @@
     const names = {
       ROOM_NOT_FOUND:
         "Room not found.",
+
       ROOM_FULL:
         "Room is full.",
+
       HOST_ONLY:
         "Only the host can do that.",
+
       CANNOT_KICK_HOST:
         "You cannot kick yourself.",
+
       PLAYER_NOT_FOUND:
         "Player not found.",
+
       RAFIT_BANNED:
         "You are currently RAFIT banned.",
+
       RAFIT_2000_REQUIRED:
         "You need 2000+ RTP for this server."
     };
@@ -699,19 +685,13 @@
     );
   }
 
-  function handleStateMessage(
-    msg
-  ) {
+  function handleStateMessage(msg) {
     const list =
-      Array.isArray(
-        msg.players
-      )
+      Array.isArray(msg.players)
         ? msg.players
         : [];
 
-    for (
-      const data of list
-    ) {
+    for (const data of list) {
       if (!data?.id) {
         continue;
       }
@@ -722,7 +702,7 @@
       if (
         State.id &&
         id ===
-          String(State.id)
+        String(State.id)
       ) {
         continue;
       }
@@ -748,8 +728,10 @@
 
           targetX:
             Number(data.x) || 0,
+
           targetY:
             Number(data.y) || 0,
+
           targetZ:
             Number(data.z) || 0,
 
@@ -831,19 +813,11 @@
         data.avatar ||
         null;
 
-      if (
-        remote.dead
-      ) {
-        killRemote(
-          remote
-        );
+      if (remote.dead) {
+        killRemote(remote);
       } else {
-        if (
-          !remote.bot
-        ) {
-          createRemoteBot(
-            remote
-          );
+        if (!remote.bot) {
+          createRemoteBot(remote);
         }
       }
     }
@@ -852,9 +826,7 @@
   }
 
   function getBotManager() {
-    if (
-      State.botManager
-    ) {
+    if (State.botManager) {
       return State.botManager;
     }
 
@@ -866,6 +838,7 @@
     }
 
     const candidates = [
+      game.botMgr,
       game.botManager,
       game.bots,
       game.ai,
@@ -881,7 +854,7 @@
       if (
         manager &&
         typeof manager ===
-          "object"
+        "object"
       ) {
         State.botManager =
           manager;
@@ -901,16 +874,15 @@
       return null;
     }
 
-    const candidates = [
+    const directCandidates = [
       manager.Bot,
       manager.botConstructor,
-      manager.BotClass,
-      manager.constructor
+      manager.BotClass
     ];
 
     for (
       const c of
-      candidates
+      directCandidates
     ) {
       if (
         typeof c ===
@@ -919,6 +891,38 @@
         return c;
       }
     }
+
+    try {
+      const arrays = [
+        manager.bots,
+        manager.agents,
+        manager.entities,
+        manager.players
+      ];
+
+      for (
+        const arr of
+        arrays
+      ) {
+        if (!Array.isArray(arr)) {
+          continue;
+        }
+
+        const found =
+          arr.find(
+            x =>
+              x &&
+              typeof x.constructor ===
+              "function" &&
+              x.constructor !==
+              Object
+          );
+
+        if (found) {
+          return found.constructor;
+        }
+      }
+    } catch {}
 
     return null;
   }
@@ -937,13 +941,33 @@
     } catch {}
 
     try {
-      bot.gameObject.active =
-        false;
+      if (
+        bot.gameObject
+      ) {
+        bot.gameObject.active =
+          false;
+      }
     } catch {}
 
     try {
-      bot.root.visible =
-        false;
+      if (bot.root) {
+        bot.root.visible =
+          false;
+      }
+    } catch {}
+
+    try {
+      const root =
+        bot.cs2Agent &&
+        bot.cs2Agent.root;
+
+      if (root) {
+        root.visible = false;
+
+        if (root.parent) {
+          root.parent.remove(root);
+        }
+      }
     } catch {}
   }
 
@@ -961,13 +985,29 @@
     } catch {}
 
     try {
-      bot.gameObject.active =
-        true;
+      if (
+        bot.gameObject
+      ) {
+        bot.gameObject.active =
+          true;
+      }
     } catch {}
 
     try {
-      bot.root.visible =
-        true;
+      if (bot.root) {
+        bot.root.visible =
+          true;
+      }
+    } catch {}
+
+    try {
+      const root =
+        bot.cs2Agent &&
+        bot.cs2Agent.root;
+
+      if (root) {
+        root.visible = true;
+      }
     } catch {}
   }
 
@@ -976,13 +1016,17 @@
       getBotManager();
 
     if (!manager) {
-      return;
+      warn(
+        "Bot manager not found."
+      );
+
+      return false;
     }
 
     if (
       State.originalBots.length
     ) {
-      return;
+      return true;
     }
 
     const arrays = [
@@ -992,42 +1036,69 @@
       manager.players
     ];
 
+    let foundArray = false;
+
     for (
-      const arr of arrays
+      const arr of
+      arrays
     ) {
       if (
-        Array.isArray(arr)
+        !Array.isArray(arr)
       ) {
-        for (
-          const bot of arr
-        ) {
-          if (
-            bot &&
-            !bot.__connectionsRemote
-          ) {
-            State.originalBots.push(
-              bot
-            );
-
-            hideBot(bot);
-          }
-        }
-
-        try {
-          arr.length = 0;
-        } catch {}
-
-        break;
+        continue;
       }
+
+      foundArray = true;
+
+      for (
+        const bot of
+        arr.slice()
+      ) {
+        if (
+          bot &&
+          !bot.__connectionsRemote
+        ) {
+          State.originalBots.push(
+            bot
+          );
+
+          hideBot(bot);
+
+          try {
+            bot.alive = false;
+          } catch {}
+        }
+      }
+
+      try {
+        arr.length = 0;
+      } catch {}
+
+      break;
     }
+
+    State.botManager =
+      manager;
 
     State.botConstructor =
       findBotConstructor();
+
+    log(
+      "Bot scan:",
+      State.originalBots.length,
+      "original bots found."
+    );
+
+    if (!foundArray) {
+      warn(
+        "Bot manager found, but no bot array was found."
+      );
+    }
+
+    return true;
   }
 
-  function createRemoteBot(
-    remote
-  ) {
+  function createRemoteBot(remote) {
     if (
       remote.bot ||
       remote.dead
@@ -1035,24 +1106,36 @@
       return;
     }
 
-    prepareBots();
-
     const manager =
       getBotManager();
+
+    if (!manager) {
+      return;
+    }
+
+    if (
+      !State.botConstructor
+    ) {
+      State.botConstructor =
+        findBotConstructor();
+    }
 
     const Constructor =
       State.botConstructor;
 
     if (
-      !manager ||
       typeof Constructor !==
-        "function"
+      "function"
     ) {
+      warn(
+        "Remote bot constructor not found."
+      );
+
       return;
     }
 
     try {
-      let bot;
+      let bot = null;
 
       try {
         bot = new Constructor(
@@ -1064,10 +1147,19 @@
       } catch {
         try {
           bot = new Constructor(
-            State.game
+            State.game,
+            remote.team,
+            remote.name,
+            "normal"
           );
         } catch {
-          bot = null;
+          try {
+            bot = new Constructor(
+              State.game
+            );
+          } catch {
+            bot = null;
+          }
         }
       }
 
@@ -1086,6 +1178,15 @@
 
       try {
         if (
+          typeof bot.spawn ===
+          "function"
+        ) {
+          bot.spawn();
+        }
+      } catch {}
+
+      try {
+        if (
           Array.isArray(
             manager.bots
           )
@@ -1101,6 +1202,22 @@
           manager.agents.push(
             bot
           );
+        } else if (
+          Array.isArray(
+            manager.entities
+          )
+        ) {
+          manager.entities.push(
+            bot
+          );
+        } else if (
+          Array.isArray(
+            manager.players
+          )
+        ) {
+          manager.players.push(
+            bot
+          );
         }
       } catch {}
 
@@ -1111,6 +1228,12 @@
         remote.x,
         remote.y,
         remote.z
+      );
+
+      setBotRotation(
+        bot,
+        remote.yaw,
+        remote.pitch
       );
     } catch (e) {
       warn(
@@ -1131,9 +1254,7 @@
     }
 
     try {
-      if (
-        bot.position
-      ) {
+      if (bot.position) {
         bot.position.x = x;
         bot.position.y = y;
         bot.position.z = z;
@@ -1159,6 +1280,23 @@
     } catch {}
 
     try {
+      if (
+        bot.cs2Agent?.root?.position
+      ) {
+        bot.cs2Agent.root.position.x =
+          x;
+
+        bot.cs2Agent.root.position.y =
+          y;
+
+        bot.cs2Agent.root.position.z =
+          z;
+
+        return;
+      }
+    } catch {}
+
+    try {
       bot.x = x;
       bot.y = y;
       bot.z = z;
@@ -1175,9 +1313,7 @@
     }
 
     try {
-      if (
-        bot.rotation
-      ) {
+      if (bot.rotation) {
         bot.rotation.y =
           yaw;
 
@@ -1250,26 +1386,21 @@
     }
   }
 
-  function killRemote(
-    remote
-  ) {
+  function killRemote(remote) {
     if (!remote.bot) {
       return;
     }
 
     try {
-      remote.bot.health =
-        0;
+      remote.bot.health = 0;
     } catch {}
 
     try {
-      remote.bot.alive =
-        false;
+      remote.bot.alive = false;
     } catch {}
 
     try {
-      remote.bot.dead =
-        true;
+      remote.bot.dead = true;
     } catch {}
 
     const funcs = [
@@ -1281,7 +1412,8 @@
     ];
 
     for (
-      const fn of funcs
+      const fn of
+      funcs
     ) {
       try {
         if (
@@ -1299,9 +1431,7 @@
     );
   }
 
-  function removeRemote(
-    id
-  ) {
+  function removeRemote(id) {
     const remote =
       State.remotes.get(id);
 
@@ -1337,9 +1467,7 @@
                 remote.bot
               );
 
-            if (
-              index >= 0
-            ) {
+            if (index >= 0) {
               arr.splice(
                 index,
                 1
@@ -1350,9 +1478,7 @@
       } catch {}
     }
 
-    State.remotes.delete(
-      id
-    );
+    State.remotes.delete(id);
   }
 
   function clearRemoteBots() {
@@ -1364,6 +1490,39 @@
         hideBot(
           remote.bot
         );
+
+        try {
+          const manager =
+            getBotManager();
+
+          for (
+            const key of [
+              "bots",
+              "agents",
+              "entities",
+              "players"
+            ]
+          ) {
+            const arr =
+              manager?.[key];
+
+            if (
+              Array.isArray(arr)
+            ) {
+              const index =
+                arr.indexOf(
+                  remote.bot
+                );
+
+              if (index >= 0) {
+                arr.splice(
+                  index,
+                  1
+                );
+              }
+            }
+          }
+        } catch {}
       }
     }
 
@@ -1473,6 +1632,52 @@
     }
   }
 
+  function updateScanUI() {
+    const button =
+      State.UI.scanButton;
+
+    const status =
+      State.UI.scanStatus;
+
+    if (!button) {
+      return;
+    }
+
+    if (State.confirmedMatch) {
+      button.textContent =
+        "MATCH SCANNED";
+
+      button.classList.add(
+        "conn-scan-done"
+      );
+
+      button.disabled =
+        true;
+
+      if (status) {
+        status.textContent =
+          "Multiplayer ready";
+      }
+
+      return;
+    }
+
+    button.classList.remove(
+      "conn-scan-done"
+    );
+
+    button.disabled =
+      false;
+
+    button.textContent =
+      "I AM INSIDE A MATCH";
+
+    if (status) {
+      status.textContent =
+        "Enter a match, then scan.";
+    }
+  }
+
   function updateRoomList() {
     const box =
       State.UI.roomList;
@@ -1483,9 +1688,7 @@
 
     box.innerHTML = "";
 
-    if (
-      !State.rooms.length
-    ) {
+    if (!State.rooms.length) {
       const empty =
         document.createElement(
           "div"
@@ -1558,9 +1761,7 @@
       meta.textContent =
         `${room.playerCount || 0}/${(room.ctSlots || 0) + (room.tSlots || 0)} players`;
 
-      if (
-        room.rafit
-      ) {
+      if (room.rafit) {
         const rafit =
           document.createElement(
             "span"
@@ -1577,9 +1778,7 @@
         );
       }
 
-      if (
-        room.professional
-      ) {
+      if (room.professional) {
         const pro =
           document.createElement(
             "span"
@@ -1722,11 +1921,12 @@
     preview.innerHTML = "";
 
     const rows =
-      State.UI.segmentRows
-        || [];
+      State.UI.segmentRows ||
+      [];
 
     for (
-      const row of rows
+      const row of
+      rows
     ) {
       const text =
         row.querySelector(
@@ -1736,7 +1936,8 @@
       const color =
         row.querySelector(
           ".conn-segment-color"
-        )?.value || "#ffffff";
+        )?.value ||
+        "#ffffff";
 
       if (!text.trim()) {
         continue;
@@ -1820,6 +2021,11 @@
     remove.onclick = () => {
       row.remove();
 
+      State.UI.segmentRows =
+        State.UI.segmentRows.filter(
+          x => x !== row
+        );
+
       renderSegmentsPreview();
     };
 
@@ -1854,8 +2060,8 @@
 
   function collectSegments() {
     return (
-      State.UI.segmentRows
-        || []
+      State.UI.segmentRows ||
+      []
     )
       .map(row => ({
         text:
@@ -1880,9 +2086,7 @@
     const segments =
       collectSegments();
 
-    if (
-      !segments.length
-    ) {
+    if (!segments.length) {
       updateStatus(
         "Give the room a name."
       );
@@ -1949,9 +2153,7 @@
     if (
       State.UI.current
     ) {
-      if (
-        State.roomData
-      ) {
+      if (State.roomData) {
         State.UI.current.textContent =
           State.roomData.title ||
           "Room";
@@ -1966,6 +2168,8 @@
     ) {
       renderKickList();
     }
+
+    updateScanUI();
   }
 
   function renderKickList() {
@@ -1994,9 +2198,7 @@
           String(State.id)
       );
 
-    if (
-      !me?.host
-    ) {
+    if (!me?.host) {
       return;
     }
 
@@ -2395,9 +2597,36 @@
         font-weight: 700;
       }
 
+      .conn-btn:hover {
+        filter: brightness(1.08);
+      }
+
       .conn-btn:disabled {
         opacity: .45;
         cursor: default;
+      }
+
+      .conn-scan {
+        width: 100%;
+        margin-top: 9px;
+        padding: 11px 13px;
+        background: #7289da;
+        font-size: 13px;
+      }
+
+      .conn-scan:hover {
+        background: #8298e8;
+      }
+
+      .conn-scan-done {
+        background: #3ba55d !important;
+      }
+
+      .conn-scan-status {
+        margin-top: 6px;
+        color: #7f8696;
+        font-size: 11px;
+        text-align: center;
       }
 
       .conn-small {
@@ -2548,15 +2777,14 @@
         "div"
       );
 
-    title.innerHTML =
-      `
-        <div class="conn-title">
-          Connections
-        </div>
-        <div class="conn-subtitle">
-          Multiplayer
-        </div>
-      `;
+    title.innerHTML = `
+      <div class="conn-title">
+        Connections
+      </div>
+      <div class="conn-subtitle">
+        Multiplayer
+      </div>
+    `;
 
     const close =
       document.createElement(
@@ -2596,12 +2824,11 @@
     profile.className =
       "conn-section";
 
-    profile.innerHTML =
-      `
-        <div class="conn-section-title">
-          PLAYER
-        </div>
-      `;
+    profile.innerHTML = `
+      <div class="conn-section-title">
+        PLAYER
+      </div>
+    `;
 
     const name =
       document.createElement(
@@ -2620,8 +2847,8 @@
     name.onchange = () => {
       State.name =
         name.value.trim()
-          .slice(0, 24)
-        || "Player";
+          .slice(0, 24) ||
+        "Player";
 
       localStorage.setItem(
         "connections_name",
@@ -2637,6 +2864,85 @@
       profile
     );
 
+    const match =
+      document.createElement(
+        "div"
+      );
+
+    match.className =
+      "conn-section";
+
+    match.innerHTML = `
+      <div class="conn-section-title">
+        MATCH
+      </div>
+    `;
+
+    const scanButton =
+      document.createElement(
+        "button"
+      );
+
+    scanButton.className =
+      "conn-btn conn-scan";
+
+    scanButton.textContent =
+      "I AM INSIDE A MATCH";
+
+    const scanStatus =
+      document.createElement(
+        "div"
+      );
+
+    scanStatus.className =
+      "conn-scan-status";
+
+    scanStatus.textContent =
+      "Enter a match, then scan.";
+
+    scanButton.onclick =
+      () => {
+        scanButton.disabled =
+          true;
+
+        scanButton.textContent =
+          "SCANNING...";
+
+        scanStatus.textContent =
+          "Checking game...";
+
+        setTimeout(
+          () => {
+            const success =
+              confirmMatch();
+
+            if (!success) {
+              scanButton.disabled =
+                false;
+
+              scanButton.textContent =
+                "I AM INSIDE A MATCH";
+
+              scanStatus.textContent =
+                "Enter a match first.";
+            }
+          },
+          0
+        );
+      };
+
+    match.appendChild(
+      scanButton
+    );
+
+    match.appendChild(
+      scanStatus
+    );
+
+    panel.appendChild(
+      match
+    );
+
     const create =
       document.createElement(
         "div"
@@ -2645,12 +2951,11 @@
     create.className =
       "conn-section";
 
-    create.innerHTML =
-      `
-        <div class="conn-section-title">
-          CREATE ROOM
-        </div>
-      `;
+    create.innerHTML = `
+      <div class="conn-section-title">
+        CREATE ROOM
+      </div>
+    `;
 
     const segmentBox =
       document.createElement(
@@ -2827,12 +3132,11 @@
     rooms.className =
       "conn-section";
 
-    rooms.innerHTML =
-      `
-        <div class="conn-section-title">
-          ROOMS
-        </div>
-      `;
+    rooms.innerHTML = `
+      <div class="conn-section-title">
+        ROOMS
+      </div>
+    `;
 
     const roomList =
       document.createElement(
@@ -2855,12 +3159,11 @@
     current.className =
       "conn-section";
 
-    current.innerHTML =
-      `
-        <div class="conn-section-title">
-          CURRENT ROOM
-        </div>
-      `;
+    current.innerHTML = `
+      <div class="conn-section-title">
+        CURRENT ROOM
+      </div>
+    `;
 
     const currentName =
       document.createElement(
@@ -2984,6 +3287,12 @@
     State.UI.professional =
       pro;
 
+    State.UI.scanButton =
+      scanButton;
+
+    State.UI.scanStatus =
+      scanStatus;
+
     makePanelDraggable(
       panel,
       header
@@ -3000,23 +3309,75 @@
     );
 
     renderSegmentsPreview();
+
+    updateScanUI();
   }
 
   function confirmMatch() {
     if (
-      !isInsideMatch()
+      State.confirmedMatch
     ) {
+      return true;
+    }
+
+    if (!isInsideMatch()) {
       updateStatus(
         "Enter a match first."
       );
 
-      return;
+      log(
+        "Match scan rejected: not inside a match."
+      );
+
+      return false;
+    }
+
+    const game =
+      getGame();
+
+    if (!game) {
+      updateStatus(
+        "Game engine not found."
+      );
+
+      return false;
+    }
+
+    log(
+      "Match detected. Scanning bot manager..."
+    );
+
+    const manager =
+      getBotManager();
+
+    if (!manager) {
+      updateStatus(
+        "Bot manager not found."
+      );
+
+      warn(
+        "Could not find bot manager."
+      );
+
+      return false;
+    }
+
+    State.botManager =
+      manager;
+
+    const prepared =
+      prepareBots();
+
+    if (!prepared) {
+      updateStatus(
+        "Could not scan bots."
+      );
+
+      return false;
     }
 
     State.confirmedMatch =
       true;
-
-    prepareBots();
 
     startStateLoop();
 
@@ -3024,9 +3385,22 @@
       "Match confirmed."
     );
 
+    updateScanUI();
+
     log(
       "Match confirmed."
     );
+
+    log(
+      "Original bots:",
+      State.originalBots.length
+    );
+
+    log(
+      "Connections multiplayer ready."
+    );
+
+    return true;
   }
 
   function installHotkeys() {
@@ -3044,9 +3418,9 @@
             target &&
             (
               target.tagName ===
-                "INPUT" ||
+              "INPUT" ||
               target.tagName ===
-                "TEXTAREA" ||
+              "TEXTAREA" ||
               target.isContentEditable
             )
           ) {
@@ -3057,15 +3431,6 @@
 
           toggleUI();
         }
-
-        if (
-          event.code ===
-          "KeyC" &&
-          event.ctrlKey &&
-          event.shiftKey
-        ) {
-          confirmMatch();
-        }
       },
       true
     );
@@ -3073,22 +3438,31 @@
 
   function installMonitor() {
     State.monitorTimer =
-      setInterval(() => {
-        if (
-          State.confirmedMatch
-        ) {
+      setInterval(
+        () => {
           if (
-            !isInsideMatch()
+            State.confirmedMatch
           ) {
-            State.confirmedMatch =
-              false;
+            if (
+              !isInsideMatch()
+            ) {
+              State.confirmedMatch =
+                false;
 
-            stopStateLoop();
+              stopStateLoop();
+
+              updateScanUI();
+
+              updateStatus(
+                "Match ended. Scan again."
+              );
+            }
           }
-        }
 
-        updateBots();
-      }, 100);
+          updateBots();
+        },
+        100
+      );
   }
 
   function installDebug() {
@@ -3110,6 +3484,12 @@
 
         confirm:
           confirmMatch,
+
+        scan:
+          confirmMatch,
+
+        isInsideMatch:
+          isInsideMatch,
 
         connect:
           () =>
@@ -3154,6 +3534,9 @@
 
             remotes:
               State.remotes.size,
+
+            originalBots:
+              State.originalBots.length,
 
             roomData:
               State.roomData
