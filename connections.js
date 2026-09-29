@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.0.0
-// @description  clutcher.io multiply players
+// @version      1.1.0
+// @description  clutcher.io multiplayer
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
 // @grant        unsafeWindow
@@ -13,7 +13,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.1.0";
 
   const WS_URL =
     "wss://able-vpn-star-constitutional.trycloudflare.com";
@@ -51,6 +51,8 @@
 
     originalBots: [],
 
+    botArrayKey: null,
+
     dead: false,
 
     localAvatar:
@@ -61,9 +63,10 @@
 
     stateTimer: null,
     monitorTimer: null,
-    botTimer: null,
 
-    lastPosition: null
+    lastPosition: null,
+
+    lastRemoteStateLog: 0
   };
 
   const log = (...a) =>
@@ -75,12 +78,19 @@
   const error = (...a) =>
     console.error("[Connections]", ...a);
 
+  /* =========================================================
+     GAME DISCOVERY
+  ========================================================= */
+
   function getGame() {
-    if (State.game) {
+    if (
+      State.game &&
+      typeof State.game === "object"
+    ) {
       return State.game;
     }
 
-    const w = unsafeWindow;
+    const w = unsafeWindow || window;
 
     const candidates = [
       w.game,
@@ -97,6 +107,12 @@
         typeof game === "object"
       ) {
         State.game = game;
+
+        log(
+          "Game found:",
+          game
+        );
+
         return game;
       }
     }
@@ -197,7 +213,8 @@
       obj.position ||
       obj.pos ||
       obj.transform?.position ||
-      obj.root?.position;
+      obj.root?.position ||
+      obj.cs2Agent?.root?.position;
 
     if (p) {
       return {
@@ -225,7 +242,9 @@
     const r =
       obj.rotation ||
       obj.eulerAngles ||
-      obj.transform?.rotation;
+      obj.transform?.rotation ||
+      obj.root?.rotation ||
+      obj.cs2Agent?.root?.rotation;
 
     if (r) {
       return {
@@ -275,6 +294,10 @@
 
     return true;
   }
+
+  /* =========================================================
+     NETWORK
+  ========================================================= */
 
   function NetworkSend(
     type,
@@ -383,9 +406,13 @@
       };
 
       ws.onerror = () => {
+        State.connected = false;
+
         updateStatus(
           "Connection error"
         );
+
+        updateUI();
       };
 
       ws.onclose = () => {
@@ -425,7 +452,8 @@
         "create_room",
         {
           ...data,
-          name: State.name
+          name: State.name,
+          avatar: State.localAvatar
         }
       );
     },
@@ -470,10 +498,11 @@
       State.leavingRoom = true;
       State.confirmedMatch = false;
 
-      updateScanUI();
-
       stopStateLoop();
+
       clearRemoteBots();
+
+      updateScanUI();
 
       NetworkSend(
         "leave_room"
@@ -500,6 +529,12 @@
             State.id =
               String(msg.id);
           }
+
+          log(
+            "Assigned id:",
+            State.id
+          );
+
           break;
 
         case "hello":
@@ -507,6 +542,7 @@
             State.id =
               String(msg.id);
           }
+
           break;
 
         case "rooms":
@@ -517,10 +553,14 @@
 
           updateRoomList();
           updateUI();
+
           break;
 
         case "room_joined":
-          this.handleRoomJoined(msg);
+          this.handleRoomJoined(
+            msg
+          );
+
           break;
 
         case "roster":
@@ -531,10 +571,12 @@
 
           updateRoomList();
           updateUI();
+
           break;
 
         case "join":
           updateRoomList();
+
           break;
 
         case "leave":
@@ -545,10 +587,12 @@
           }
 
           updateRoomList();
+
           break;
 
         case "host_changed":
           updateRoomList();
+
           break;
 
         case "kicked":
@@ -559,6 +603,7 @@
 
           stopStateLoop();
           clearRemoteBots();
+
           updateScanUI();
 
           updateStatus(
@@ -566,6 +611,7 @@
           );
 
           updateUI();
+
           break;
 
         case "left_room":
@@ -577,6 +623,7 @@
 
           stopStateLoop();
           clearRemoteBots();
+
           updateScanUI();
 
           updateStatus(
@@ -584,10 +631,14 @@
           );
 
           updateUI();
+
           break;
 
         case "state":
-          handleStateMessage(msg);
+          handleStateMessage(
+            msg
+          );
+
           break;
 
         case "rafit_warning":
@@ -597,19 +648,32 @@
             " | RTP " +
             msg.rtp
           );
+
           break;
 
         case "rafit_banned":
           updateStatus(
             "RAFIT: banned."
           );
+
+          State.confirmedMatch =
+            false;
+
+          stopStateLoop();
+
           break;
 
         case "error":
-          handleServerError(msg);
+          handleServerError(
+            msg
+          );
+
           break;
 
         case "pong":
+          break;
+
+        default:
           break;
       }
     },
@@ -621,7 +685,8 @@
         null;
 
       State.roomData =
-        msg.room || null;
+        msg.room ||
+        null;
 
       if (msg.id) {
         State.id =
@@ -632,7 +697,7 @@
       State.leavingRoom = false;
 
       log(
-        "Joined:",
+        "Joined room:",
         State.room
       );
 
@@ -676,7 +741,8 @@
     };
 
     updateStatus(
-      names[code] || code
+      names[code] ||
+      code
     );
 
     warn(
@@ -685,11 +751,19 @@
     );
   }
 
+  /* =========================================================
+     REMOTE STATE
+  ========================================================= */
+
   function handleStateMessage(msg) {
     const list =
       Array.isArray(msg.players)
         ? msg.players
         : [];
+
+    if (!list.length) {
+      return;
+    }
 
     for (const data of list) {
       if (!data?.id) {
@@ -720,11 +794,16 @@
 
           team:
             data.team ||
-            null,
+            "ct",
 
-          x: Number(data.x) || 0,
-          y: Number(data.y) || 0,
-          z: Number(data.z) || 0,
+          x:
+            Number(data.x) || 0,
+
+          y:
+            Number(data.y) || 0,
+
+          z:
+            Number(data.z) || 0,
 
           targetX:
             Number(data.x) || 0,
@@ -763,12 +842,20 @@
             data.avatar ||
             null,
 
-          bot: null
+          bot: null,
+
+          created: false
         };
 
         State.remotes.set(
           id,
           remote
+        );
+
+        log(
+          "New remote player:",
+          remote.name,
+          id
         );
       }
 
@@ -811,13 +898,16 @@
 
       remote.avatar =
         data.avatar ||
+        remote.avatar ||
         null;
 
       if (remote.dead) {
         killRemote(remote);
       } else {
         if (!remote.bot) {
-          createRemoteBot(remote);
+          createRemoteBot(
+            remote
+          );
         }
       }
     }
@@ -825,8 +915,16 @@
     updateBots();
   }
 
+  /* =========================================================
+     BOT MANAGER
+  ========================================================= */
+
   function getBotManager() {
-    if (State.botManager) {
+    if (
+      State.botManager &&
+      typeof State.botManager ===
+      "object"
+    ) {
       return State.botManager;
     }
 
@@ -847,10 +945,7 @@
       game.agents
     ];
 
-    for (
-      const manager of
-      candidates
-    ) {
+    for (const manager of candidates) {
       if (
         manager &&
         typeof manager ===
@@ -866,10 +961,52 @@
     return null;
   }
 
-  function findBotConstructor() {
-    const manager =
-      getBotManager();
+  function getBotArrays(manager) {
+    if (!manager) {
+      return [];
+    }
 
+    const result = [];
+
+    const keys = [
+      "bots",
+      "agents",
+      "entities",
+      "players"
+    ];
+
+    for (const key of keys) {
+      const arr =
+        manager[key];
+
+      if (
+        Array.isArray(arr)
+      ) {
+        result.push({
+          key,
+          arr
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /*
+   * IMPORTANT:
+   *
+   * The old version cleared manager.bots and ONLY THEN
+   * tried to discover the constructor.
+   *
+   * That destroyed the only source of the constructor.
+   *
+   * This function is deliberately called BEFORE
+   * the original bot array gets cleared.
+   */
+
+  function findBotConstructor(
+    manager = getBotManager()
+  ) {
     if (!manager) {
       return null;
     }
@@ -881,48 +1018,89 @@
     ];
 
     for (
-      const c of
+      const Constructor of
       directCandidates
     ) {
       if (
-        typeof c ===
+        typeof Constructor ===
         "function"
       ) {
-        return c;
+        return Constructor;
       }
     }
 
     try {
-      const arrays = [
-        manager.bots,
-        manager.agents,
-        manager.entities,
-        manager.players
-      ];
+      const arrays =
+        getBotArrays(
+          manager
+        );
 
       for (
-        const arr of
-        arrays
+        const item of arrays
       ) {
-        if (!Array.isArray(arr)) {
-          continue;
-        }
+        const arr =
+          item.arr;
 
-        const found =
-          arr.find(
-            x =>
-              x &&
-              typeof x.constructor ===
-              "function" &&
-              x.constructor !==
-              Object
-          );
+        for (
+          const bot of
+          arr
+        ) {
+          if (!bot) {
+            continue;
+          }
 
-        if (found) {
-          return found.constructor;
+          /*
+           * Prefer an actual bot-like object.
+           */
+          const looksLikeBot =
+            bot.team !== undefined ||
+            bot.health !== undefined ||
+            bot.cs2Agent !== undefined ||
+            bot.root !== undefined ||
+            bot.position !== undefined;
+
+          if (!looksLikeBot) {
+            continue;
+          }
+
+          if (
+            typeof bot.constructor ===
+            "function" &&
+            bot.constructor !==
+            Object
+          ) {
+            return bot.constructor;
+          }
         }
       }
-    } catch {}
+
+      /*
+       * Fallback: any non-Object constructor.
+       */
+      for (
+        const item of arrays
+      ) {
+        for (
+          const bot of
+          item.arr
+        ) {
+          if (
+            bot &&
+            typeof bot.constructor ===
+            "function" &&
+            bot.constructor !==
+            Object
+          ) {
+            return bot.constructor;
+          }
+        }
+      }
+    } catch (e) {
+      warn(
+        "Constructor scan failed:",
+        e
+      );
+    }
 
     return null;
   }
@@ -941,9 +1119,7 @@
     } catch {}
 
     try {
-      if (
-        bot.gameObject
-      ) {
+      if (bot.gameObject) {
         bot.gameObject.active =
           false;
       }
@@ -962,11 +1138,19 @@
         bot.cs2Agent.root;
 
       if (root) {
-        root.visible = false;
+        root.visible =
+          false;
+      }
+    } catch {}
 
-        if (root.parent) {
-          root.parent.remove(root);
-        }
+    try {
+      if (
+        typeof bot.setVisible ===
+        "function"
+      ) {
+        bot.setVisible(
+          false
+        );
       }
     } catch {}
   }
@@ -985,9 +1169,7 @@
     } catch {}
 
     try {
-      if (
-        bot.gameObject
-      ) {
+      if (bot.gameObject) {
         bot.gameObject.active =
           true;
       }
@@ -1006,7 +1188,19 @@
         bot.cs2Agent.root;
 
       if (root) {
-        root.visible = true;
+        root.visible =
+          true;
+      }
+    } catch {}
+
+    try {
+      if (
+        typeof bot.setVisible ===
+        "function"
+      ) {
+        bot.setVisible(
+          true
+        );
       }
     } catch {}
   }
@@ -1023,65 +1217,139 @@
       return false;
     }
 
+    State.botManager =
+      manager;
+
+    /*
+     * CRITICAL FIX:
+     *
+     * Capture the constructor BEFORE clearing the array.
+     */
+    if (
+      !State.botConstructor
+    ) {
+      State.botConstructor =
+        findBotConstructor(
+          manager
+        );
+    }
+
+    if (
+      State.botConstructor
+    ) {
+      log(
+        "Remote bot constructor captured:",
+        State.botConstructor.name ||
+        "(anonymous)"
+      );
+    } else {
+      warn(
+        "Could not capture bot constructor before cleanup."
+      );
+    }
+
+    /*
+     * Don't scan the same bots twice.
+     */
     if (
       State.originalBots.length
     ) {
       return true;
     }
 
-    const arrays = [
-      manager.bots,
-      manager.agents,
-      manager.entities,
-      manager.players
-    ];
+    const arrays =
+      getBotArrays(
+        manager
+      );
 
-    let foundArray = false;
+    if (!arrays.length) {
+      warn(
+        "Bot manager found, but no bot array exists."
+      );
+
+      /*
+       * We still allow multiplayer if a constructor
+       * was exposed directly on the manager.
+       */
+      return !!State.botConstructor;
+    }
+
+    /*
+     * Find the actual populated array.
+     */
+    let selected = null;
 
     for (
-      const arr of
-      arrays
+      const item of arrays
     ) {
       if (
-        !Array.isArray(arr)
+        item.arr.length
+      ) {
+        selected = item;
+        break;
+      }
+    }
+
+    /*
+     * If all arrays are empty, keep the captured constructor.
+     */
+    if (!selected) {
+      State.botArrayKey =
+        arrays[0].key;
+
+      log(
+        "Bot arrays exist but are empty."
+      );
+
+      return !!State.botConstructor;
+    }
+
+    State.botArrayKey =
+      selected.key;
+
+    const arr =
+      selected.arr;
+
+    /*
+     * Save and hide every original bot.
+     */
+    for (
+      const bot of
+      arr.slice()
+    ) {
+      if (!bot) {
+        continue;
+      }
+
+      if (
+        bot.__connectionsRemote
       ) {
         continue;
       }
 
-      foundArray = true;
+      State.originalBots.push(
+        bot
+      );
 
-      for (
-        const bot of
-        arr.slice()
-      ) {
-        if (
-          bot &&
-          !bot.__connectionsRemote
-        ) {
-          State.originalBots.push(
-            bot
-          );
-
-          hideBot(bot);
-
-          try {
-            bot.alive = false;
-          } catch {}
-        }
-      }
+      hideBot(bot);
 
       try {
-        arr.length = 0;
+        bot.alive =
+          false;
       } catch {}
-
-      break;
     }
 
-    State.botManager =
-      manager;
-
-    State.botConstructor =
-      findBotConstructor();
+    /*
+     * Remove originals from the active manager.
+     */
+    try {
+      arr.length = 0;
+    } catch (e) {
+      warn(
+        "Could not clear bot array:",
+        e
+      );
+    }
 
     log(
       "Bot scan:",
@@ -1089,19 +1357,212 @@
       "original bots found."
     );
 
-    if (!foundArray) {
-      warn(
-        "Bot manager found, but no bot array was found."
-      );
-    }
+    log(
+      "Remote constructor:",
+      State.botConstructor
+    );
 
     return true;
   }
 
-  function createRemoteBot(remote) {
+  /* =========================================================
+     REMOTE BOT CREATION
+  ========================================================= */
+
+  function addToBotManager(
+    bot
+  ) {
+    const manager =
+      getBotManager();
+
+    if (!manager || !bot) {
+      return false;
+    }
+
+    /*
+     * Prefer the array we used during the scan.
+     */
     if (
-      remote.bot ||
+      State.botArrayKey &&
+      Array.isArray(
+        manager[
+          State.botArrayKey
+        ]
+      )
+    ) {
+      const arr =
+        manager[
+          State.botArrayKey
+        ];
+
+      if (
+        !arr.includes(bot)
+      ) {
+        arr.push(bot);
+      }
+
+      return true;
+    }
+
+    const keys = [
+      "bots",
+      "agents",
+      "entities",
+      "players"
+    ];
+
+    for (
+      const key of keys
+    ) {
+      if (
+        Array.isArray(
+          manager[key]
+        )
+      ) {
+        if (
+          !manager[key].includes(
+            bot
+          )
+        ) {
+          manager[key].push(
+            bot
+          );
+        }
+
+        State.botArrayKey =
+          key;
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function tryConstructBot(
+    Constructor,
+    remote
+  ) {
+    const attempts = [
+      () => new Constructor(
+        State.game,
+        remote.team,
+        remote.name,
+        3
+      ),
+
+      () => new Constructor(
+        State.game,
+        remote.team,
+        remote.name,
+        "normal"
+      ),
+
+      () => new Constructor(
+        State.game,
+        remote.team,
+        remote.name
+      ),
+
+      () => new Constructor(
+        State.game
+      ),
+
+      () => new Constructor()
+    ];
+
+    for (
+      const attempt of
+      attempts
+    ) {
+      try {
+        const bot =
+          attempt();
+
+        if (bot) {
+          return bot;
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  function applyRemoteMetadata(
+    bot,
+    remote
+  ) {
+    if (!bot) {
+      return;
+    }
+
+    try {
+      bot.__connectionsRemote =
+        true;
+    } catch {}
+
+    try {
+      bot.__connectionsId =
+        remote.id;
+    } catch {}
+
+    try {
+      bot.name =
+        remote.name;
+    } catch {}
+
+    try {
+      bot.username =
+        remote.name;
+    } catch {}
+
+    try {
+      bot.team =
+        remote.team;
+    } catch {}
+
+    /*
+     * Keep avatar data on the remote entity.
+     *
+     * This doesn't force a particular player-model
+     * implementation, but allows the game's entity/
+     * avatar code to consume the URL if it exposes one.
+     */
+    if (remote.avatar) {
+      try {
+        bot.avatar =
+          remote.avatar;
+      } catch {}
+
+      try {
+        bot.avatarUrl =
+          remote.avatar;
+      } catch {}
+
+      try {
+        bot.skin =
+          remote.avatar;
+      } catch {}
+
+      try {
+        bot.modelUrl =
+          remote.avatar;
+      } catch {}
+    }
+  }
+
+  function createRemoteBot(
+    remote
+  ) {
+    if (
+      !remote ||
       remote.dead
+    ) {
+      return;
+    }
+
+    if (
+      remote.bot
     ) {
       return;
     }
@@ -1110,14 +1571,24 @@
       getBotManager();
 
     if (!manager) {
+      warn(
+        "Cannot create remote: bot manager missing."
+      );
+
       return;
     }
 
+    /*
+     * If for some reason the constructor was not captured,
+     * try again BEFORE doing anything to the arrays.
+     */
     if (
       !State.botConstructor
     ) {
       State.botConstructor =
-        findBotConstructor();
+        findBotConstructor(
+          manager
+        );
     }
 
     const Constructor =
@@ -1128,120 +1599,117 @@
       "function"
     ) {
       warn(
-        "Remote bot constructor not found."
+        "Remote bot constructor not found for:",
+        remote.name,
+        remote.id
       );
 
       return;
     }
 
-    try {
-      let bot = null;
-
-      try {
-        bot = new Constructor(
-          State.game,
-          remote.team,
-          remote.name,
-          3
-        );
-      } catch {
-        try {
-          bot = new Constructor(
-            State.game,
-            remote.team,
-            remote.name,
-            "normal"
-          );
-        } catch {
-          try {
-            bot = new Constructor(
-              State.game
-            );
-          } catch {
-            bot = null;
-          }
-        }
-      }
-
-      if (!bot) {
-        return;
-      }
-
-      bot.__connectionsRemote =
-        true;
-
-      bot.__connectionsId =
-        remote.id;
-
-      remote.bot =
-        bot;
-
-      try {
-        if (
-          typeof bot.spawn ===
-          "function"
-        ) {
-          bot.spawn();
-        }
-      } catch {}
-
-      try {
-        if (
-          Array.isArray(
-            manager.bots
-          )
-        ) {
-          manager.bots.push(
-            bot
-          );
-        } else if (
-          Array.isArray(
-            manager.agents
-          )
-        ) {
-          manager.agents.push(
-            bot
-          );
-        } else if (
-          Array.isArray(
-            manager.entities
-          )
-        ) {
-          manager.entities.push(
-            bot
-          );
-        } else if (
-          Array.isArray(
-            manager.players
-          )
-        ) {
-          manager.players.push(
-            bot
-          );
-        }
-      } catch {}
-
-      showBot(bot);
-
-      setBotPosition(
-        bot,
-        remote.x,
-        remote.y,
-        remote.z
+    const bot =
+      tryConstructBot(
+        Constructor,
+        remote
       );
 
-      setBotRotation(
-        bot,
-        remote.yaw,
-        remote.pitch
-      );
-    } catch (e) {
+    if (!bot) {
       warn(
-        "Remote bot creation failed:",
-        e
+        "All remote bot constructor attempts failed:",
+        remote.name
       );
+
+      return;
     }
+
+    remote.bot =
+      bot;
+
+    remote.created =
+      true;
+
+    applyRemoteMetadata(
+      bot,
+      remote
+    );
+
+    /*
+     * Some game entities expose spawn().
+     */
+    try {
+      if (
+        typeof bot.spawn ===
+        "function"
+      ) {
+        bot.spawn();
+      }
+    } catch {}
+
+    /*
+     * Some expose init().
+     */
+    try {
+      if (
+        typeof bot.init ===
+        "function"
+      ) {
+        bot.init();
+      }
+    } catch {}
+
+    /*
+     * Add it AFTER construction.
+     */
+    addToBotManager(
+      bot
+    );
+
+    showBot(
+      bot
+    );
+
+    setBotPosition(
+      bot,
+      remote.x,
+      remote.y,
+      remote.z
+    );
+
+    setBotRotation(
+      bot,
+      remote.yaw,
+      remote.pitch
+    );
+
+    try {
+      bot.health =
+        remote.health;
+    } catch {}
+
+    try {
+      bot.alive =
+        true;
+    } catch {}
+
+    try {
+      bot.dead =
+        false;
+    } catch {}
+
+    log(
+      "REMOTE CREATED:",
+      remote.name,
+      remote.id,
+      "pos:",
+      remote.x,
+      remote.y,
+      remote.z
+    );
   }
+
+  /* =========================================================
+     REMOTE TRANSFORM
+  ========================================================= */
 
   function setBotPosition(
     bot,
@@ -1253,11 +1721,25 @@
       return;
     }
 
+    const values = {
+      x,
+      y,
+      z
+    };
+
     try {
-      if (bot.position) {
-        bot.position.x = x;
-        bot.position.y = y;
-        bot.position.z = z;
+      if (
+        bot.position
+      ) {
+        bot.position.x =
+          x;
+
+        bot.position.y =
+          y;
+
+        bot.position.z =
+          z;
+
         return;
       }
     } catch {}
@@ -1297,9 +1779,31 @@
     } catch {}
 
     try {
-      bot.x = x;
-      bot.y = y;
-      bot.z = z;
+      if (
+        bot.root?.position
+      ) {
+        bot.root.position.x =
+          x;
+
+        bot.root.position.y =
+          y;
+
+        bot.root.position.z =
+          z;
+
+        return;
+      }
+    } catch {}
+
+    try {
+      bot.x =
+        values.x;
+
+      bot.y =
+        values.y;
+
+      bot.z =
+        values.z;
     } catch {}
   }
 
@@ -1313,7 +1817,9 @@
     }
 
     try {
-      if (bot.rotation) {
+      if (
+        bot.rotation
+      ) {
         bot.rotation.y =
           yaw;
 
@@ -1325,8 +1831,39 @@
     } catch {}
 
     try {
-      bot.yaw = yaw;
-      bot.pitch = pitch;
+      if (
+        bot.transform?.rotation
+      ) {
+        bot.transform.rotation.y =
+          yaw;
+
+        bot.transform.rotation.x =
+          pitch;
+
+        return;
+      }
+    } catch {}
+
+    try {
+      if (
+        bot.cs2Agent?.root?.rotation
+      ) {
+        bot.cs2Agent.root.rotation.y =
+          yaw;
+
+        bot.cs2Agent.root.rotation.x =
+          pitch;
+
+        return;
+      }
+    } catch {}
+
+    try {
+      bot.yaw =
+        yaw;
+
+      bot.pitch =
+        pitch;
     } catch {}
   }
 
@@ -1336,8 +1873,31 @@
       State.remotes.values()
     ) {
       if (
-        !remote.bot ||
+        !remote
+      ) {
+        continue;
+      }
+
+      if (
         remote.dead
+      ) {
+        continue;
+      }
+
+      /*
+       * If the state arrived before the entity could
+       * be constructed, retry here.
+       */
+      if (
+        !remote.bot
+      ) {
+        createRemoteBot(
+          remote
+        );
+      }
+
+      if (
+        !remote.bot
       ) {
         continue;
       }
@@ -1383,24 +1943,62 @@
         remote.bot.health =
           remote.health;
       } catch {}
+
+      try {
+        remote.bot.alive =
+          true;
+      } catch {}
+
+      /*
+       * Keep avatar metadata updated if the server
+       * changes it after entity creation.
+       */
+      if (remote.avatar) {
+        try {
+          remote.bot.avatar =
+            remote.avatar;
+        } catch {}
+
+        try {
+          remote.bot.avatarUrl =
+            remote.avatar;
+        } catch {}
+
+        try {
+          remote.bot.skin =
+            remote.avatar;
+        } catch {}
+      }
+
+      showBot(
+        remote.bot
+      );
     }
   }
 
-  function killRemote(remote) {
-    if (!remote.bot) {
+  function killRemote(
+    remote
+  ) {
+    if (
+      !remote ||
+      !remote.bot
+    ) {
       return;
     }
 
     try {
-      remote.bot.health = 0;
+      remote.bot.health =
+        0;
     } catch {}
 
     try {
-      remote.bot.alive = false;
+      remote.bot.alive =
+        false;
     } catch {}
 
     try {
-      remote.bot.dead = true;
+      remote.bot.dead =
+        true;
     } catch {}
 
     const funcs = [
@@ -1412,8 +2010,7 @@
     ];
 
     for (
-      const fn of
-      funcs
+      const fn of funcs
     ) {
       try {
         if (
@@ -1421,6 +2018,7 @@
           "function"
         ) {
           remote.bot[fn]();
+
           break;
         }
       } catch {}
@@ -1431,54 +2029,87 @@
     );
   }
 
-  function removeRemote(id) {
+  function removeRemote(
+    id
+  ) {
     const remote =
-      State.remotes.get(id);
+      State.remotes.get(
+        String(id)
+      );
 
     if (!remote) {
       return;
     }
 
-    if (remote.bot) {
-      hideBot(
+    if (
+      remote.bot
+    ) {
+      removeBotFromManager(
         remote.bot
       );
 
-      try {
-        const manager =
-          getBotManager();
-
-        for (
-          const key of [
-            "bots",
-            "agents",
-            "entities",
-            "players"
-          ]
-        ) {
-          const arr =
-            manager?.[key];
-
-          if (
-            Array.isArray(arr)
-          ) {
-            const index =
-              arr.indexOf(
-                remote.bot
-              );
-
-            if (index >= 0) {
-              arr.splice(
-                index,
-                1
-              );
-            }
-          }
-        }
-      } catch {}
+      hideBot(
+        remote.bot
+      );
     }
 
-    State.remotes.delete(id);
+    State.remotes.delete(
+      String(id)
+    );
+
+    log(
+      "Remote removed:",
+      id
+    );
+  }
+
+  function removeBotFromManager(
+    bot
+  ) {
+    if (!bot) {
+      return;
+    }
+
+    const manager =
+      getBotManager();
+
+    if (!manager) {
+      return;
+    }
+
+    const keys = [
+      "bots",
+      "agents",
+      "entities",
+      "players"
+    ];
+
+    for (
+      const key of keys
+    ) {
+      const arr =
+        manager[key];
+
+      if (
+        !Array.isArray(arr)
+      ) {
+        continue;
+      }
+
+      let index;
+
+      while (
+        (
+          index =
+          arr.indexOf(bot)
+        ) >= 0
+      ) {
+        arr.splice(
+          index,
+          1
+        );
+      }
+    }
   }
 
   function clearRemoteBots() {
@@ -1486,61 +2117,88 @@
       const remote of
       State.remotes.values()
     ) {
-      if (remote.bot) {
-        hideBot(
+      if (
+        remote.bot
+      ) {
+        removeBotFromManager(
           remote.bot
         );
 
-        try {
-          const manager =
-            getBotManager();
-
-          for (
-            const key of [
-              "bots",
-              "agents",
-              "entities",
-              "players"
-            ]
-          ) {
-            const arr =
-              manager?.[key];
-
-            if (
-              Array.isArray(arr)
-            ) {
-              const index =
-                arr.indexOf(
-                  remote.bot
-                );
-
-              if (index >= 0) {
-                arr.splice(
-                  index,
-                  1
-                );
-              }
-            }
-          }
-        } catch {}
+        hideBot(
+          remote.bot
+        );
       }
     }
 
     State.remotes.clear();
 
+    /*
+     * Restore original bots when leaving the
+     * multiplayer match/room.
+     */
     if (
       State.originalBots.length
     ) {
-      for (
-        const bot of
-        State.originalBots
+      const manager =
+        getBotManager();
+
+      if (
+        manager &&
+        State.botArrayKey &&
+        Array.isArray(
+          manager[
+            State.botArrayKey
+          ]
+        )
       ) {
-        showBot(bot);
+        const arr =
+          manager[
+            State.botArrayKey
+          ];
+
+        for (
+          const bot of
+          State.originalBots
+        ) {
+          if (
+            !arr.includes(bot)
+          ) {
+            arr.push(
+              bot
+            );
+          }
+
+          showBot(
+            bot
+          );
+
+          try {
+            bot.alive =
+              true;
+          } catch {}
+        }
+      } else {
+        for (
+          const bot of
+          State.originalBots
+        ) {
+          showBot(
+            bot
+          );
+        }
       }
     }
 
     State.originalBots = [];
+
+    log(
+      "Remote bots cleared."
+    );
   }
+
+  /* =========================================================
+     LOCAL STATE
+  ========================================================= */
 
   function sendLocalState() {
     if (
@@ -1561,14 +2219,20 @@
     }
 
     const pos =
-      positionOf(player);
+      positionOf(
+        player
+      );
 
     const rot =
-      rotationOf(player);
+      rotationOf(
+        player
+      );
 
     const alive =
       !State.dead &&
-      getAlive(player);
+      getAlive(
+        player
+      );
 
     const health =
       State.dead
@@ -1579,6 +2243,9 @@
             ? player.health
             : 100
         );
+
+    State.lastPosition =
+      pos;
 
     NetworkSend(
       "state",
@@ -1592,11 +2259,14 @@
           pitch: rot.pitch,
 
           alive,
-          dead: !alive,
+
+          dead:
+            !alive,
 
           health,
 
-          name: State.name,
+          name:
+            State.name,
 
           avatar:
             State.localAvatar
@@ -1617,6 +2287,11 @@
         sendLocalState,
         50
       );
+
+    /*
+     * Send one immediately instead of waiting 50 ms.
+     */
+    sendLocalState();
   }
 
   function stopStateLoop() {
@@ -1632,6 +2307,10 @@
     }
   }
 
+  /* =========================================================
+     MATCH SCAN
+  ========================================================= */
+
   function updateScanUI() {
     const button =
       State.UI.scanButton;
@@ -1643,7 +2322,9 @@
       return;
     }
 
-    if (State.confirmedMatch) {
+    if (
+      State.confirmedMatch
+    ) {
       button.textContent =
         "MATCH SCANNED";
 
@@ -1678,6 +2359,124 @@
     }
   }
 
+  function confirmMatch() {
+    if (
+      State.confirmedMatch
+    ) {
+      return true;
+    }
+
+    if (
+      !isInsideMatch()
+    ) {
+      updateStatus(
+        "Enter a match first."
+      );
+
+      if (
+        State.UI.scanStatus
+      ) {
+        State.UI.scanStatus.textContent =
+          "No active match detected.";
+      }
+
+      log(
+        "Match scan rejected: not inside a match."
+      );
+
+      return false;
+    }
+
+    const game =
+      getGame();
+
+    if (!game) {
+      updateStatus(
+        "Game engine not found."
+      );
+
+      return false;
+    }
+
+    log(
+      "Match detected."
+    );
+
+    log(
+      "Scanning bot manager..."
+    );
+
+    const manager =
+      getBotManager();
+
+    if (!manager) {
+      updateStatus(
+        "Bot manager not found."
+      );
+
+      warn(
+        "Could not find bot manager."
+      );
+
+      return false;
+    }
+
+    State.botManager =
+      manager;
+
+    /*
+     * THIS IS THE IMPORTANT PART:
+     *
+     * prepareBots() now captures the constructor BEFORE
+     * removing the original bots.
+     */
+    const prepared =
+      prepareBots();
+
+    if (!prepared) {
+      updateStatus(
+        "Could not scan bots."
+      );
+
+      return false;
+    }
+
+    State.confirmedMatch =
+      true;
+
+    startStateLoop();
+
+    updateStatus(
+      "Match confirmed."
+    );
+
+    updateScanUI();
+
+    log(
+      "Match confirmed."
+    );
+
+    log(
+      "Original bots:",
+      State.originalBots.length
+    );
+
+    log(
+      "Remote constructor:",
+      State.botConstructor
+    );
+
+    log(
+      "Connections multiplayer ready."
+    );
+
+    return true;
+  }
+
+  /* =========================================================
+     ROOM UI
+  ========================================================= */
+
   function updateRoomList() {
     const box =
       State.UI.roomList;
@@ -1688,7 +2487,9 @@
 
     box.innerHTML = "";
 
-    if (!State.rooms.length) {
+    if (
+      !State.rooms.length
+    ) {
       const empty =
         document.createElement(
           "div"
@@ -1727,27 +2528,44 @@
       title.className =
         "conn-room-title";
 
-      for (
-        const segment of
-        room.segments || []
+      const segments =
+        Array.isArray(
+          room.segments
+        )
+          ? room.segments
+          : [];
+
+      if (
+        segments.length
       ) {
-        const span =
-          document.createElement(
-            "span"
+        for (
+          const segment of
+          segments
+        ) {
+          const span =
+            document.createElement(
+              "span"
+            );
+
+          span.textContent =
+            segment.text ||
+            "";
+
+          span.style.color =
+            segment.color ||
+            "#fff";
+
+          span.style.marginRight =
+            "7px";
+
+          title.appendChild(
+            span
           );
-
-        span.textContent =
-          segment.text;
-
-        span.style.color =
-          segment.color;
-
-        span.style.marginRight =
-          "7px";
-
-        title.appendChild(
-          span
-        );
+        }
+      } else {
+        title.textContent =
+          room.title ||
+          "Room";
       }
 
       const meta =
@@ -1761,37 +2579,41 @@
       meta.textContent =
         `${room.playerCount || 0}/${(room.ctSlots || 0) + (room.tSlots || 0)} players`;
 
-      if (room.rafit) {
-        const rafit =
+      if (
+        room.rafit
+      ) {
+        const r =
           document.createElement(
             "span"
           );
 
-        rafit.className =
+        r.className =
           "conn-room-rafit";
 
-        rafit.textContent =
+        r.textContent =
           "RAFIT";
 
         meta.appendChild(
-          rafit
+          r
         );
       }
 
-      if (room.professional) {
-        const pro =
+      if (
+        room.professional
+      ) {
+        const p =
           document.createElement(
             "span"
           );
 
-        pro.className =
+        p.className =
           "conn-room-pro";
 
-        pro.textContent =
-          "PRO 2000+";
+        p.textContent =
+          "PRO";
 
         meta.appendChild(
-          pro
+          p
         );
       }
 
@@ -1803,55 +2625,40 @@
       players.className =
         "conn-players";
 
-      for (
-        const p of
-        room.players || []
+      if (
+        Array.isArray(
+          room.players
+        )
       ) {
-        const row =
-          document.createElement(
-            "div"
+        for (
+          const player of
+          room.players
+        ) {
+          const row =
+            document.createElement(
+              "div"
+            );
+
+          row.className =
+            "conn-player";
+
+          const name =
+            document.createElement(
+              "span"
+            );
+
+          name.textContent =
+            player.name ||
+            "Player";
+
+          row.appendChild(
+            name
           );
 
-        row.className =
-          "conn-player";
-
-        const left =
-          document.createElement(
-            "span"
+          players.appendChild(
+            row
           );
-
-        left.textContent =
-          (
-            p.host
-              ? "👑 "
-              : ""
-          ) +
-          p.name;
-
-        const rtp =
-          document.createElement(
-            "span"
-          );
-
-        rtp.className =
-          "conn-rtp";
-
-        rtp.textContent =
-          room.rafit
-            ? `${p.rtp} RTP`
-            : "";
-
-        row.appendChild(
-          left
-        );
-
-        row.appendChild(
-          rtp
-        );
-
-        players.appendChild(
-          row
-        );
+        }
       }
 
       const buttons =
@@ -1868,15 +2675,10 @@
         );
 
       join.className =
-        "conn-btn conn-join";
+        "conn-btn";
 
       join.textContent =
-        State.room === room.id
-          ? "JOINED"
-          : "JOIN";
-
-      join.disabled =
-        State.room === room.id;
+        "JOIN";
 
       join.onclick = () => {
         Network.joinRoom(
@@ -1896,9 +2698,13 @@
         meta
       );
 
-      card.appendChild(
-        players
-      );
+      if (
+        players.children.length
+      ) {
+        card.appendChild(
+          players
+        );
+      }
 
       card.appendChild(
         buttons
@@ -1908,268 +2714,6 @@
         card
       );
     }
-  }
-
-  function renderSegmentsPreview() {
-    const preview =
-      State.UI.preview;
-
-    if (!preview) {
-      return;
-    }
-
-    preview.innerHTML = "";
-
-    const rows =
-      State.UI.segmentRows ||
-      [];
-
-    for (
-      const row of
-      rows
-    ) {
-      const text =
-        row.querySelector(
-          ".conn-segment-text"
-        )?.value || "";
-
-      const color =
-        row.querySelector(
-          ".conn-segment-color"
-        )?.value ||
-        "#ffffff";
-
-      if (!text.trim()) {
-        continue;
-      }
-
-      const span =
-        document.createElement(
-          "span"
-        );
-
-      span.textContent =
-        text.trim();
-
-      span.style.color =
-        color;
-
-      span.style.marginRight =
-        "7px";
-
-      preview.appendChild(
-        span
-      );
-    }
-  }
-
-  function addSegment(
-    text = "",
-    color = "#ffffff"
-  ) {
-    const row =
-      document.createElement(
-        "div"
-      );
-
-    row.className =
-      "conn-segment";
-
-    const input =
-      document.createElement(
-        "input"
-      );
-
-    input.className =
-      "conn-segment-text";
-
-    input.placeholder =
-      "Text";
-
-    input.value =
-      text;
-
-    const picker =
-      document.createElement(
-        "input"
-      );
-
-    picker.className =
-      "conn-segment-color";
-
-    picker.type =
-      "color";
-
-    picker.value =
-      /^#[0-9a-fA-F]{6}$/.test(
-        color
-      )
-        ? color
-        : "#ffffff";
-
-    const remove =
-      document.createElement(
-        "button"
-      );
-
-    remove.textContent =
-      "×";
-
-    remove.className =
-      "conn-small";
-
-    remove.onclick = () => {
-      row.remove();
-
-      State.UI.segmentRows =
-        State.UI.segmentRows.filter(
-          x => x !== row
-        );
-
-      renderSegmentsPreview();
-    };
-
-    input.oninput =
-      renderSegmentsPreview;
-
-    picker.oninput =
-      renderSegmentsPreview;
-
-    row.appendChild(
-      input
-    );
-
-    row.appendChild(
-      picker
-    );
-
-    row.appendChild(
-      remove
-    );
-
-    State.UI.segmentBox.appendChild(
-      row
-    );
-
-    State.UI.segmentRows.push(
-      row
-    );
-
-    renderSegmentsPreview();
-  }
-
-  function collectSegments() {
-    return (
-      State.UI.segmentRows ||
-      []
-    )
-      .map(row => ({
-        text:
-          row.querySelector(
-            ".conn-segment-text"
-          )?.value
-            ?.trim() || "",
-
-        color:
-          row.querySelector(
-            ".conn-segment-color"
-          )?.value ||
-          "#ffffff"
-      }))
-      .filter(
-        x =>
-          x.text.length > 0
-      );
-  }
-
-  function createRoomFromUI() {
-    const segments =
-      collectSegments();
-
-    if (!segments.length) {
-      updateStatus(
-        "Give the room a name."
-      );
-
-      return;
-    }
-
-    const ctSlots =
-      Number(
-        State.UI.ctSlots.value
-      ) || 5;
-
-    const tSlots =
-      Number(
-        State.UI.tSlots.value
-      ) || 5;
-
-    Network.createRoom({
-      segments,
-
-      ctSlots,
-
-      tSlots,
-
-      rafit:
-        State.UI.rafit.checked,
-
-      professional:
-        State.UI.professional.checked,
-
-      team: "ct"
-    });
-  }
-
-  function updateStatus(text) {
-    if (
-      State.UI.status
-    ) {
-      State.UI.status.textContent =
-        text;
-    }
-  }
-
-  function updateUI() {
-    updateRoomList();
-
-    const connected =
-      State.connected;
-
-    if (
-      State.UI.connection
-    ) {
-      State.UI.connection.textContent =
-        connected
-          ? "ONLINE"
-          : "OFFLINE";
-
-      State.UI.connection.className =
-        connected
-          ? "conn-online"
-          : "conn-offline";
-    }
-
-    if (
-      State.UI.current
-    ) {
-      if (State.roomData) {
-        State.UI.current.textContent =
-          State.roomData.title ||
-          "Room";
-      } else {
-        State.UI.current.textContent =
-          "No room";
-      }
-    }
-
-    if (
-      State.UI.kickList
-    ) {
-      renderKickList();
-    }
-
-    updateScanUI();
   }
 
   function renderKickList() {
@@ -2227,7 +2771,7 @@
         );
 
       name.textContent =
-        `${player.name} ${State.roomData.rafit ? "(" + player.rtp + " RTP)" : ""}`;
+        `${player.name || "Player"}${State.roomData.rafit ? " (" + (player.rtp || 0) + " RTP)" : ""}`;
 
       const button =
         document.createElement(
@@ -2240,11 +2784,12 @@
       button.textContent =
         "KICK";
 
-      button.onclick = () => {
-        Network.kick(
-          player.id
-        );
-      };
+      button.onclick =
+        () => {
+          Network.kick(
+            player.id
+          );
+        };
 
       row.appendChild(
         name
@@ -2260,26 +2805,289 @@
     }
   }
 
-  function openUI() {
-    State.UI.panel.style.display =
-      "block";
+  function updateStatus(
+    text
+  ) {
+    if (
+      State.UI.status
+    ) {
+      State.UI.status.textContent =
+        text;
+    }
+  }
 
-    updateUI();
+  function updateUI() {
+    updateRoomList();
+
+    if (
+      State.UI.connection
+    ) {
+      State.UI.connection.textContent =
+        State.connected
+          ? "ONLINE"
+          : "OFFLINE";
+
+      State.UI.connection.className =
+        State.connected
+          ? "conn-online"
+          : "conn-offline";
+    }
+
+    if (
+      State.UI.current
+    ) {
+      State.UI.current.textContent =
+        State.roomData
+          ? (
+            State.roomData.title ||
+            "Room"
+          )
+          : "No room";
+    }
+
+    renderKickList();
+
+    updateScanUI();
+  }
+
+  /* =========================================================
+     CREATE ROOM
+  ========================================================= */
+
+  function collectSegments() {
+    return (
+      State.UI.segmentRows ||
+      []
+    )
+      .map(
+        row => ({
+          text:
+            row.querySelector(
+              ".conn-segment-text"
+            )?.value
+              ?.trim() ||
+            "",
+
+          color:
+            row.querySelector(
+              ".conn-segment-color"
+            )?.value ||
+            "#ffffff"
+        })
+      )
+      .filter(
+        x =>
+          x.text.length > 0
+      );
+  }
+
+  function renderSegmentsPreview() {
+    const preview =
+      State.UI.preview;
+
+    if (!preview) {
+      return;
+    }
+
+    preview.innerHTML = "";
+
+    const segments =
+      collectSegments();
+
+    for (
+      const segment of
+      segments
+    ) {
+      const span =
+        document.createElement(
+          "span"
+        );
+
+      span.textContent =
+        segment.text;
+
+      span.style.color =
+        segment.color;
+
+      span.style.marginRight =
+        "7px";
+
+      preview.appendChild(
+        span
+      );
+    }
+  }
+
+  function addSegment(
+    text = "",
+    color = "#ffffff"
+  ) {
+    const box =
+      State.UI.segmentBox;
+
+    if (!box) {
+      return;
+    }
+
+    const row =
+      document.createElement(
+        "div"
+      );
+
+    row.className =
+      "conn-segment";
+
+    const input =
+      document.createElement(
+        "input"
+      );
+
+    input.type =
+      "text";
+
+    input.className =
+      "conn-segment-text";
+
+    input.value =
+      text;
+
+    input.placeholder =
+      "Server name";
+
+    const picker =
+      document.createElement(
+        "input"
+      );
+
+    picker.type =
+      "color";
+
+    picker.className =
+      "conn-segment-color";
+
+    picker.value =
+      color;
+
+    const remove =
+      document.createElement(
+        "button"
+      );
+
+    remove.className =
+      "conn-small";
+
+    remove.textContent =
+      "×";
+
+    remove.onclick =
+      () => {
+        row.remove();
+
+        State.UI.segmentRows =
+          State.UI.segmentRows.filter(
+            x =>
+              x !== row
+          );
+
+        renderSegmentsPreview();
+      };
+
+    input.oninput =
+      renderSegmentsPreview;
+
+    picker.oninput =
+      renderSegmentsPreview;
+
+    row.appendChild(
+      input
+    );
+
+    row.appendChild(
+      picker
+    );
+
+    row.appendChild(
+      remove
+    );
+
+    box.appendChild(
+      row
+    );
+
+    State.UI.segmentRows.push(
+      row
+    );
+
+    renderSegmentsPreview();
+  }
+
+  function createRoomFromUI() {
+    const segments =
+      collectSegments();
+
+    if (!segments.length) {
+      updateStatus(
+        "Give the room a name."
+      );
+
+      return;
+    }
+
+    const ctSlots =
+      Number(
+        State.UI.ctSlots.value
+      ) ||
+      5;
+
+    const tSlots =
+      Number(
+        State.UI.tSlots.value
+      ) ||
+      5;
+
+    Network.createRoom({
+      segments,
+
+      ctSlots,
+
+      tSlots,
+
+      rafit:
+        State.UI.rafit.checked,
+
+      professional:
+        State.UI.professional.checked,
+
+      team:
+        "ct"
+    });
+  }
+
+  /* =========================================================
+     PANEL
+  ========================================================= */
+
+  function toggleUI() {
+    const panel =
+      State.UI.panel;
+
+    if (!panel) {
+      return;
+    }
+
+    panel.style.display =
+      panel.style.display ===
+      "none"
+        ? "block"
+        : "none";
   }
 
   function closeUI() {
-    State.UI.panel.style.display =
-      "none";
-  }
-
-  function toggleUI() {
     if (
-      State.UI.panel.style.display ===
-      "none"
+      State.UI.panel
     ) {
-      openUI();
-    } else {
-      closeUI();
+      State.UI.panel.style.display =
+        "none";
     }
   }
 
@@ -2287,95 +3095,106 @@
     panel,
     handle
   ) {
-    let dragging = false;
-    let startX = 0;
-    let startY = 0;
-    let startLeft = 0;
-    let startTop = 0;
+    let dragging =
+      false;
 
-    const stopDrag = () => {
-      if (!dragging) {
-        return;
-      }
+    let startX =
+      0;
 
-      dragging = false;
+    let startY =
+      0;
 
-      document.body.style.userSelect =
-        "";
+    let startLeft =
+      0;
 
-      document.removeEventListener(
-        "mousemove",
-        onMouseMove
-      );
+    let startTop =
+      0;
 
-      document.removeEventListener(
-        "mouseup",
-        stopDrag
-      );
-    };
+    const stopDrag =
+      () => {
+        dragging =
+          false;
 
-    const onMouseMove = event => {
-      if (!dragging) {
-        return;
-      }
+        document.body.style.userSelect =
+          "";
 
-      const dx =
-        event.clientX - startX;
-
-      const dy =
-        event.clientY - startY;
-
-      let left =
-        startLeft + dx;
-
-      let top =
-        startTop + dy;
-
-      const rect =
-        panel.getBoundingClientRect();
-
-      const margin = 8;
-
-      const maxLeft =
-        window.innerWidth -
-        rect.width -
-        margin;
-
-      const maxTop =
-        window.innerHeight -
-        rect.height -
-        margin;
-
-      left =
-        Math.max(
-          margin,
-          Math.min(
-            left,
-            Math.max(
-              margin,
-              maxLeft
-            )
-          )
+        document.removeEventListener(
+          "mousemove",
+          onMouseMove
         );
 
-      top =
-        Math.max(
-          margin,
-          Math.min(
-            top,
-            Math.max(
-              margin,
-              maxTop
-            )
-          )
+        document.removeEventListener(
+          "mouseup",
+          stopDrag
         );
+      };
 
-      panel.style.left =
-        `${left}px`;
+    const onMouseMove =
+      event => {
+        if (!dragging) {
+          return;
+        }
 
-      panel.style.top =
-        `${top}px`;
-    };
+        let left =
+          startLeft +
+          (
+            event.clientX -
+            startX
+          );
+
+        let top =
+          startTop +
+          (
+            event.clientY -
+            startY
+          );
+
+        const margin =
+          10;
+
+        const rect =
+          panel.getBoundingClientRect();
+
+        const maxLeft =
+          window.innerWidth -
+          rect.width -
+          margin;
+
+        const maxTop =
+          window.innerHeight -
+          rect.height -
+          margin;
+
+        left =
+          Math.max(
+            margin,
+            Math.min(
+              left,
+              Math.max(
+                margin,
+                maxLeft
+              )
+            )
+          );
+
+        top =
+          Math.max(
+            margin,
+            Math.min(
+              top,
+              Math.max(
+                margin,
+                maxTop
+              )
+            )
+          );
+
+        panel.style.left =
+          `${left}px`;
+
+        panel.style.top =
+          `${top}px`;
+      };
 
     handle.addEventListener(
       "mousedown",
@@ -2388,7 +3207,7 @@
 
         if (
           event.target.closest(
-            "button, input, textarea, select, a"
+            "button,input,textarea,select,a"
           )
         ) {
           return;
@@ -2418,7 +3237,8 @@
         startTop =
           rect.top;
 
-        dragging = true;
+        dragging =
+          true;
 
         document.body.style.userSelect =
           "none";
@@ -2492,37 +3312,91 @@
 
       .conn-title {
         font-size: 22px;
-        font-weight: 800;
+        font-weight: 900;
       }
 
       .conn-subtitle {
-        color: #858b9a;
+        color: #777d8b;
         font-size: 12px;
+        margin-top: 2px;
       }
 
       .conn-close {
         margin-left: auto;
-        background: #252833;
+        background: #292c35;
         color: #fff;
         border: 0;
-        border-radius: 8px;
-        padding: 8px 12px;
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
         cursor: pointer;
+        font-size: 20px;
       }
 
       .conn-section {
-        background: #17191f;
-        border: 1px solid #252833;
+        background: #15171d;
+        border: 1px solid #282c36;
         border-radius: 12px;
-        padding: 13px;
-        margin-top: 12px;
+        padding: 12px;
+        margin-bottom: 10px;
       }
 
       .conn-section-title {
+        font-size: 11px;
+        font-weight: 900;
+        color: #888f9e;
+        letter-spacing: .08em;
+        margin-bottom: 9px;
+      }
+
+      .conn-match {
+        background: #11141a;
+        border: 1px solid #303746;
+      }
+
+      .conn-match-title {
+        font-size: 16px;
+        font-weight: 900;
+      }
+
+      .conn-match-description {
+        color: #858c9b;
+        font-size: 12px;
+        line-height: 1.4;
+        margin-top: 5px;
+      }
+
+      .conn-scan {
+        width: 100%;
+        margin-top: 10px;
+        padding: 11px 13px;
+        background: #7289da;
+        color: white;
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
         font-size: 13px;
-        font-weight: 800;
-        margin-bottom: 10px;
-        color: #b9becb;
+        font-weight: 900;
+      }
+
+      .conn-scan:hover {
+        background: #8298e8;
+      }
+
+      .conn-scan:disabled {
+        opacity: .65;
+        cursor: default;
+      }
+
+      .conn-scan-done {
+        background: #3ba55d !important;
+      }
+
+      .conn-scan-status {
+        margin-top: 6px;
+        color: #7f8696;
+        font-size: 11px;
+        text-align: center;
       }
 
       .conn-input {
@@ -2532,32 +3406,45 @@
         border: 1px solid #303440;
         border-radius: 8px;
         padding: 9px;
-        outline: none;
+        margin-bottom: 8px;
       }
 
-      .conn-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
+      .conn-btn {
+        background: #5865f2;
+        color: white;
+        border: 0;
+        border-radius: 8px;
+        padding: 9px 13px;
+        cursor: pointer;
+        font-weight: 700;
       }
 
-      .conn-check {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 9px;
-        color: #c9cdd7;
-        font-size: 13px;
+      .conn-btn:hover {
+        filter: brightness(1.08);
+      }
+
+      .conn-btn:disabled {
+        opacity: .45;
+        cursor: default;
+      }
+
+      .conn-small {
+        background: #292c35;
+        color: #fff;
+        border: 0;
+        border-radius: 7px;
+        padding: 7px 9px;
+        cursor: pointer;
+      }
+
+      .conn-danger {
+        background: #a32d3a;
       }
 
       .conn-segment {
         display: flex;
         gap: 6px;
         margin-bottom: 6px;
-      }
-
-      .conn-segment input[type=text] {
-        flex: 1;
       }
 
       .conn-segment-text {
@@ -2587,59 +3474,14 @@
         font-weight: 800;
       }
 
-      .conn-btn {
-        background: #5865f2;
-        color: white;
-        border: 0;
-        border-radius: 8px;
-        padding: 9px 13px;
-        cursor: pointer;
-        font-weight: 700;
+      .conn-slots {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
       }
 
-      .conn-btn:hover {
-        filter: brightness(1.08);
-      }
-
-      .conn-btn:disabled {
-        opacity: .45;
-        cursor: default;
-      }
-
-      .conn-scan {
-        width: 100%;
-        margin-top: 9px;
-        padding: 11px 13px;
-        background: #7289da;
-        font-size: 13px;
-      }
-
-      .conn-scan:hover {
-        background: #8298e8;
-      }
-
-      .conn-scan-done {
-        background: #3ba55d !important;
-      }
-
-      .conn-scan-status {
-        margin-top: 6px;
-        color: #7f8696;
-        font-size: 11px;
-        text-align: center;
-      }
-
-      .conn-small {
-        background: #292c35;
-        color: #fff;
-        border: 0;
-        border-radius: 7px;
-        padding: 7px 9px;
-        cursor: pointer;
-      }
-
-      .conn-danger {
-        background: #a32d3a;
+      .conn-slot {
+        flex: 1;
       }
 
       .conn-room {
@@ -2691,11 +3533,6 @@
         font-size: 12px;
       }
 
-      .conn-rtp {
-        color: #ff4fd8;
-        font-weight: 800;
-      }
-
       .conn-room-buttons {
         display: flex;
         justify-content: flex-end;
@@ -2738,6 +3575,20 @@
         color: #747a89;
         font-size: 11px;
       }
+
+      .conn-checks {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: #bbb;
+        font-size: 12px;
+      }
+
+      .conn-checks label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
     `);
 
     const panel =
@@ -2767,10 +3618,11 @@
     logo.src =
       RAFIT_LOGO;
 
-    logo.onerror = () => {
-      logo.style.display =
-        "none";
-    };
+    logo.onerror =
+      () => {
+        logo.style.display =
+          "none";
+      };
 
     const title =
       document.createElement(
@@ -2816,53 +3668,9 @@
       header
     );
 
-    const profile =
-      document.createElement(
-        "div"
-      );
-
-    profile.className =
-      "conn-section";
-
-    profile.innerHTML = `
-      <div class="conn-section-title">
-        PLAYER
-      </div>
-    `;
-
-    const name =
-      document.createElement(
-        "input"
-      );
-
-    name.className =
-      "conn-input";
-
-    name.placeholder =
-      "Player name";
-
-    name.value =
-      State.name;
-
-    name.onchange = () => {
-      State.name =
-        name.value.trim()
-          .slice(0, 24) ||
-        "Player";
-
-      localStorage.setItem(
-        "connections_name",
-        State.name
-      );
-    };
-
-    profile.appendChild(
-      name
-    );
-
-    panel.appendChild(
-      profile
-    );
+    /*
+     * MATCH CHECK
+     */
 
     const match =
       document.createElement(
@@ -2870,11 +3678,21 @@
       );
 
     match.className =
-      "conn-section";
+      "conn-section conn-match";
 
     match.innerHTML = `
       <div class="conn-section-title">
-        MATCH
+        MATCH CHECK
+      </div>
+
+      <div class="conn-match-title">
+        Multiplayer Match Scanner
+      </div>
+
+      <div class="conn-match-description">
+        Enter a real match first, then click the button.
+        Connections will scan the game and remove the
+        original bots so remote players can be rendered.
       </div>
     `;
 
@@ -2884,10 +3702,13 @@
       );
 
     scanButton.className =
-      "conn-btn conn-scan";
+      "conn-scan";
 
     scanButton.textContent =
       "I AM INSIDE A MATCH";
+
+    scanButton.onclick =
+      confirmMatch;
 
     const scanStatus =
       document.createElement(
@@ -2900,37 +3721,6 @@
     scanStatus.textContent =
       "Enter a match, then scan.";
 
-    scanButton.onclick =
-      () => {
-        scanButton.disabled =
-          true;
-
-        scanButton.textContent =
-          "SCANNING...";
-
-        scanStatus.textContent =
-          "Checking game...";
-
-        setTimeout(
-          () => {
-            const success =
-              confirmMatch();
-
-            if (!success) {
-              scanButton.disabled =
-                false;
-
-              scanButton.textContent =
-                "I AM INSIDE A MATCH";
-
-              scanStatus.textContent =
-                "Enter a match first.";
-            }
-          },
-          0
-        );
-      };
-
     match.appendChild(
       scanButton
     );
@@ -2942,6 +3732,47 @@
     panel.appendChild(
       match
     );
+
+    /*
+     * CONNECTION
+     */
+
+    const connectionSection =
+      document.createElement(
+        "div"
+      );
+
+    connectionSection.className =
+      "conn-section";
+
+    connectionSection.innerHTML = `
+      <div class="conn-section-title">
+        CONNECTION
+      </div>
+    `;
+
+    const connection =
+      document.createElement(
+        "div"
+      );
+
+    connection.className =
+      "conn-offline";
+
+    connection.textContent =
+      "OFFLINE";
+
+    connectionSection.appendChild(
+      connection
+    );
+
+    panel.appendChild(
+      connectionSection
+    );
+
+    /*
+     * CREATE ROOM
+     */
 
     const create =
       document.createElement(
@@ -2979,10 +3810,15 @@
       "conn-small";
 
     add.textContent =
-      "+ Add color segment";
+      "+ Add segment";
 
-    add.onclick = () =>
-      addSegment();
+    add.onclick =
+      () => {
+        addSegment(
+          "SERVER",
+          "#ffffff"
+        );
+      };
 
     const slots =
       document.createElement(
@@ -2990,37 +3826,41 @@
       );
 
     slots.className =
-      "conn-grid";
+      "conn-slots";
 
     const ct =
       document.createElement(
         "input"
       );
 
-    ct.className =
-      "conn-input";
-
     ct.type =
       "number";
 
-    ct.min = "1";
-    ct.max = "32";
-    ct.value = "5";
+    ct.min =
+      "1";
+
+    ct.value =
+      "5";
+
+    ct.className =
+      "conn-input conn-slot";
 
     const tt =
       document.createElement(
         "input"
       );
 
-    tt.className =
-      "conn-input";
-
     tt.type =
       "number";
 
-    tt.min = "1";
-    tt.max = "32";
-    tt.value = "5";
+    tt.min =
+      "1";
+
+    tt.value =
+      "5";
+
+    tt.className =
+      "conn-input conn-slot";
 
     slots.appendChild(
       ct
@@ -3030,13 +3870,18 @@
       tt
     );
 
+    const checks =
+      document.createElement(
+        "div"
+      );
+
+    checks.className =
+      "conn-checks";
+
     const rafitLabel =
       document.createElement(
         "label"
       );
-
-    rafitLabel.className =
-      "conn-check";
 
     const rafit =
       document.createElement(
@@ -3051,16 +3896,13 @@
     );
 
     rafitLabel.append(
-      " Enable RAFIT"
+      " RAFIT"
     );
 
     const proLabel =
       document.createElement(
         "label"
       );
-
-    proLabel.className =
-      "conn-check";
 
     const pro =
       document.createElement(
@@ -3075,7 +3917,15 @@
     );
 
     proLabel.append(
-      " Professional Server (2000+ RTP)"
+      " Professional"
+    );
+
+    checks.appendChild(
+      rafitLabel
+    );
+
+    checks.appendChild(
+      proLabel
     );
 
     const createButton =
@@ -3109,11 +3959,7 @@
     );
 
     create.appendChild(
-      rafitLabel
-    );
-
-    create.appendChild(
-      proLabel
+      checks
     );
 
     create.appendChild(
@@ -3123,6 +3969,10 @@
     panel.appendChild(
       create
     );
+
+    /*
+     * ROOMS
+     */
 
     const rooms =
       document.createElement(
@@ -3151,6 +4001,10 @@
       rooms
     );
 
+    /*
+     * CURRENT ROOM
+     */
+
     const current =
       document.createElement(
         "div"
@@ -3173,10 +4027,6 @@
     currentName.textContent =
       "No room";
 
-    current.appendChild(
-      currentName
-    );
-
     const leave =
       document.createElement(
         "button"
@@ -3192,11 +4042,8 @@
       "Leave Room";
 
     leave.onclick =
-      () => Network.leaveRoom();
-
-    current.appendChild(
-      leave
-    );
+      () =>
+        Network.leaveRoom();
 
     const kickList =
       document.createElement(
@@ -3207,12 +4054,24 @@
       "10px";
 
     current.appendChild(
+      currentName
+    );
+
+    current.appendChild(
+      leave
+    );
+
+    current.appendChild(
       kickList
     );
 
     panel.appendChild(
       current
     );
+
+    /*
+     * STATUS
+     */
 
     const status =
       document.createElement(
@@ -3261,7 +4120,7 @@
       status;
 
     State.UI.connection =
-      status;
+      connection;
 
     State.UI.kickList =
       kickList;
@@ -3313,128 +4172,48 @@
     updateScanUI();
   }
 
-  function confirmMatch() {
-    if (
-      State.confirmedMatch
-    ) {
-      return true;
-    }
-
-    if (!isInsideMatch()) {
-      updateStatus(
-        "Enter a match first."
-      );
-
-      log(
-        "Match scan rejected: not inside a match."
-      );
-
-      return false;
-    }
-
-    const game =
-      getGame();
-
-    if (!game) {
-      updateStatus(
-        "Game engine not found."
-      );
-
-      return false;
-    }
-
-    log(
-      "Match detected. Scanning bot manager..."
-    );
-
-    const manager =
-      getBotManager();
-
-    if (!manager) {
-      updateStatus(
-        "Bot manager not found."
-      );
-
-      warn(
-        "Could not find bot manager."
-      );
-
-      return false;
-    }
-
-    State.botManager =
-      manager;
-
-    const prepared =
-      prepareBots();
-
-    if (!prepared) {
-      updateStatus(
-        "Could not scan bots."
-      );
-
-      return false;
-    }
-
-    State.confirmedMatch =
-      true;
-
-    startStateLoop();
-
-    updateStatus(
-      "Match confirmed."
-    );
-
-    updateScanUI();
-
-    log(
-      "Match confirmed."
-    );
-
-    log(
-      "Original bots:",
-      State.originalBots.length
-    );
-
-    log(
-      "Connections multiplayer ready."
-    );
-
-    return true;
-  }
+  /* =========================================================
+     HOTKEY
+  ========================================================= */
 
   function installHotkeys() {
     document.addEventListener(
       "keydown",
       event => {
         if (
-          event.code ===
+          event.code !==
           "Backspace"
         ) {
-          const target =
-            event.target;
-
-          if (
-            target &&
-            (
-              target.tagName ===
-              "INPUT" ||
-              target.tagName ===
-              "TEXTAREA" ||
-              target.isContentEditable
-            )
-          ) {
-            return;
-          }
-
-          event.preventDefault();
-
-          toggleUI();
+          return;
         }
+
+        const target =
+          event.target;
+
+        if (
+          target &&
+          (
+            target.tagName ===
+            "INPUT" ||
+            target.tagName ===
+            "TEXTAREA" ||
+            target.isContentEditable
+          )
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+
+        toggleUI();
       },
       true
     );
   }
+
+  /* =========================================================
+     MONITOR
+  ========================================================= */
 
   function installMonitor() {
     State.monitorTimer =
@@ -3449,8 +4228,16 @@
               State.confirmedMatch =
                 false;
 
+              State.dead =
+                false;
+
               stopStateLoop();
 
+              /*
+               * Don't immediately restore bots here if
+               * the game is transitioning between states.
+               * The next explicit scan/room leave handles it.
+               */
               updateScanUI();
 
               updateStatus(
@@ -3465,10 +4252,15 @@
       );
   }
 
+  /* =========================================================
+     DEBUG API
+  ========================================================= */
+
   function installDebug() {
     unsafeWindow.__connections_multiplayer =
       {
-        version: VERSION,
+        version:
+          VERSION,
 
         connected:
           () =>
@@ -3513,15 +4305,20 @@
 
         kick:
           id =>
-            Network.kick(id),
+            Network.kick(
+              id
+            ),
 
         state:
           () => ({
-            id: State.id,
+            id:
+              State.id,
 
-            name: State.name,
+            name:
+              State.name,
 
-            room: State.room,
+            room:
+              State.room,
 
             connected:
               State.connected,
@@ -3538,11 +4335,21 @@
             originalBots:
               State.originalBots.length,
 
+            botConstructor:
+              !!State.botConstructor,
+
+            botArrayKey:
+              State.botArrayKey,
+
             roomData:
               State.roomData
           })
       };
   }
+
+  /* =========================================================
+     BOOT
+  ========================================================= */
 
   function boot() {
     buildUI();
