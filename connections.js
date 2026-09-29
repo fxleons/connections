@@ -8341,10 +8341,7 @@ function clamp(
   /* =========================================================
      INTERPOLATION LOOP
   ========================================================= */
-
-  let interpolationFrame =
-    null;
-
+  
   function interpolationLoop() {
     try {
       updateRemoteInterpolations();
