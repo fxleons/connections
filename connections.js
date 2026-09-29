@@ -7,7 +7,7 @@
 // @match        *://*.clutcher.io/*
 // @grant        unsafeWindow
 // @grant        GM_addStyle
-// @connect      able-vpn-star-constitutional.trycloudflare.com
+// @connect      diagram-candle-carried-forever.trycloudflare.com
 // ==/UserScript==
 
 (() => {
@@ -22,7 +22,7 @@
         VERSION: "1.0.0",
 
         WS_URL:
-            "wss://able-vpn-star-constitutional.trycloudflare.com",
+            "wss://diagram-candle-carried-forever.trycloudflare.com",
 
         SEND_RATE: 50,
 
