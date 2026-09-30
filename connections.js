@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.0.3
+// @version      1.1.0
 // @description  clutcher.io multiply players
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
 // @grant        unsafeWindow
 // @grant        GM_addStyle
-// @connect      diagram-candle-carried-forever.trycloudflare.com
+// @connect      soil-certain-cement-dakota.trycloudflare.com
 // ==/UserScript==
 
 (() => {
@@ -16,8 +16,8 @@
   const PAGE = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
   const CONFIG = {
-    VERSION: "1.0.3",
-    WS_URL: "wss://diagram-candle-carried-forever.trycloudflare.com",
+    VERSION: "1.1.0",
+    WS_URL: "wss://soil-certain-cement-dakota.trycloudflare.com",
     SEND_RATE: 50,
     INTERPOLATION: 100,
     MAX_REMOTE_BOTS: 32,
@@ -50,6 +50,10 @@
     avatarDirty: true,
     lastAvatarSent: 0,
     ui: { open: false },
+  profile: null,
+  roomData: null,
+  cheatTimer: null,
+  cheatSig: "",
     sendTimer: null,
     monitorTimer: null,
     avatarTimer: null,
@@ -96,6 +100,7 @@
     if (!value) return null;
     if (typeof value === "object") return value;
     const id = String(value);
+    if (State.roomData && String(roomId(State.roomData)) === id) return State.roomData;
     return State.rooms.find(r => String(r.id ?? r.roomId ?? "") === id) || null;
   }
 
@@ -407,7 +412,7 @@
         State.connected = true;
         UI.updateStatus("Connected");
         log("WebSocket connected.");
-        this.send({ type: "hello", name: State.name });
+        this.send({ type: "hello", name: State.name, token: getRafitToken() });
         this.send({ type: "list_rooms" });
         startSync();
       };
@@ -487,6 +492,7 @@
           const id = roomId(data.room || data.roomId);
           if (id) State.room = id;
           State.isHost = !!data.isHost;
+          State.roomData = data.room && typeof data.room === "object" ? data.room : null;
           UI.renderRoom();
           log("Joined room:", State.room);
           break;
@@ -541,6 +547,10 @@
             );
             if (index !== -1) State.rooms[index] = data.room;
             else State.rooms.push(data.room);
+            if (State.room && String(id) === String(State.room)) {
+              State.roomData = data.room;
+              UI.renderRoom();
+            }
             UI.renderRooms();
           }
           break;
@@ -570,8 +580,19 @@
 
         case "rafit_profile": {
           if (data.profile) {
-            UI.setMessage(`RTP ${safeNumber(data.profile.rtp, 1000)}`);
+            State.profile = data.profile;
+            UI.renderStatus();
           }
+          if (data.penalty) {
+            UI.setMessage(`RAFIT penalty: ${data.penalty.reason} (RTP ${data.penalty.rtp})`);
+          }
+          break;
+        }
+
+        case "rafit_ban": {
+          UI.setMessage(
+            "RAFIT ban until " + new Date(safeNumber(data.bannedUntil, 0)).toLocaleString()
+          );
           break;
         }
 
@@ -1768,9 +1789,11 @@
    * ROOM MANAGEMENT
    * ========================================================= */
 
-  function createRoom(name, maxPlayers) {
+  function createRoom(opts) {
+    opts = opts || {};
+
     if (!State.connected) {
-      UI.setMessage("Not connected.");
+      UI.setMessage('Not connected. Enter a match and press "I AM INSIDE A MATCH" first.');
       return;
     }
 
@@ -1779,13 +1802,30 @@
       return;
     }
 
-    const roomName = String(name || "").trim().slice(0, 32);
-    const max = clamp(Number(maxPlayers) || 8, 2, 32);
+    const segments = (opts.segments || [])
+      .map(seg => ({
+        text: String(seg.text || "").trim(),
+        color: /^#[0-9a-f]{6}$/i.test(seg.color) ? seg.color : "#ffffff"
+      }))
+      .filter(seg => seg.text);
+
+    if (!segments.length) {
+      UI.setMessage("Enter a room name.");
+      return;
+    }
+
+    const teamSize = clamp(parseInt(opts.teamSize, 10) || 5, 1, 16);
+    const maxPlayers = clamp(parseInt(opts.maxPlayers, 10) || teamSize * 2, 2, 32);
+    const professional = !!opts.professional;
 
     Network.send({
       type: "create_room",
-      name: roomName || "Connections Room",
-      maxPlayers: max
+      name: segments.map(seg => seg.text).join(" ").slice(0, 40),
+      nameSegments: segments,
+      teamSize,
+      maxPlayers,
+      rafit: professional || !!opts.rafit,
+      professional
     });
   }
 
@@ -1824,198 +1864,331 @@
    * UI
    * ========================================================= */
 
+  /* =========================================================
+   * RAFIT IDENTITY + CHEAT SIGNATURE SCAN
+   * ========================================================= */
+
+  function getRafitToken() {
+    try {
+      let t = localStorage.getItem("connections_rafit_token");
+      if (t && /^[a-f0-9]{32,128}$/i.test(t)) return t;
+      const bytes = new Uint8Array(24);
+      (PAGE.crypto || window.crypto).getRandomValues(bytes);
+      t = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+      localStorage.setItem("connections_rafit_token", t);
+      return t;
+    } catch {
+      return null;
+    }
+  }
+
+  function scanCheatMarkers() {
+    const found = [];
+    try {
+      for (const id of ["pp-root", "pp-theme", "pp-hud", "pp-wnum", "pp-wicons"]) {
+        if (document.getElementById(id)) found.push("el:" + id);
+      }
+    } catch {}
+    try {
+      for (const k of ["_ppDd", "_ppAsp"]) if (PAGE[k]) found.push("win:" + k);
+    } catch {}
+    try {
+      const g = getGame();
+      if (g?.player?.update?._pp) found.push("fn:player.update");
+      if (g?.hud?.update?._pp) found.push("fn:hud.update");
+      if (g?.weapons?.fire?._pp) found.push("fn:weapons.fire");
+    } catch {}
+    return found;
+  }
+
+  function startCheatScan() {
+    if (State.cheatTimer) return;
+    State.cheatTimer = setInterval(() => {
+      if (!State.connected || !State.room) return;
+      if (!getRoomObject(State.room)?.rafit) return;
+      const markers = scanCheatMarkers();
+      if (!markers.length) return;
+      const sig = markers.slice().sort().join("|");
+      if (sig === State.cheatSig) return;
+      State.cheatSig = sig;
+      Network.send({ type: "rafit_flag", flag: "cheat_signature", markers });
+    }, 5000);
+  }
+
+  /* =========================================================
+   * UI
+   * ========================================================= */
+
+  function safeColor(c, fallback) {
+    return /^#[0-9a-f]{6}$/i.test(String(c)) ? String(c) : fallback || "#ffffff";
+  }
+
+  function coloredName(segments, fallback) {
+    if (Array.isArray(segments) && segments.length) {
+      return segments
+        .slice(0, 8)
+        .map(s => `<span style="color:${safeColor(s && s.color)}">${escapeHtml(s && s.text)}</span>`)
+        .join(" ");
+    }
+    return escapeHtml(fallback || "Room");
+  }
+
+  function roomBadges(room) {
+    if (!room) return "";
+    return (
+      (room.rafit ? '<span class="cn-badge">RAFIT</span>' : "") +
+      (room.professional ? '<span class="cn-badge pro">PRO</span>' : "")
+    );
+  }
+
   const UI = {
     root: null,
-    serverList: null,
-    roomInfo: null,
-    status: null,
-    message: null,
+    els: {},
+    segments: [{ text: "", color: "#ff3b3b" }],
     chatLog: null,
-    avatarInput: null,
     avatarToggle: null,
     scanButton: null,
-    roomName: null,
-    roomMax: null,
 
     init() {
       if (this.root) return;
 
       const style = document.createElement("style");
       style.textContent = `
-        #connections-root {
-          position: fixed; top: 50%; left: 50%;
-          transform: translate(-50%, -50%);
-          width: 430px; max-height: 86vh; overflow-y: auto;
-          z-index: 2147483647;
-          background: #111318; color: #f4f4f5;
-          border: 1px solid #2c2f38; border-radius: 14px;
-          box-shadow: 0 20px 70px rgba(0,0,0,.65);
-          font-family: Inter, Arial, sans-serif;
-          padding: 16px; display: none; box-sizing: border-box;
-        }
+        #connections-root { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+          width: 760px; max-width: 94vw; max-height: 94vh; overflow-y: auto; z-index: 2147483647;
+          background: #14151a; color: #f4f4f5; border: 1px solid #2a2c35; border-radius: 14px;
+          box-shadow: 0 20px 70px rgba(0,0,0,.65); font-family: Inter, Arial, sans-serif; font-size: 13px;
+          padding: 18px; display: none; box-sizing: border-box; }
         #connections-root * { box-sizing: border-box; }
-        .connections-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-        .connections-title h2 { margin: 0; font-size: 20px; font-weight: 800; }
-        .connections-version { font-size: 11px; color: #737985; }
-        .connections-status { padding: 9px 10px; border-radius: 8px; background: #191c23; color: #9ca3af; font-size: 12px; margin-bottom: 12px; }
-        .connections-section { background: #171a20; border: 1px solid #262a33; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
-        .connections-section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #8f96a3; margin-bottom: 9px; }
-        .connections-row { display: flex; gap: 7px; align-items: center; }
-        .connections-row + .connections-row { margin-top: 7px; }
-        .connections-input { width: 100%; border: 1px solid #30343e; background: #0e1014; color: #fff; border-radius: 8px; padding: 9px 10px; outline: none; }
-        .connections-input:focus { border-color: #7289da; }
-        .connections-button { border: 0; border-radius: 8px; background: #7289da; color: white; padding: 9px 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-        .connections-button:hover { filter: brightness(1.08); }
-        .connections-button.secondary { background: #252932; }
-        .connections-button.danger { background: #7f2932; }
-        .connections-button:disabled { opacity: .5; cursor: default; }
-        .connections-scan { width: 100%; padding: 12px; font-size: 13px; margin-bottom: 10px; }
-        .connections-room { font-size: 13px; color: #d5d7dc; }
-        .connections-room strong { color: #fff; }
-        .connections-room-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px; border-radius: 8px; background: #101218; margin-top: 6px; }
-        .connections-room-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .connections-room-meta { font-size: 10px; color: #747a86; margin-top: 2px; }
-        .connections-message { min-height: 18px; font-size: 11px; color: #8e96a5; margin-top: 8px; }
-        .connections-avatar-preview { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #0b0d11; border: 1px solid #30343e; }
-        .connections-chat { height: 145px; overflow-y: auto; background: #0d0f13; border-radius: 8px; border: 1px solid #272b34; padding: 8px; font-size: 12px; }
-        .connections-chat-line { padding: 4px 0; word-break: break-word; }
-        .connections-chat-name { font-weight: 800; color: #aebcff; }
-        .connections-help { color: #747b88; font-size: 10px; line-height: 1.5; }
+        .cn-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+        .cn-titles { flex: 1; }
+        .cn-title { font-size: 22px; font-weight: 800; line-height: 1.1; }
+        .cn-sub { font-size: 11px; color: #8a8f9c; }
+        .cn-x { width: 32px; height: 32px; border: 0; border-radius: 8px; background: #262832; color: #fff; font-size: 16px; cursor: pointer; }
+        .cn-card { background: #1a1b21; border: 1px solid #2a2c35; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+        .cn-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #c9cbd3; margin-bottom: 10px; }
+        .cn-input { width: 100%; border: 1px solid #30333d; background: #0d0e12; color: #fff; border-radius: 10px; padding: 10px 12px; outline: none; font-size: 13px; }
+        .cn-input:focus { border-color: #7289da; }
+        .cn-btn { border: 0; border-radius: 9px; background: #5b5ff0; color: #fff; padding: 9px 14px; font-weight: 700; cursor: pointer; font-size: 13px; }
+        .cn-btn:hover { filter: brightness(1.1); }
+        .cn-btn:disabled { opacity: .5; cursor: default; }
+        .cn-dark { background: #262832; }
+        .cn-scan { width: 100%; padding: 14px; background: #7088d8; font-size: 13px; letter-spacing: .02em; }
+        .cn-hint { color: #747b88; font-size: 11px; text-align: center; margin-top: 8px; }
+        .cn-hint.left { text-align: left; margin-top: 4px; }
+        .cn-seg { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .cn-color { width: 40px; height: 34px; padding: 0; border: 1px solid #30333d; border-radius: 8px; background: #0d0e12; cursor: pointer; flex: none; }
+        .cn-del { width: 34px; height: 34px; padding: 0; flex: none; }
+        .cn-preview { background: #0d0e12; border-radius: 10px; padding: 12px 14px; font-size: 17px; font-weight: 800; margin: 4px 0 10px; min-height: 44px; }
+        .cn-ph { color: #4e535f; font-weight: 600; }
+        .cn-row2 { display: flex; gap: 10px; margin: 10px 0; }
+        .cn-check { display: flex; align-items: center; gap: 8px; color: #c9cbd3; margin: 6px 0; cursor: pointer; }
+        .cn-rooms-empty { text-align: center; color: #747b88; padding: 26px 0; font-size: 14px; }
+        .cn-room-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #101218; margin-top: 8px; }
+        .cn-rn { font-size: 15px; font-weight: 800; }
+        .cn-badge { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 800; background: #1f3a2b; color: #5fe39a; vertical-align: middle; }
+        .cn-badge.pro { background: #3d3216; color: #f5c451; }
+        .cn-status { font-size: 16px; font-weight: 800; margin-top: 4px; }
+        .cn-status.off { color: #ff5c5c; } .cn-status.on { color: #4ade80; } .cn-status.wait { color: #f5c451; }
+        .cn-msg { min-height: 16px; color: #8e96a5; font-size: 11px; margin-top: 4px; }
+        .cn-more summary { cursor: pointer; font-size: 12px; font-weight: 800; text-transform: uppercase; color: #8f96a3; }
+        .cn-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #0b0d11; border: 1px solid #30343e; }
+        .cn-chat { height: 120px; overflow-y: auto; background: #0d0f13; border-radius: 8px; border: 1px solid #272b34; padding: 8px; font-size: 12px; margin: 8px 0; }
+        .cn-chat-line { padding: 3px 0; word-break: break-word; }
+        .cn-chat-name { font-weight: 800; color: #aebcff; }
+        .cn-flex { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
       `;
       document.head.appendChild(style);
 
       const root = document.createElement("div");
       root.id = "connections-root";
-
       root.innerHTML = `
-        <div class="connections-title">
-          <h2>Connections</h2>
-          <span class="connections-version">v${escapeHtml(CONFIG.VERSION)}</span>
+        <div class="cn-head">
+          <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+            <circle cx="22" cy="22" r="19" fill="none" stroke="#e5383b" stroke-width="3"/>
+            <path d="M14 15l6 6m0-6l-6 6M24 15l6 6m0-6l-6 6" stroke="#e5383b" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M15 29q7 -5 14 0" fill="none" stroke="#e5383b" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M8 8l28 28" stroke="#e5383b" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <div class="cn-titles"><div class="cn-title">Connections</div><div class="cn-sub">Multiplayer</div></div>
+          <button id="cn-close" class="cn-x" title="Close">×</button>
         </div>
 
-        <div id="connections-status" class="connections-status">Disconnected</div>
+        <div class="cn-card">
+          <div class="cn-h">Player</div>
+          <input id="cn-name" class="cn-input" maxlength="24" placeholder="Username" />
+        </div>
 
-        <button id="connections-scan" class="connections-button connections-scan">I AM IN A MATCH</button>
+        <div class="cn-card">
+          <div class="cn-h">Match</div>
+          <button id="cn-scan" class="cn-btn cn-scan">I AM INSIDE A MATCH</button>
+          <div class="cn-hint">Enter a match, then scan.</div>
+        </div>
 
-        <div class="connections-section">
-          <div class="connections-section-title">Player</div>
-          <div class="connections-row">
-            <input id="connections-name" class="connections-input" maxlength="24" placeholder="Username" />
-            <button id="connections-name-save" class="connections-button">Save</button>
+        <div class="cn-card">
+          <div class="cn-h">Create Room</div>
+          <div id="cn-segs"></div>
+          <div id="cn-preview" class="cn-preview"></div>
+          <button id="cn-addseg" class="cn-btn cn-dark">+ Add color segment</button>
+          <div class="cn-row2">
+            <input id="cn-team" class="cn-input" type="number" min="1" max="16" value="5" title="Players per team" />
+            <input id="cn-max" class="cn-input" type="number" min="2" max="32" value="10" title="Max players" />
           </div>
+          <label class="cn-check"><input type="checkbox" id="cn-rafit" /> Enable RAFIT</label>
+          <label class="cn-check"><input type="checkbox" id="cn-pro" /> Professional Server (2000+ RTP)</label>
+          <button id="cn-create" class="cn-btn" style="margin-top:8px;">Create Room</button>
         </div>
 
-        <div class="connections-section">
-          <div class="connections-section-title">Avatar</div>
-          <div class="connections-row">
-            <img id="connections-avatar-preview" class="connections-avatar-preview" alt="" />
-            <input id="connections-avatar-input" type="file" accept="image/*" class="connections-input" />
+        <div class="cn-card">
+          <div class="cn-h">Rooms</div>
+          <div id="cn-rooms"></div>
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">Current Room</div>
+          <div id="cn-room" style="font-size:15px;margin-bottom:10px;">No room</div>
+          <button id="cn-leave" class="cn-btn cn-dark">Leave Room</button>
+        </div>
+
+        <details class="cn-card cn-more">
+          <summary>Avatar &amp; chat</summary>
+          <div class="cn-flex">
+            <img id="cn-avatar-preview" class="cn-avatar" alt="" />
+            <input id="cn-avatar-input" class="cn-input" type="file" accept="image/*" />
           </div>
-          <div class="connections-row">
-            <button id="connections-avatar-toggle" class="connections-button secondary">Avatar: ON</button>
-            <button id="connections-avatar-reset" class="connections-button danger">Reset</button>
+          <div class="cn-flex">
+            <button id="cn-avatar-toggle" class="cn-btn cn-dark">Avatar: ON</button>
+            <button id="cn-avatar-reset" class="cn-btn cn-dark">Reset</button>
           </div>
-        </div>
-
-        <div class="connections-section">
-          <div class="connections-section-title">Current room</div>
-          <div id="connections-room-info" class="connections-room">Not in a room.</div>
-          <div class="connections-row" style="margin-top:8px;">
-            <button id="connections-leave" class="connections-button danger">Leave</button>
+          <div id="cn-chat" class="cn-chat"></div>
+          <div class="cn-flex">
+            <input id="cn-chat-input" class="cn-input" maxlength="300" placeholder="Message..." />
+            <button id="cn-chat-send" class="cn-btn">Send</button>
           </div>
-        </div>
+        </details>
 
-        <div class="connections-section">
-          <div class="connections-section-title">Create room</div>
-          <div class="connections-row">
-            <input id="connections-room-name" class="connections-input" maxlength="32" placeholder="Room name" />
-            <input id="connections-room-max" class="connections-input" type="number" min="2" max="32" value="8" style="max-width:75px;" />
-            <button id="connections-create" class="connections-button">Create</button>
-          </div>
-        </div>
-
-        <div class="connections-section">
-          <div class="connections-section-title">Servers</div>
-          <div id="connections-servers"></div>
-        </div>
-
-        <div class="connections-section">
-          <div class="connections-section-title">Chat</div>
-          <div id="connections-chat" class="connections-chat"></div>
-          <div class="connections-row">
-            <input id="connections-chat-input" class="connections-input" maxlength="300" placeholder="Message..." />
-            <button id="connections-chat-send" class="connections-button">Send</button>
-          </div>
-        </div>
-
-        <div id="connections-message" class="connections-message"></div>
-
-        <div class="connections-help">
-          Backspace: open/close menu.<br>
-          Enter a match first, then press "I AM IN A MATCH".
-        </div>
+        <div id="cn-status" class="cn-status off">OFFLINE</div>
+        <div class="cn-hint left">Backspace = open/close</div>
+        <div id="cn-msg" class="cn-msg"></div>
       `;
-
       document.body.appendChild(root);
-
       this.root = root;
-      this.serverList = root.querySelector("#connections-servers");
-      this.roomInfo = root.querySelector("#connections-room-info");
-      this.status = root.querySelector("#connections-status");
-      this.message = root.querySelector("#connections-message");
-      this.chatLog = root.querySelector("#connections-chat");
-      this.avatarInput = root.querySelector("#connections-avatar-input");
-      this.avatarToggle = root.querySelector("#connections-avatar-toggle");
-      this.scanButton = root.querySelector("#connections-scan");
-      this.roomName = root.querySelector("#connections-room-name");
-      this.roomMax = root.querySelector("#connections-room-max");
 
-      const nameInput = root.querySelector("#connections-name");
-      nameInput.value = State.name;
+      const $ = s => root.querySelector(s);
+      this.els = {
+        status: $("#cn-status"), msg: $("#cn-msg"), scan: $("#cn-scan"), name: $("#cn-name"),
+        segs: $("#cn-segs"), preview: $("#cn-preview"), add: $("#cn-addseg"),
+        team: $("#cn-team"), max: $("#cn-max"), rafit: $("#cn-rafit"), pro: $("#cn-pro"),
+        rooms: $("#cn-rooms"), room: $("#cn-room"), chat: $("#cn-chat"),
+        avatarToggle: $("#cn-avatar-toggle"), avatarPreview: $("#cn-avatar-preview"), avatarInput: $("#cn-avatar-input")
+      };
+      this.chatLog = this.els.chat;
+      this.avatarToggle = this.els.avatarToggle;
+      this.scanButton = this.els.scan;
 
-      root.querySelector("#connections-name-save").addEventListener("click", () => {
-        const value = String(nameInput.value || "").trim().slice(0, 24);
-        if (!value) return;
+      this.els.name.value = State.name;
+      const saveName = () => {
+        const value = String(this.els.name.value || "").trim().slice(0, 24);
+        if (!value || value === State.name) return;
         State.name = value;
         try { localStorage.setItem("connections_player_name", value); } catch {}
-        UI.setMessage("Username saved.");
+        Network.send({ type: "hello", name: value });
+        this.setMessage("Username saved.");
+      };
+      this.els.name.addEventListener("change", saveName);
+      this.els.name.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); saveName(); } });
+
+      $("#cn-close").addEventListener("click", () => this.toggle());
+      this.els.scan.addEventListener("click", confirmMatch);
+
+      this.els.add.addEventListener("click", () => {
+        if (this.segments.length >= 6) return;
+        this.segments.push({ text: "", color: "#ff4fd8" });
+        this.renderSegments();
       });
 
-      this.scanButton.addEventListener("click", confirmMatch);
-
-      this.avatarInput.addEventListener("change", event => {
-        const file = event.target?.files?.[0];
-        Avatar.setFile(file);
+      this.els.pro.addEventListener("change", () => {
+        if (this.els.pro.checked) this.els.rafit.checked = true;
+        this.els.rafit.disabled = this.els.pro.checked;
       });
 
-      this.avatarToggle.addEventListener("click", () => Avatar.toggle());
-
-      root.querySelector("#connections-avatar-reset").addEventListener("click", () => Avatar.reset());
-
-      root.querySelector("#connections-create").addEventListener("click", () => {
-        createRoom(this.roomName.value, this.roomMax.value);
+      $("#cn-create").addEventListener("click", () => {
+        createRoom({
+          segments: this.segments,
+          teamSize: this.els.team.value,
+          maxPlayers: this.els.max.value,
+          rafit: this.els.rafit.checked,
+          professional: this.els.pro.checked
+        });
       });
 
-      root.querySelector("#connections-leave").addEventListener("click", leaveRoom);
+      $("#cn-leave").addEventListener("click", leaveRoom);
 
-      root.querySelector("#connections-chat-send").addEventListener("click", () => {
-        const input = root.querySelector("#connections-chat-input");
-        Chat.send(input.value);
-        input.value = "";
+      this.els.rooms.addEventListener("click", e => {
+        const b = e.target.closest("[data-join-room]");
+        if (b) joinRoom(b.getAttribute("data-join-room"));
       });
 
-      root.querySelector("#connections-chat-input").addEventListener("keydown", event => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          const input = event.currentTarget;
-          Chat.send(input.value);
-          input.value = "";
-        }
-      });
+      this.els.avatarInput.addEventListener("change", e => Avatar.setFile(e.target?.files?.[0]));
+      this.els.avatarToggle.addEventListener("click", () => Avatar.toggle());
+      $("#cn-avatar-reset").addEventListener("click", () => Avatar.reset());
 
+      const chatInput = $("#cn-chat-input");
+      const sendChat = () => { Chat.send(chatInput.value); chatInput.value = ""; };
+      $("#cn-chat-send").addEventListener("click", sendChat);
+      chatInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); sendChat(); } });
+
+      this.renderSegments();
       this.updateAvatarControls();
       this.renderRooms();
       this.renderRoom();
+      this.renderStatus();
+    },
+
+    renderSegments() {
+      const wrap = this.els.segs;
+      wrap.innerHTML = "";
+
+      this.segments.forEach((seg, i) => {
+        const row = document.createElement("div");
+        row.className = "cn-seg";
+
+        const text = document.createElement("input");
+        text.className = "cn-input";
+        text.maxLength = 32;
+        text.placeholder = i === 0 ? "Room name" : "Another color segment";
+        text.value = seg.text;
+        text.addEventListener("input", () => { seg.text = text.value; this.renderPreview(); });
+
+        const color = document.createElement("input");
+        color.type = "color";
+        color.className = "cn-color";
+        color.value = safeColor(seg.color);
+        color.addEventListener("input", () => { seg.color = color.value; this.renderPreview(); });
+
+        const del = document.createElement("button");
+        del.className = "cn-btn cn-dark cn-del";
+        del.textContent = "×";
+        del.title = "Remove segment";
+        del.addEventListener("click", () => {
+          if (this.segments.length > 1) this.segments.splice(i, 1);
+          else seg.text = "";
+          this.renderSegments();
+        });
+
+        row.append(text, color, del);
+        wrap.appendChild(row);
+      });
+
+      this.els.add.disabled = this.segments.length >= 6;
+      this.renderPreview();
+    },
+
+    renderPreview() {
+      const parts = this.segments
+        .filter(s => String(s.text).trim())
+        .map(s => `<span style="color:${safeColor(s.color)}">${escapeHtml(String(s.text).trim())}</span>`);
+      this.els.preview.innerHTML = parts.length ? parts.join(" ") : '<span class="cn-ph">Room name preview</span>';
     },
 
     toggle() {
@@ -2026,107 +2199,106 @@
 
     setScanState(scanning) {
       this.init();
-      if (scanning) {
-        this.scanButton.disabled = true;
-        this.scanButton.textContent = "SCANNING...";
-      } else {
-        this.scanButton.disabled = false;
-        this.scanButton.textContent = State.confirmedMatch ? "MATCH CONFIRMED" : "I AM IN A MATCH";
+      this.els.scan.disabled = scanning || State.confirmedMatch;
+      this.els.scan.textContent = scanning
+        ? "SCANNING..."
+        : State.confirmedMatch
+          ? "MATCH CONFIRMED"
+          : "I AM INSIDE A MATCH";
+      if (!scanning && !State.confirmedMatch) this.els.scan.disabled = false;
+    },
+
+    renderStatus() {
+      if (!this.els.status) return;
+      let text = "OFFLINE";
+      let cls = "off";
+      if (State.connected) {
+        text = "ONLINE";
+        cls = "on";
+        if (State.profile) text += " · RTP " + safeNumber(State.profile.rtp, 1000);
+      } else if (State.connecting) {
+        text = "CONNECTING…";
+        cls = "wait";
       }
+      this.els.status.textContent = text;
+      this.els.status.className = "cn-status " + cls;
     },
 
     updateStatus(text) {
       this.init();
-      this.status.textContent = String(text || "");
+      if (!/^(Connected|Connecting\.\.\.|Disconnected)$/.test(String(text))) this.setMessage(text);
+      this.renderStatus();
     },
 
     setMessage(text) {
       this.init();
-      this.message.textContent = String(text || "");
+      this.els.msg.textContent = String(text || "");
     },
 
     updateAvatarControls() {
-      if (!this.avatarToggle) return;
-
-      this.avatarToggle.textContent = `Avatar: ${State.avatarEnabled ? "ON" : "OFF"}`;
-
-      const preview = this.root.querySelector("#connections-avatar-preview");
-      if (preview) {
-        if (State.avatar && State.avatarEnabled) preview.src = State.avatar;
-        else preview.removeAttribute("src");
-      }
+      if (!this.els.avatarToggle) return;
+      this.els.avatarToggle.textContent = `Avatar: ${State.avatarEnabled ? "ON" : "OFF"}`;
+      const p = this.els.avatarPreview;
+      if (State.avatar && State.avatarEnabled) p.src = State.avatar;
+      else p.removeAttribute("src");
     },
 
     renderRooms() {
-      if (!this.serverList) return;
+      if (!this.els.rooms) return;
 
       if (!State.rooms.length) {
-        this.serverList.innerHTML = `<div class="connections-help">No rooms available.</div>`;
+        this.els.rooms.innerHTML = '<div class="cn-rooms-empty">No rooms yet. Create the first one.</div>';
         return;
       }
 
-      this.serverList.innerHTML = State.rooms
+      this.els.rooms.innerHTML = State.rooms
         .map(room => {
           const id = room.id ?? room.roomId ?? "";
-          const name = room.name ?? "Room";
-          const players = room.players ?? room.count ?? 0;
-          const max = room.maxPlayers ?? 0;
-
+          const here = State.room && String(State.room) === String(id);
+          const meta =
+            `${escapeHtml(room.players ?? room.count ?? 0)}/${escapeHtml(room.maxPlayers ?? 0)}` +
+            (room.teamSize ? ` · ${escapeHtml(room.teamSize)} per team` : "");
           return `
-            <div class="connections-room-item">
-              <div class="connections-room-name">
-                <div>${escapeHtml(name)}</div>
-                <div class="connections-room-meta">${escapeHtml(players)}/${escapeHtml(max)}</div>
+            <div class="cn-room-item">
+              <div>
+                <div class="cn-rn">${coloredName(room.nameSegments, room.name)}${roomBadges(room)}</div>
+                <div class="cn-hint left">${meta}</div>
               </div>
-              <button class="connections-button" data-join-room="${escapeHtml(id)}">Join</button>
-            </div>
-          `;
+              <button class="cn-btn" data-join-room="${escapeHtml(id)}" ${here ? "disabled" : ""}>${here ? "Joined" : "Join"}</button>
+            </div>`;
         })
         .join("");
-
-      this.serverList.querySelectorAll("[data-join-room]").forEach(button => {
-        button.addEventListener("click", () => {
-          joinRoom(button.getAttribute("data-join-room"));
-        });
-      });
     },
 
     renderRoom() {
-      if (!this.roomInfo) return;
+      if (!this.els.room) return;
 
       if (!State.room) {
-        this.roomInfo.innerHTML = "Not in a room.";
+        this.els.room.textContent = "No room";
         return;
       }
 
       const room = getRoomObject(State.room);
-      const roomName = room?.name || State.room;
       const count = room?.players ?? room?.count ?? State.remotes.size + 1;
       const max = room?.maxPlayers ?? "?";
+      const team = room?.teamSize ? ` · ${escapeHtml(room.teamSize)} per team` : "";
 
-      this.roomInfo.innerHTML = `
-        <strong>${escapeHtml(roomName)}</strong><br>
-        ID: ${escapeHtml(State.room)}<br>
-        Players: ${escapeHtml(count)}/${escapeHtml(max)}
-      `;
+      this.els.room.innerHTML =
+        `<div class="cn-rn">${coloredName(room?.nameSegments, room?.name || State.room)}${roomBadges(room)}</div>` +
+        `<div class="cn-hint left">Players ${escapeHtml(count)}/${escapeHtml(max)}${team}</div>`;
     },
 
     addChatMessage(data) {
       if (!this.chatLog) return;
 
-      const name = data.name || data.playerName || "Player";
-      const message = data.message || "";
-
       const line = document.createElement("div");
-      line.className = "connections-chat-line";
-      line.innerHTML = `<span class="connections-chat-name">${escapeHtml(name)}</span>: ${escapeHtml(message)}`;
-
+      line.className = "cn-chat-line";
+      line.innerHTML =
+        `<span class="cn-chat-name">${escapeHtml(data.name || data.playerName || "Player")}</span>: ` +
+        escapeHtml(data.message || "");
       this.chatLog.appendChild(line);
 
-      while (this.chatLog.children.length > 100) {
-        this.chatLog.firstChild?.remove();
-      }
-
+      while (this.chatLog.children.length > 100) this.chatLog.firstChild?.remove();
       this.chatLog.scrollTop = this.chatLog.scrollHeight;
     }
   };
@@ -2218,6 +2390,7 @@
         leaveRoom,
         scanEngine,
         sendLocalState,
+        scanCheatMarkers,
         debug() {
           return {
             version: CONFIG.VERSION,
@@ -2248,6 +2421,7 @@
     installVisibilityHooks();
     startMonitor();
     startHeartbeat();
+    startCheatScan();
     installDebugAPI();
 
     State.game = getGame();
