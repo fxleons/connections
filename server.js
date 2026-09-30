@@ -3,1687 +3,1248 @@
 const http = require("http");
 const WebSocket = require("ws");
 
-let RAFIT = null;
+const HTTP_PORT = Number(process.env.PORT || 3000);
+const WS_PORT = HTTP_PORT;
 
-try {
-    RAFIT = require("./rafit.js");
-    console.log("[Connections] RAFIT loaded.");
-} catch (e) {
-    console.warn(
-        "[Connections] RAFIT unavailable:",
-        e.message
-    );
-}
-
-const HOST = "0.0.0.0";
-const PORT = Number(
-    process.env.PORT || 3000
-);
-
-const MAX_ROOMS = 100;
-const DEFAULT_MAX_PLAYERS = 8;
-const HARD_MAX_PLAYERS = 32;
+const MAX_STATE_RATE = 20;
+const MAX_CHAT_LENGTH = 300;
+const MAX_NAME_LENGTH = 24;
+const MAX_ROOM_NAME_LENGTH = 40;
+const MAX_PLAYERS_HARD_LIMIT = 32;
+const ROOM_TIMEOUT = 30 * 60 * 1000;
+const CLIENT_TIMEOUT = 35 * 1000;
 
 const rooms = new Map();
 const clients = new Map();
 
-let nextClientId = 1;
-let nextRoomId = 1;
+let nextClientNumber = 1;
+let nextRoomNumber = 1;
 
-function log() {
-    console.log(
-        "[Connections]",
-        ...arguments
-    );
+function now() {
+    return Date.now();
 }
 
-function warn() {
-    console.warn(
-        "[Connections]",
-        ...arguments
-    );
+function makeId(prefix) {
+    return prefix + "_" + now().toString(36) + "_" + Math.random().toString(36).slice(2, 9);
 }
 
 function makeClientId() {
-    const id =
-        "player_" +
-        Date.now().toString(36) +
-        "_" +
-        nextClientId.toString(36);
-
-    nextClientId++;
-
-    return id;
+    return "p_" + nextClientNumber++ + "_" + Math.random().toString(36).slice(2, 7);
 }
 
 function makeRoomId() {
-    const id =
-        "room_" +
-        Date.now().toString(36) +
-        "_" +
-        nextRoomId.toString(36);
-
-    nextRoomId++;
-
-    return id;
+    return "room_" + nextRoomNumber++ + "_" + Math.random().toString(36).slice(2, 7);
 }
 
-function cleanName(name) {
-    if (
-        typeof name !==
-        "string"
-    ) {
-        return "Player";
+function cleanString(value, fallback, maxLength) {
+    if (typeof value !== "string") {
+        return fallback;
     }
 
-    name =
-        name
-            .replace(/[\u0000-\u001f\u007f]/g, "")
-            .trim()
-            .slice(0, 24);
+    value = value.replace(/\s+/g, " ").trim();
 
-    return name || "Player";
+    if (!value) {
+        return fallback;
+    }
+
+    if (value.length > maxLength) {
+        value = value.slice(0, maxLength);
+    }
+
+    return value;
 }
 
-function cleanRoomName(name) {
-    if (
-        typeof name !==
-        "string"
-    ) {
-        return "Connections Room";
-    }
-
-    name =
-        name
-            .replace(/[\u0000-\u001f\u007f]/g, "")
-            .trim()
-            .slice(0, 40);
-
-    return name || "Connections Room";
+function safeNumber(value, fallback) {
+    return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
-function cleanAvatar(avatar) {
-    if (
-        typeof avatar !==
-        "string"
-    ) {
-        return null;
-    }
-
-    if (
-        !avatar.startsWith(
-            "data:image/"
-        )
-    ) {
-        return null;
-    }
-
-    if (
-        avatar.length >
-        1000000
-    ) {
-        return null;
-    }
-
-    return avatar;
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
 }
 
-function number(value) {
-    const n =
-        Number(value);
-
-    if (
-        !Number.isFinite(n)
-    ) {
-        return 0;
-    }
-
-    return Math.max(
-        -1000000,
-        Math.min(
-            1000000,
-            n
-        )
-    );
-}
-
-function cleanState(state) {
-    if (
-        !state ||
-        typeof state !==
-        "object"
-    ) {
-        return {
-            x: 0,
-            y: 0,
-            z: 0,
-            yaw: 0,
-            pitch: 0,
-            alive: true,
-            team: "CT",
-            name: "Player"
-        };
-    }
-
-    return {
-        x: number(state.x),
-        y: number(state.y),
-        z: number(state.z),
-
-        yaw: number(
-            state.yaw
-        ),
-
-        pitch: number(
-            state.pitch
-        ),
-
-        alive:
-            state.alive !== false,
-
-        team:
-            state.team === "T"
-                ? "T"
-                : "CT",
-
-        name:
-            cleanName(
-                state.name
-            ),
-
-        avatar:
-            cleanAvatar(
-                state.avatar
-            )
-    };
-}
-
-function safeSend(
-    ws,
-    packet
-) {
-    if (
-        !ws ||
-        ws.readyState !==
-        WebSocket.OPEN
-    ) {
+function jsonSend(ws, packet) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
         return false;
     }
 
     try {
-        ws.send(
-            JSON.stringify(packet)
-        );
-
+        ws.send(JSON.stringify(packet));
         return true;
-    } catch (e) {
-        warn(
-            "send failed:",
-            e.message
-        );
-
+    } catch (err) {
         return false;
     }
 }
 
-function broadcast(
-    room,
-    packet,
-    exceptId
-) {
+function sendClient(client, packet) {
+    if (!client) {
+        return false;
+    }
+
+    return jsonSend(client.ws, packet);
+}
+
+function broadcastRoom(room, packet, exceptId) {
     if (!room) {
         return;
     }
 
-    for (
-        const id of
-        room.players
-    ) {
-        if (
-            exceptId &&
-            String(id) ===
-            String(exceptId)
-        ) {
-            continue;
+    room.players.forEach(function (playerId) {
+        if (exceptId && playerId === exceptId) {
+            return;
         }
 
-        const client =
-            clients.get(
-                String(id)
-            );
+        const client = clients.get(playerId);
 
         if (client) {
-            safeSend(
-                client.ws,
-                packet
-            );
+            sendClient(client, packet);
         }
-    }
+    });
 }
 
-function broadcastAll(
-    packet
-) {
-    for (
-        const client of
-        clients.values()
-    ) {
-        safeSend(
-            client.ws,
-            packet
-        );
-    }
+function broadcastAll(packet) {
+    clients.forEach(function (client) {
+        sendClient(client, packet);
+    });
 }
 
-function publicClient(
-    client
-) {
+function roomInfo(room) {
+    if (!room) {
+        return null;
+    }
+
+    return {
+        id: room.id,
+        roomId: room.id,
+        name: room.name,
+        host: room.host,
+        maxPlayers: room.maxPlayers,
+        players: room.players.size,
+        playerCount: room.players.size,
+        createdAt: room.createdAt,
+        phase: room.phase,
+        round: room.round,
+        roundStartedAt: room.roundStartedAt,
+        roundEndsAt: room.roundEndsAt
+    };
+}
+
+function playerInfo(client) {
     if (!client) {
         return null;
     }
 
     return {
         id: client.id,
-
-        name:
-            client.name,
-
-        avatar:
-            client.avatar,
-
-        team:
-            client.state.team,
-
-        state: {
-            x:
-                client.state.x,
-
-            y:
-                client.state.y,
-
-            z:
-                client.state.z,
-
-            yaw:
-                client.state.yaw,
-
-            pitch:
-                client.state.pitch,
-
-            alive:
-                client.state.alive,
-
-            team:
-                client.state.team,
-
-            name:
-                client.name,
-
-            avatar:
-                client.avatar
-        }
+        name: client.name,
+        room: client.room,
+        avatar: client.avatar,
+        avatarEnabled: client.avatarEnabled,
+        state: client.state,
+        headBoost: client.headBoost,
+        musicKit: client.musicKit
     };
 }
 
-function publicRoom(
-    room
-) {
-    if (!room) {
+function publicState(client) {
+    if (!client) {
         return null;
     }
+
+    const state = client.state || {};
 
     return {
-        id:
-            room.id,
+        id: client.id,
 
-        roomId:
-            room.id,
+        x: safeNumber(state.x, 0),
+        y: safeNumber(state.y, 0),
+        z: safeNumber(state.z, 0),
 
-        name:
-            room.name,
+        yaw: safeNumber(state.yaw, 0),
+        pitch: safeNumber(state.pitch, 0),
 
-        host:
-            room.host,
+        vx: safeNumber(state.vx, 0),
+        vy: safeNumber(state.vy, 0),
+        vz: safeNumber(state.vz, 0),
 
-        owner:
-            room.host,
+        onGround: !!state.onGround,
+        crouching: !!state.crouching,
 
-        maxPlayers:
-            room.maxPlayers,
+        alive: state.alive !== false,
 
-        players:
-            room.players.size,
+        team: safeNumber(state.team, 0),
+        name: client.name,
 
-        playerCount:
-            room.players.size,
+        avatar: client.avatar || null,
+        avatarEnabled: client.avatarEnabled !== false,
 
-        locked:
-            false,
+        headBoost: client.headBoost || {
+            active: false,
+            targetId: null
+        },
 
-        createdAt:
-            room.createdAt
+        timestamp: now()
     };
 }
 
-function getRoomsList() {
-    return Array.from(
-        rooms.values()
-    ).map(
-        publicRoom
-    );
-}
-
-function sendRooms(
-    ws
-) {
-    safeSend(
-        ws,
-        {
-            type: "rooms",
-            rooms:
-                getRoomsList()
-        }
-    );
-}
-
-function sendRoomsToAll() {
-    for (
-        const client of
-        clients.values()
-    ) {
-        sendRooms(
-            client.ws
-        );
-    }
-}
-
-function getRoom(
-    id
-) {
-    if (
-        id === null ||
-        id === undefined
-    ) {
-        return null;
-    }
-
-    return (
-        rooms.get(
-            String(id)
-        ) || null
-    );
-}
-
-function createRoom(
-    name,
-    maxPlayers
-) {
-    if (
-        rooms.size >=
-        MAX_ROOMS
-    ) {
-        return null;
-    }
-
-    let max =
-        Number(
-            maxPlayers
-        );
-
-    if (
-        !Number.isFinite(max)
-    ) {
-        max =
-            DEFAULT_MAX_PLAYERS;
-    }
-
-    max =
-        Math.max(
-            2,
-            Math.min(
-                HARD_MAX_PLAYERS,
-                Math.floor(max)
-            )
-        );
-
-    const room = {
-        id:
-            makeRoomId(),
-
-        name:
-            cleanRoomName(
-                name
-            ),
-
-        host:
-            null,
-
-        maxPlayers:
-            max,
-
-        players:
-            new Set(),
-
-        createdAt:
-            Date.now()
-    };
-
-    rooms.set(
-        room.id,
-        room
-    );
-
-    return room;
-}
-
-function leaveCurrentRoom(
-    client,
-    notifySelf
-) {
-    if (
-        !client ||
-        !client.room
-    ) {
-        return;
-    }
-
-    const room =
-        getRoom(
-            client.room
-        );
-
-    const oldRoomId =
-        client.room;
-
-    client.room =
-        null;
+function roomPlayers(room) {
+    const result = [];
 
     if (!room) {
-        if (notifySelf) {
-            safeSend(
-                client.ws,
-                {
-                    type:
-                        "left_room",
-                    room:
-                        oldRoomId
-                }
-            );
+        return result;
+    }
+
+    room.players.forEach(function (playerId) {
+        const client = clients.get(playerId);
+
+        if (!client) {
+            return;
         }
 
+        result.push(playerInfo(client));
+    });
+
+    return result;
+}
+
+function sendRoomSnapshot(client) {
+    const room = client.room ? rooms.get(client.room) : null;
+
+    if (!room) {
         return;
     }
 
-    room.players.delete(
-        client.id
-    );
+    sendClient(client, {
+        type: "room_snapshot",
+        room: roomInfo(room),
+        players: roomPlayers(room)
+    });
+}
 
-    broadcast(
-        room,
-        {
-            type:
-                "player_left",
+function sendRooms(client) {
+    const list = [];
 
-            id:
-                client.id,
-
-            playerId:
-                client.id
+    rooms.forEach(function (room) {
+        if (room.closed) {
+            return;
         }
-    );
 
-    if (
-        room.host ===
-        client.id
-    ) {
-        const remaining =
-            Array.from(
-                room.players
-            );
+        list.push(roomInfo(room));
+    });
 
-        if (
-            remaining.length
-        ) {
-            room.host =
-                remaining[0];
-        } else {
-            room.host =
-                null;
-        }
+    list.sort(function (a, b) {
+        return b.createdAt - a.createdAt;
+    });
+
+    sendClient(client, {
+        type: "rooms",
+        rooms: list
+    });
+}
+
+function broadcastRooms() {
+    clients.forEach(function (client) {
+        sendRooms(client);
+    });
+}
+
+function leaveCurrentRoom(client, reason) {
+    if (!client || !client.room) {
+        return;
     }
 
-    if (
-        notifySelf
-    ) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "left_room",
+    const room = rooms.get(client.room);
 
-                room:
-                    oldRoomId
+    if (!room) {
+        client.room = null;
+        return;
+    }
+
+    const oldRoomId = room.id;
+
+    room.players.delete(client.id);
+
+    client.room = null;
+    client.headBoost = {
+        active: false,
+        targetId: null
+    };
+
+    if (room.host === client.id) {
+        const firstRemaining = room.players.values().next();
+
+        if (!firstRemaining.done) {
+            room.host = firstRemaining.value;
+
+            const newHost = clients.get(room.host);
+
+            if (newHost) {
+                sendClient(newHost, {
+                    type: "host_changed",
+                    roomId: room.id,
+                    host: room.host
+                });
             }
-        );
+        }
     }
 
-    if (
-        room.players.size ===
-        0
-    ) {
-        rooms.delete(
-            room.id
-        );
+    broadcastRoom(room, {
+        type: "player_left",
+        id: client.id,
+        playerId: client.id,
+        reason: reason || "left"
+    });
+
+    sendClient(client, {
+        type: "left_room",
+        roomId: oldRoomId,
+        reason: reason || "left"
+    });
+
+    if (room.players.size === 0) {
+        room.closed = true;
+
+        rooms.delete(room.id);
 
         broadcastAll({
-            type:
-                "room_deleted",
-
-            room:
-                room.id,
-
-            roomId:
-                room.id,
-
-            reason:
-                "Room is empty."
+            type: "room_deleted",
+            roomId: room.id,
+            reason: reason || "empty"
         });
-    }
+    } else {
+        broadcastRoom(room, {
+            type: "room_update",
+            room: roomInfo(room)
+        });
 
-    sendRoomsToAll();
+        broadcastRooms();
+    }
 }
 
-function checkRafit(
-    client,
-    professional
-) {
-    if (
-        !RAFIT ||
-        typeof RAFIT.canJoinRoom !==
-        "function"
-    ) {
-        return {
-            allowed: true
+function deleteRoom(room, reason) {
+    if (!room || room.closed) {
+        return;
+    }
+
+    room.closed = true;
+
+    const ids = Array.from(room.players);
+
+    ids.forEach(function (playerId) {
+        const client = clients.get(playerId);
+
+        if (!client) {
+            return;
+        }
+
+        client.room = null;
+        client.headBoost = {
+            active: false,
+            targetId: null
         };
-    }
 
-    try {
-        const result =
-            RAFIT.canJoinRoom(
-                client.id,
-                !!professional
-            );
+        sendClient(client, {
+            type: "left_room",
+            roomId: room.id,
+            reason: reason || "room_deleted"
+        });
+    });
 
-        if (
-            result &&
-            result.allowed === false
-        ) {
-            return result;
-        }
+    rooms.delete(room.id);
 
-        return {
-            allowed: true,
-            rtp:
-                result &&
-                result.rtp
-        };
-    } catch (e) {
-        warn(
-            "RAFIT check failed:",
-            e.message
-        );
+    broadcastAll({
+        type: "room_deleted",
+        roomId: room.id,
+        reason: reason || "deleted"
+    });
 
-        return {
-            allowed: true
-        };
-    }
+    broadcastRooms();
 }
 
-function joinRoom(
-    client,
-    room,
-    data
-) {
-    if (
-        !client ||
-        !room
-    ) {
-        return false;
+function createRoom(client, data) {
+    if (client.room) {
+        leaveCurrentRoom(client, "creating_new_room");
     }
 
-    const rafit =
-        checkRafit(
-            client,
-            data &&
-            data.professional
-        );
-
-    if (
-        !rafit.allowed
-    ) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "error",
-
-                message:
-                    rafit.reason ||
-                    "You cannot join this room.",
-
-                error:
-                    rafit.reason ||
-                    "RAFIT_BLOCKED",
-
-                bannedUntil:
-                    rafit.bannedUntil ||
-                    0,
-
-                rtp:
-                    rafit.rtp
-            }
-        );
-
-        return false;
-    }
-
-    if (
-        room.players.has(
-            client.id
-        )
-    ) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "room_joined",
-
-                room:
-                    room.id,
-
-                roomId:
-                    room.id,
-
-                id:
-                    room.id,
-
-                roomData:
-                    publicRoom(room)
-            }
-        );
-
-        return true;
-    }
-
-    if (
-        room.players.size >=
-        room.maxPlayers
-    ) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "error",
-
-                message:
-                    "Room is full.",
-
-                error:
-                    "ROOM_FULL"
-            }
-        );
-
-        return false;
-    }
-
-    if (
-        client.room
-    ) {
-        leaveCurrentRoom(
-            client,
-            true
-        );
-    }
-
-    room.players.add(
-        client.id
+    const name = cleanString(
+        data.name,
+        client.name + "'s Room",
+        MAX_ROOM_NAME_LENGTH
     );
 
-    client.room =
-        room.id;
+    let maxPlayers = parseInt(data.maxPlayers, 10);
 
-    if (
-        !room.host
-    ) {
-        room.host =
-            client.id;
+    if (!Number.isFinite(maxPlayers)) {
+        maxPlayers = 8;
     }
 
-    safeSend(
-        client.ws,
-        {
-            type:
-                "room_joined",
+    maxPlayers = clamp(maxPlayers, 2, MAX_PLAYERS_HARD_LIMIT);
 
-            room:
-                room.id,
+    const room = {
+        id: makeRoomId(),
+        name: name,
+        host: client.id,
+        maxPlayers: maxPlayers,
+        players: new Set(),
+        createdAt: now(),
 
-            roomId:
-                room.id,
+        phase: "lobby",
+        round: 0,
+        roundStartedAt: 0,
+        roundEndsAt: 0,
 
-            id:
-                room.id,
-
-            roomData:
-                publicRoom(room)
-        }
-    );
-
-    /*
-     * Send the newcomer every player
-     * already inside the room.
-     */
-    for (
-        const otherId of
-        room.players
-    ) {
-        if (
-            String(otherId) ===
-            String(client.id)
-        ) {
-            continue;
-        }
-
-        const other =
-            clients.get(
-                String(otherId)
-            );
-
-        if (!other) {
-            continue;
-        }
-
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "player_joined",
-
-                id:
-                    other.id,
-
-                playerId:
-                    other.id,
-
-                name:
-                    other.name,
-
-                player:
-                    publicClient(
-                        other
-                    )
-            }
-        );
-
-        /*
-         * Give the newcomer the latest state
-         * immediately instead of waiting for
-         * the next 50ms client tick.
-         */
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "state",
-
-                id:
-                    other.id,
-
-                playerId:
-                    other.id,
-
-                state:
-                    other.state
-            }
-        );
-    }
-
-    /*
-     * Tell everybody else that the newcomer
-     * has entered.
-     */
-    broadcast(
-        room,
-        {
-            type:
-                "player_joined",
-
-            id:
-                client.id,
-
-            playerId:
-                client.id,
-
-            name:
-                client.name,
-
-            player:
-                publicClient(
-                    client
-                )
-        },
-        client.id
-    );
-
-    /*
-     * Also send the new player's current
-     * state to everybody else.
-     */
-    broadcast(
-        room,
-        {
-            type:
-                "state",
-
-            id:
-                client.id,
-
-            playerId:
-                client.id,
-
-            state:
-                client.state
-        },
-        client.id
-    );
-
-    sendRoomsToAll();
-
-    log(
-        "Player",
-        client.name,
-        "(" +
-            client.id +
-            ") joined",
-        room.name,
-        "(" +
-            room.id +
-            ")"
-    );
-
-    return true;
-}
-
-function handleHello(
-    client,
-    data
-) {
-    if (
-        typeof data.name ===
-        "string"
-    ) {
-        client.name =
-            cleanName(
-                data.name
-            );
-    }
-
-    if (
-        Object.prototype.hasOwnProperty.call(
-            data,
-            "avatar"
-        )
-    ) {
-        client.avatar =
-            cleanAvatar(
-                data.avatar
-            );
-    }
-
-    client.state.name =
-        client.name;
-
-    client.state.avatar =
-        client.avatar;
-
-    safeSend(
-        client.ws,
-        {
-            type:
-                "connected",
-
-            id:
-                client.id,
-
-            clientId:
-                client.id,
-
-            playerId:
-                client.id,
-
-            name:
-                client.name,
-
-            avatar:
-                client.avatar
-        }
-    );
-
-    sendRooms(
-        client.ws
-    );
-}
-
-function handleListRooms(
-    client
-) {
-    sendRooms(
-        client.ws
-    );
-}
-
-function handleCreateRoom(
-    client,
-    data
-) {
-    const room =
-        createRoom(
-            data.name,
-            data.maxPlayers
-        );
-
-    if (!room) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "error",
-
-                message:
-                    "Could not create room.",
-
-                error:
-                    "ROOM_CREATE_FAILED"
-            }
-        );
-
-        return;
-    }
-
-    joinRoom(
-        client,
-        room,
-        data
-    );
-}
-
-function handleJoinRoom(
-    client,
-    data
-) {
-    const id =
-        data.room ??
-        data.roomId ??
-        data.id;
-
-    const room =
-        getRoom(id);
-
-    if (!room) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "error",
-
-                message:
-                    "Room not found.",
-
-                error:
-                    "ROOM_NOT_FOUND"
-            }
-        );
-
-        return;
-    }
-
-    joinRoom(
-        client,
-        room,
-        data
-    );
-}
-
-function handleLeaveRoom(
-    client
-) {
-    leaveCurrentRoom(
-        client,
-        true
-    );
-}
-
-function handleState(
-    client,
-    data
-) {
-    if (
-        !client.room
-    ) {
-        return;
-    }
-
-    const room =
-        getRoom(
-            client.room
-        );
-
-    if (!room) {
-        client.room =
-            null;
-
-        return;
-    }
-
-    const incoming =
-        data.state &&
-        typeof data.state ===
-        "object"
-            ? data.state
-            : data;
-
-    const previous = {
-        x:
-            client.state.x,
-
-        y:
-            client.state.y,
-
-        z:
-            client.state.z
+        closed: false
     };
 
-    const next =
-        cleanState(
-            incoming
-        );
+    rooms.set(room.id, room);
 
-    /*
-     * Preserve old values if the client
-     * didn't include an avatar.
-     */
-    if (
-        !Object.prototype.hasOwnProperty.call(
-            incoming,
-            "avatar"
-        )
-    ) {
-        next.avatar =
-            client.avatar;
+    room.players.add(client.id);
+    client.room = room.id;
+
+    client.headBoost = {
+        active: false,
+        targetId: null
+    };
+
+    sendClient(client, {
+        type: "room_joined",
+        room: roomInfo(room),
+        roomId: room.id,
+        isHost: true,
+        players: roomPlayers(room)
+    });
+
+    broadcastRooms();
+}
+
+function joinRoom(client, data) {
+    const roomId = cleanString(
+        data.roomId || data.room,
+        "",
+        100
+    );
+
+    const room = rooms.get(roomId);
+
+    if (!room || room.closed) {
+        sendClient(client, {
+            type: "error",
+            code: "ROOM_NOT_FOUND",
+            message: "Room not found."
+        });
+
+        return;
     }
 
-    if (
-        typeof incoming.name !==
-        "string"
-    ) {
-        next.name =
-            client.name;
+    if (room.players.size >= room.maxPlayers) {
+        sendClient(client, {
+            type: "error",
+            code: "ROOM_FULL",
+            message: "Room is full."
+        });
+
+        return;
     }
 
-    client.state =
-        next;
-
-    client.name =
-        next.name;
-
-    if (
-        Object.prototype.hasOwnProperty.call(
-            incoming,
-            "avatar"
-        )
-    ) {
-        client.avatar =
-            next.avatar;
+    if (client.room === room.id) {
+        sendRoomSnapshot(client);
+        return;
     }
 
-    /*
-     * Optional RAFIT movement inspection.
-     * It only logs suspicious movement;
-     * it does not kick the player here.
-     */
-    if (
-        RAFIT &&
-        typeof RAFIT.inspectMovement ===
-        "function"
-    ) {
-        try {
-            const now =
-                Date.now();
-
-            const dt =
-                Math.max(
-                    0.001,
-                    (
-                        now -
-                        client.lastStateAt
-                    ) / 1000
-                );
-
-            const movement =
-                RAFIT.inspectMovement(
-                    client.id,
-                    {
-                        x:
-                            next.x,
-
-                        y:
-                            next.y,
-
-                        z:
-                            next.z,
-
-                        lastX:
-                            previous.x,
-
-                        lastY:
-                            previous.y,
-
-                        lastZ:
-                            previous.z,
-
-                        dt
-                    }
-                );
-
-            if (
-                movement &&
-                movement.suspicious
-            ) {
-                warn(
-                    "Suspicious movement:",
-                    client.name,
-                    movement
-                );
-            }
-        } catch (e) {
-            warn(
-                "RAFIT movement check failed:",
-                e.message
-            );
-        }
+    if (client.room) {
+        leaveCurrentRoom(client, "joining_other_room");
     }
 
-    client.lastStateAt =
-        Date.now();
+    const existingPlayers = roomPlayers(room);
 
-    broadcast(
+    room.players.add(client.id);
+    client.room = room.id;
+
+    client.headBoost = {
+        active: false,
+        targetId: null
+    };
+
+    sendClient(client, {
+        type: "room_joined",
+        room: roomInfo(room),
+        roomId: room.id,
+        isHost: room.host === client.id,
+        players: existingPlayers
+    });
+
+    broadcastRoom(
         room,
         {
-            type:
-                "state",
+            type: "player_joined",
+            player: playerInfo(client),
+            id: client.id,
+            roomId: room.id
+        },
+        client.id
+    );
 
-            id:
-                client.id,
+    sendRoomSnapshot(client);
 
-            playerId:
-                client.id,
+    broadcastRoom(room, {
+        type: "room_update",
+        room: roomInfo(room)
+    });
 
-            state:
-                client.state
+    broadcastRooms();
+}
+
+function handleState(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const currentTime = now();
+
+    if (currentTime - client.lastStateAt < 1000 / MAX_STATE_RATE) {
+        return;
+    }
+
+    client.lastStateAt = currentTime;
+
+    const input = data.state && typeof data.state === "object"
+        ? data.state
+        : data;
+
+    if (!input || typeof input !== "object") {
+        return;
+    }
+
+    client.state = {
+        x: clamp(safeNumber(input.x, client.state.x), -100000, 100000),
+        y: clamp(safeNumber(input.y, client.state.y), -100000, 100000),
+        z: clamp(safeNumber(input.z, client.state.z), -100000, 100000),
+
+        yaw: safeNumber(input.yaw, client.state.yaw),
+        pitch: clamp(safeNumber(input.pitch, client.state.pitch), -90, 90),
+
+        vx: clamp(safeNumber(input.vx, 0), -1000, 1000),
+        vy: clamp(safeNumber(input.vy, 0), -1000, 1000),
+        vz: clamp(safeNumber(input.vz, 0), -1000, 1000),
+
+        onGround: !!input.onGround,
+        crouching: !!input.crouching,
+
+        alive: input.alive !== false,
+
+        team: safeNumber(input.team, client.state.team)
+    };
+
+    if (typeof input.name === "string") {
+        client.name = cleanString(
+            input.name,
+            client.name,
+            MAX_NAME_LENGTH
+        );
+    }
+
+    if (typeof input.avatar === "string" && input.avatar.length <= 700000) {
+        client.avatar = input.avatar;
+    }
+
+    if (typeof input.avatarEnabled === "boolean") {
+        client.avatarEnabled = input.avatarEnabled;
+    }
+
+    if (input.headBoost && typeof input.headBoost === "object") {
+        updateHeadBoost(client, input.headBoost, true);
+    }
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    broadcastRoom(
+        room,
+        {
+            type: "state",
+            state: publicState(client)
         },
         client.id
     );
 }
 
-function handlePing(
-    client
-) {
-    safeSend(
-        client.ws,
-        {
-            type:
-                "pong",
+function updateHeadBoost(client, data, fromState) {
+    if (!client || !client.room) {
+        return;
+    }
 
-            time:
-                Date.now()
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    const active = !!data.active;
+
+    if (!active) {
+        const oldTarget = client.headBoost.targetId;
+
+        client.headBoost = {
+            active: false,
+            targetId: null
+        };
+
+        if (oldTarget) {
+            broadcastRoom(room, {
+                type: "head_boost",
+                id: client.id,
+                playerId: client.id,
+                active: false,
+                targetId: null
+            });
         }
+
+        return;
+    }
+
+    const targetId = cleanString(
+        data.targetId || data.target || "",
+        "",
+        100
     );
+
+    if (!targetId || targetId === client.id) {
+        return;
+    }
+
+    const target = clients.get(targetId);
+
+    if (!target || target.room !== room.id) {
+        sendClient(client, {
+            type: "error",
+            code: "HEAD_BOOST_TARGET_INVALID",
+            message: "Head boost target is not in this room."
+        });
+
+        return;
+    }
+
+    client.headBoost = {
+        active: true,
+        targetId: targetId
+    };
+
+    broadcastRoom(room, {
+        type: "head_boost",
+        id: client.id,
+        playerId: client.id,
+        active: true,
+        targetId: targetId,
+        timestamp: now()
+    });
 }
 
-function handleMessage(
-    client,
-    raw
-) {
+function handleChat(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    const message = cleanString(
+        data.message,
+        "",
+        MAX_CHAT_LENGTH
+    );
+
+    if (!message) {
+        return;
+    }
+
+    const packet = {
+        type: "chat",
+        id: makeId("msg"),
+        playerId: client.id,
+        name: client.name,
+        message: message,
+        timestamp: now()
+    };
+
+    broadcastRoom(room, packet);
+}
+
+function handleRoundState(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    if (room.host !== client.id) {
+        sendClient(client, {
+            type: "error",
+            code: "NOT_HOST",
+            message: "Only the room host can change the round state."
+        });
+
+        return;
+    }
+
+    const phase = cleanString(
+        data.phase,
+        room.phase,
+        32
+    );
+
+    room.phase = phase;
+
+    if (data.round !== undefined) {
+        room.round = Math.max(
+            0,
+            parseInt(data.round, 10) || 0
+        );
+    }
+
+    if (data.roundStartedAt !== undefined) {
+        room.roundStartedAt = safeNumber(
+            data.roundStartedAt,
+            0
+        );
+    }
+
+    if (data.roundEndsAt !== undefined) {
+        room.roundEndsAt = safeNumber(
+            data.roundEndsAt,
+            0
+        );
+    }
+
+    const packet = {
+        type: "round_state",
+        roomId: room.id,
+        phase: room.phase,
+        round: room.round,
+        roundStartedAt: room.roundStartedAt,
+        roundEndsAt: room.roundEndsAt,
+        timestamp: now()
+    };
+
+    broadcastRoom(room, packet);
+}
+
+function handleMusicEvent(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    const action = cleanString(
+        data.action,
+        "",
+        32
+    );
+
+    if (
+        action !== "play" &&
+        action !== "stop" &&
+        action !== "pause"
+    ) {
+        return;
+    }
+
+    const kit = cleanString(
+        data.kit || data.musicKit || "",
+        "",
+        64
+    );
+
+    const track = cleanString(
+        data.track || data.trackId || "",
+        "",
+        128
+    );
+
+    broadcastRoom(room, {
+        type: "music_event",
+        playerId: client.id,
+        name: client.name,
+        action: action,
+        kit: kit,
+        track: track,
+        timestamp: now()
+    });
+}
+
+function handleMusicKit(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const kit = cleanString(
+        data.kit || data.musicKit,
+        "",
+        64
+    );
+
+    client.musicKit = kit;
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    broadcastRoom(room, {
+        type: "music_kit",
+        playerId: client.id,
+        name: client.name,
+        kit: client.musicKit,
+        timestamp: now()
+    });
+}
+
+function handlePing(client) {
+    client.lastPing = now();
+
+    sendClient(client, {
+        type: "pong",
+        timestamp: now()
+    });
+}
+
+function handleHello(client, data) {
+    if (typeof data.name === "string") {
+        client.name = cleanString(
+            data.name,
+            client.name,
+            MAX_NAME_LENGTH
+        );
+    }
+
+    if (typeof data.avatar === "string" && data.avatar.length <= 700000) {
+        client.avatar = data.avatar;
+    }
+
+    if (typeof data.avatarEnabled === "boolean") {
+        client.avatarEnabled = data.avatarEnabled;
+    }
+
+    sendClient(client, {
+        type: "hello",
+        id: client.id,
+        name: client.name
+    });
+}
+
+function handleEndRoom(client, data) {
+    if (!client.room) {
+        return;
+    }
+
+    const room = rooms.get(client.room);
+
+    if (!room) {
+        return;
+    }
+
+    if (room.host !== client.id) {
+        sendClient(client, {
+            type: "error",
+            code: "NOT_HOST",
+            message: "Only the host can end the room."
+        });
+
+        return;
+    }
+
+    const reason = cleanString(
+        data.reason,
+        "match ended",
+        120
+    );
+
+    deleteRoom(room, reason);
+}
+
+function handleMessage(client, raw) {
     let data;
 
     try {
-        data =
-            JSON.parse(
-                raw.toString()
-            );
-    } catch (e) {
-        safeSend(
-            client.ws,
-            {
-                type:
-                    "error",
-
-                message:
-                    "Invalid JSON.",
-
-                error:
-                    "INVALID_JSON"
-            }
-        );
+        data = JSON.parse(raw);
+    } catch (err) {
+        sendClient(client, {
+            type: "error",
+            code: "INVALID_JSON",
+            message: "Invalid JSON."
+        });
 
         return;
     }
 
-    if (
-        !data ||
-        typeof data !==
-        "object"
-    ) {
+    if (!data || typeof data !== "object") {
         return;
     }
 
-    const type =
-        String(
-            data.type || ""
-        );
+    const type = data.type;
 
     switch (type) {
         case "hello":
-            handleHello(
-                client,
-                data
-            );
+            handleHello(client, data);
             break;
 
         case "list_rooms":
-        case "rooms":
-            handleListRooms(
-                client
-            );
+            sendRooms(client);
             break;
 
         case "create_room":
-        case "room_create":
-            handleCreateRoom(
-                client,
-                data
-            );
+            createRoom(client, data);
             break;
 
         case "join_room":
-        case "room_join":
-            handleJoinRoom(
-                client,
-                data
-            );
+            joinRoom(client, data);
             break;
 
         case "leave_room":
-        case "room_leave":
-            handleLeaveRoom(
-                client
-            );
+            leaveCurrentRoom(client, "left");
+            break;
+
+        case "end_room":
+            handleEndRoom(client, data);
             break;
 
         case "state":
-        case "player_state":
-            handleState(
-                client,
-                data
-            );
+            handleState(client, data);
+            break;
+
+        case "head_boost":
+            updateHeadBoost(client, data, false);
+            break;
+
+        case "chat":
+            handleChat(client, data);
+            break;
+
+        case "round_state":
+        case "round":
+            handleRoundState(client, data);
+            break;
+
+        case "music_event":
+            handleMusicEvent(client, data);
+            break;
+
+        case "music_kit":
+            handleMusicKit(client, data);
             break;
 
         case "ping":
-            handlePing(
-                client
-            );
+            handlePing(client);
             break;
 
-        case "heartbeat":
-            handlePing(
-                client
-            );
+        case "pong":
+            client.lastPing = now();
             break;
 
         default:
-            safeSend(
-                client.ws,
-                {
-                    type:
-                        "error",
-
-                    message:
-                        "Unknown message type: " +
-                        type,
-
-                    error:
-                        "UNKNOWN_MESSAGE"
-                }
-            );
-
+            sendClient(client, {
+                type: "error",
+                code: "UNKNOWN_MESSAGE",
+                message: "Unknown message type: " + String(type)
+            });
             break;
     }
 }
 
-const server =
-    http.createServer(
-        (req, res) => {
-            res.statusCode = 200;
+function createClient(ws) {
+    const id = makeClientId();
 
-            res.setHeader(
-                "Access-Control-Allow-Origin",
-                "*"
-            );
+    const client = {
+        id: id,
+        ws: ws,
 
-            res.setHeader(
-                "Access-Control-Allow-Headers",
-                "*"
-            );
+        name: "Player " + nextClientNumber,
 
-            res.setHeader(
-                "Content-Type",
-                "application/json; charset=utf-8"
-            );
+        room: null,
 
-            if (
-                req.url ===
-                "/health"
-            ) {
-                res.end(
-                    JSON.stringify({
-                        name:
-                            "Connections Multiplayer Server",
+        avatar: null,
+        avatarEnabled: true,
 
-                        status:
-                            "online",
+        musicKit: null,
 
-                        rooms:
-                            rooms.size,
+        headBoost: {
+            active: false,
+            targetId: null
+        },
 
-                        players:
-                            clients.size,
+        state: {
+            x: 0,
+            y: 0,
+            z: 0,
 
-                        uptime:
-                            process.uptime()
-                    })
-                );
+            yaw: 0,
+            pitch: 0,
 
-                return;
-            }
+            vx: 0,
+            vy: 0,
+            vz: 0,
 
-            res.end(
-                JSON.stringify({
-                    name:
-                        "Connections Multiplayer Server",
+            onGround: false,
+            crouching: false,
 
-                    status:
-                        "online",
+            alive: true,
+            team: 0
+        },
 
-                    rooms:
-                        rooms.size,
+        connectedAt: now(),
+        lastPing: now(),
+        lastStateAt: 0
+    };
 
-                    players:
-                        clients.size
-                })
-            );
-        }
-    );
+    clients.set(id, client);
 
-const wss =
-    new WebSocket.Server({
-        server
+    return client;
+}
+
+function cleanupClient(client) {
+    if (!client) {
+        return;
+    }
+
+    if (client.room) {
+        leaveCurrentRoom(client, "disconnect");
+    }
+
+    clients.delete(client.id);
+}
+
+const httpServer = http.createServer(function (req, res) {
+    if (req.url === "/") {
+        const body = JSON.stringify({
+            name: "Connections Multiplayer Server",
+            status: "online",
+            rooms: rooms.size,
+            players: clients.size,
+            version: "2.0.0"
+        });
+
+        res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body)
+        });
+
+        res.end(body);
+        return;
+    }
+
+    if (req.url === "/health") {
+        const body = JSON.stringify({
+            status: "ok",
+            rooms: rooms.size,
+            players: clients.size,
+            uptime: process.uptime()
+        });
+
+        res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body)
+        });
+
+        res.end(body);
+        return;
+    }
+
+    res.writeHead(404, {
+        "Content-Type": "application/json"
     });
 
-wss.on(
-    "connection",
-    ws => {
-        const id =
-            makeClientId();
+    res.end(JSON.stringify({
+        error: "not_found"
+    }));
+});
 
-        const client = {
-            id,
+const wss = new WebSocket.Server({
+    server: httpServer,
+    perMessageDeflate: false
+});
 
-            ws,
+wss.on("connection", function (ws, request) {
+    const client = createClient(ws);
 
-            name:
-                "Player",
-
-            room:
-                null,
-
-            avatar:
-                null,
-
-            state: {
-                x: 0,
-                y: 0,
-                z: 0,
-
-                yaw: 0,
-                pitch: 0,
-
-                alive: true,
-
-                team: "CT",
-
-                name:
-                    "Player",
-
-                avatar:
-                    null
-            },
-
-            lastStateAt:
-                Date.now(),
-
-            connectedAt:
-                Date.now()
-        };
-
-        clients.set(
-            id,
-            client
-        );
-
-        log(
-            "Client connected:",
-            id
-        );
-
-        safeSend(
-            ws,
-            {
-                type:
-                    "connected",
-
-                id,
-
-                clientId:
-                    id,
-
-                playerId:
-                    id
-            }
-        );
-
-        sendRooms(
-            ws
-        );
-
-        ws.on(
-            "message",
-            raw => {
-                try {
-                    handleMessage(
-                        client,
-                        raw
-                    );
-                } catch (e) {
-                    console.error(
-                        "[Connections] Message handler error:",
-                        e
-                    );
-
-                    safeSend(
-                        ws,
-                        {
-                            type:
-                                "error",
-
-                            message:
-                                "Internal server error.",
-
-                            error:
-                                "INTERNAL_ERROR"
-                        }
-                    );
-                }
-            }
-        );
-
-        ws.on(
-            "close",
-            () => {
-                log(
-                    "Client disconnected:",
-                    client.id,
-                    client.name
-                );
-
-                leaveCurrentRoom(
-                    client,
-                    false
-                );
-
-                clients.delete(
-                    client.id
-                );
-
-                sendRoomsToAll();
-            }
-        );
-
-        ws.on(
-            "error",
-            error => {
-                warn(
-                    "WebSocket error:",
-                    client.id,
-                    error.message
-                );
-            }
-        );
-    }
-);
-
-const heartbeat =
-    setInterval(
-        () => {
-            for (
-                const client of
-                clients.values()
-            ) {
-                if (
-                    client.ws.readyState !==
-                    WebSocket.OPEN
-                ) {
-                    continue;
-                }
-
-                try {
-                    client.ws.ping();
-                } catch {}
-            }
-        },
-        30000
+    console.log(
+        "[Connections] client connected:",
+        client.id,
+        request && request.socket
+            ? request.socket.remoteAddress
+            : "unknown"
     );
 
-heartbeat.unref();
+    sendClient(client, {
+        type: "connected",
+        id: client.id,
+        serverTime: now(),
+        version: "2.0.0"
+    });
 
-server.listen(
-    PORT,
-    HOST,
-    () => {
-        log(
-            "HTTP server:",
-            `http://${HOST}:${PORT}`
-        );
+    sendRooms(client);
 
-        log(
-            "WebSocket:",
-            `ws://${HOST}:${PORT}`
-        );
+    ws.on("message", function (raw) {
+        const current = clients.get(client.id);
 
-        log(
-            "Rooms:",
-            rooms.size
-        );
-
-        log(
-            "Players:",
-            clients.size
-        );
-
-        log(
-            "ONLINE"
-        );
-    }
-);
-
-process.on(
-    "SIGINT",
-    () => {
-        log(
-            "Shutting down..."
-        );
-
-        for (
-            const client of
-            clients.values()
-        ) {
-            try {
-                client.ws.close(
-                    1001,
-                    "Server shutting down"
-                );
-            } catch {}
+        if (!current) {
+            return;
         }
 
-        wss.close(
-            () => {
-                server.close(
-                    () => {
-                        process.exit(
-                            0
-                        );
-                    }
-                );
-            }
-        );
-    }
-);
+        handleMessage(current, raw.toString());
+    });
 
-process.on(
-    "uncaughtException",
-    error => {
-        console.error(
-            "[Connections] Uncaught exception:",
-            error
+    ws.on("close", function () {
+        console.log(
+            "[Connections] client disconnected:",
+            client.id
         );
-    }
-);
 
-process.on(
-    "unhandledRejection",
-    error => {
-        console.error(
-            "[Connections] Unhandled rejection:",
-            error
+        cleanupClient(client);
+    });
+
+    ws.on("error", function (err) {
+        console.log(
+            "[Connections] websocket error:",
+            client.id,
+            err && err.message
+                ? err.message
+                : err
         );
+
+        cleanupClient(client);
+    });
+
+    ws.on("pong", function () {
+        client.lastPing = now();
+    });
+});
+
+httpServer.listen(HTTP_PORT, "0.0.0.0", function () {
+    console.log("");
+    console.log("========================================");
+    console.log(" Connections Multiplayer Server");
+    console.log("========================================");
+    console.log(" HTTP :", HTTP_PORT);
+    console.log(" WS   : ws://0.0.0.0:" + WS_PORT);
+    console.log(" ONLINE");
+    console.log("========================================");
+    console.log("");
+});
+
+const heartbeat = setInterval(function () {
+    const currentTime = now();
+
+    clients.forEach(function (client) {
+        if (!client.ws || client.ws.readyState !== WebSocket.OPEN) {
+            cleanupClient(client);
+            return;
+        }
+
+        if (currentTime - client.lastPing > CLIENT_TIMEOUT) {
+            try {
+                client.ws.terminate();
+            } catch (err) {}
+
+            cleanupClient(client);
+            return;
+        }
+
+        try {
+            client.ws.ping();
+        } catch (err) {}
+    });
+}, 10000);
+
+const roomCleanup = setInterval(function () {
+    const currentTime = now();
+
+    rooms.forEach(function (room) {
+        if (room.players.size === 0) {
+            rooms.delete(room.id);
+            return;
+        }
+
+        if (
+            currentTime - room.createdAt > ROOM_TIMEOUT &&
+            room.phase === "lobby"
+        ) {
+            deleteRoom(room, "room timeout");
+        }
+    });
+}, 60000);
+
+function shutdown(signal) {
+    console.log(
+        "[Connections] shutting down:",
+        signal
+    );
+
+    clearInterval(heartbeat);
+    clearInterval(roomCleanup);
+
+    rooms.forEach(function (room) {
+        room.closed = true;
+    });
+
+    clients.forEach(function (client) {
+        try {
+            sendClient(client, {
+                type: "server_shutdown"
+            });
+
+            client.ws.close(1001, "Server shutting down");
+        } catch (err) {}
+    });
+
+    try {
+        wss.close();
+    } catch (err) {}
+
+    try {
+        httpServer.close(function () {
+            process.exit(0);
+        });
+    } catch (err) {
+        process.exit(0);
     }
-);
+
+    setTimeout(function () {
+        process.exit(0);
+    }, 3000);
+}
+
+process.on("SIGINT", function () {
+    shutdown("SIGINT");
+});
+
+process.on("SIGTERM", function () {
+    shutdown("SIGTERM");
+});
+
+process.on("uncaughtException", function (err) {
+    console.error(
+        "[Connections] uncaught exception:",
+        err
+    );
+});
+
+process.on("unhandledRejection", function (err) {
+    console.error(
+        "[Connections] unhandled rejection:",
+        err
+    );
+});
