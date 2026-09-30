@@ -3063,250 +3063,293 @@
             );
         },
 
-receive(data) {
-  if (!data || !data.id) return;
+        receive(data) {
+            if (!data || !data.id) {
+                return;
+            }
 
-  const id = String(data.id);
+            const id =
+                String(data.id);
 
-  if (id === String(State.id)) {
-    return;
-  }
+            if (
+                id ===
+                String(State.id)
+            ) {
+                return;
+            }
 
-  const incoming = data.state || data;
+            const incoming =
+                data.state &&
+                typeof data.state === "object"
+                    ? data.state
+                    : data;
 
-  if (!incoming || typeof incoming !== "object") {
-    return;
-  }
+            if (
+                !incoming ||
+                typeof incoming !== "object"
+            ) {
+                return;
+            }
 
-  let remote = this.remotes.get(id);
+            let remote =
+                this.remotes.get(id);
 
-  if (!remote) {
-    remote = {
-      id,
+            if (!remote) {
+                remote = {
+                    id,
 
-      name: String(incoming.name || data.name || "Player"),
+                    name:
+                        String(
+                            incoming.name ||
+                            data.name ||
+                            "Player"
+                        ),
 
-      team: incoming.team || data.team || "CT",
+                    team:
+                        normalizeTeam(
+                            incoming.team ||
+                            data.team ||
+                            "CT"
+                        ),
 
-      x: Number(incoming.x) || 0,
-      y: Number(incoming.y) || 0,
-      z: Number(incoming.z) || 0,
+                    x:
+                        safeNumber(
+                            incoming.x,
+                            0
+                        ),
 
-      targetX: Number(incoming.x) || 0,
-      targetY: Number(incoming.y) || 0,
-      targetZ: Number(incoming.z) || 0,
+                    y:
+                        safeNumber(
+                            incoming.y,
+                            0
+                        ),
 
-      yaw: Number(incoming.yaw) || 0,
-      pitch: Number(incoming.pitch) || 0,
+                    z:
+                        safeNumber(
+                            incoming.z,
+                            0
+                        ),
 
-      targetYaw: Number(incoming.yaw) || 0,
-      targetPitch: Number(incoming.pitch) || 0,
+                    targetX:
+                        safeNumber(
+                            incoming.x,
+                            0
+                        ),
 
-      vx: Number(incoming.vx) || 0,
-      vy: Number(incoming.vy) || 0,
-      vz: Number(incoming.vz) || 0,
+                    targetY:
+                        safeNumber(
+                            incoming.y,
+                            0
+                        ),
 
-      onGround: incoming.onGround !== false,
-      crouching: !!incoming.crouching,
-      alive: incoming.alive !== false,
+                    targetZ:
+                        safeNumber(
+                            incoming.z,
+                            0
+                        ),
 
-      avatar: incoming.avatar || data.avatar || null,
+                    yaw:
+                        safeNumber(
+                            incoming.yaw,
+                            0
+                        ),
 
-      bot: null,
+                    pitch:
+                        safeNumber(
+                            incoming.pitch,
+                            0
+                        ),
 
-      lastPacket: performance.now(),
-      lastApplied: performance.now(),
+                    targetYaw:
+                        safeNumber(
+                            incoming.yaw,
+                            0
+                        ),
 
-      packetCount: 0
-    };
+                    targetPitch:
+                        safeNumber(
+                            incoming.pitch,
+                            0
+                        ),
 
-    this.remotes.set(id, remote);
+                    targetVx:
+                        safeNumber(
+                            incoming.vx,
+                            0
+                        ),
 
-    console.log(
-      "[Connections] Remote player discovered:",
-      remote.name,
-      "|",
-      id
-    );
+                    targetVy:
+                        safeNumber(
+                            incoming.vy,
+                            0
+                        ),
 
-    /*
-     * Cria UMA vez.
-     */
-    try {
-      this.createBot(remote);
-    } catch (e) {
-      console.error(
-        "[Connections] Failed creating remote bot:",
-        e
-      );
-    }
-  }
+                    targetVz:
+                        safeNumber(
+                            incoming.vz,
+                            0
+                        ),
 
-  /*
-   * Atualiza o estado existente.
-   */
-  remote.name = String(
-    incoming.name ||
-    data.name ||
-    remote.name ||
-    "Player"
-  );
+                    targetOnGround:
+                        incoming.onGround !==
+                        undefined
+                            ? !!incoming.onGround
+                            : true,
 
-  remote.team =
-    incoming.team ||
-    data.team ||
-    remote.team ||
-    "CT";
+                    targetCrouching:
+                        !!incoming.crouching,
 
-  const x = Number(incoming.x);
-  const y = Number(incoming.y);
-  const z = Number(incoming.z);
+                    alive:
+                        incoming.alive !==
+                        false,
 
-  if (Number.isFinite(x)) {
-    remote.targetX = x;
-  }
+                    avatar:
+                        incoming.avatar !==
+                        undefined
+                            ? incoming.avatar
+                            : (
+                                data.avatar ||
+                                null
+                            ),
 
-  if (Number.isFinite(y)) {
-    remote.targetY = y;
-  }
+                    avatarEnabled:
+                        incoming.avatarEnabled !==
+                        undefined
+                            ? incoming.avatarEnabled !==
+                              false
+                            : true,
 
-  if (Number.isFinite(z)) {
-    remote.targetZ = z;
-  }
+                    bot:
+                        null,
 
-  const yaw = Number(incoming.yaw);
-  const pitch = Number(incoming.pitch);
+                    lastUpdate:
+                        performance.now(),
 
-  if (Number.isFinite(yaw)) {
-    remote.targetYaw = yaw;
-  }
+                    lastApplied:
+                        performance.now(),
 
-  if (Number.isFinite(pitch)) {
-    remote.targetPitch = pitch;
-  }
+                    packetCount:
+                        0
+                };
 
-  if (Number.isFinite(Number(incoming.vx))) {
-    remote.vx = Number(incoming.vx);
-  }
+                this.remotes.set(
+                    id,
+                    remote
+                );
 
-  if (Number.isFinite(Number(incoming.vy))) {
-    remote.vy = Number(incoming.vy);
-  }
-
-  if (Number.isFinite(Number(incoming.vz))) {
-    remote.vz = Number(incoming.vz);
-  }
-
-  if (incoming.onGround !== undefined) {
-    remote.onGround = !!incoming.onGround;
-  }
-
-  if (incoming.crouching !== undefined) {
-    remote.crouching = !!incoming.crouching;
-  }
-
-  if (incoming.alive !== undefined) {
-    remote.alive = incoming.alive !== false;
-  }
-
-  if (incoming.avatar !== undefined) {
-    remote.avatar = incoming.avatar;
-  }
-
-  if (data.avatar !== undefined) {
-    remote.avatar = data.avatar;
-  }
-
-  remote.lastPacket = performance.now();
-  remote.packetCount++;
-
-  /*
-   * NÃO recria o bot se ele já existe.
-   */
-  if (!remote.bot) {
-    try {
-      this.createBot(remote);
-    } catch (e) {
-      console.error(
-        "[Connections] Failed recreating missing remote bot:",
-        e
-      );
-    }
-  }
-
-  try {
-    this.applyAvatars();
-  } catch {}
-}
+                log(
+                    "Remote player discovered:",
+                    remote.name,
+                    "|",
+                    id
+                );
+            }
 
             remote.name =
-                data.name ||
-                remote.name ||
-                "Player";
+                String(
+                    incoming.name ||
+                    data.name ||
+                    remote.name ||
+                    "Player"
+                );
 
             remote.team =
                 normalizeTeam(
+                    incoming.team ||
                     data.team ||
-                    remote.team
+                    remote.team ||
+                    "CT"
                 );
 
             remote.targetX =
                 safeNumber(
-                    data.x,
+                    incoming.x,
                     remote.targetX
                 );
 
             remote.targetY =
                 safeNumber(
-                    data.y,
+                    incoming.y,
                     remote.targetY
                 );
 
             remote.targetZ =
                 safeNumber(
-                    data.z,
+                    incoming.z,
                     remote.targetZ
                 );
 
             remote.targetYaw =
                 safeNumber(
-                    data.yaw,
+                    incoming.yaw,
                     remote.targetYaw
                 );
 
             remote.targetPitch =
                 safeNumber(
-                    data.pitch,
+                    incoming.pitch,
                     remote.targetPitch
                 );
 
             remote.targetVx =
                 safeNumber(
-                    data.vx,
+                    incoming.vx,
                     remote.targetVx
                 );
 
             remote.targetVy =
                 safeNumber(
-                    data.vy,
+                    incoming.vy,
                     remote.targetVy
                 );
 
             remote.targetVz =
                 safeNumber(
-                    data.vz,
+                    incoming.vz,
                     remote.targetVz
                 );
 
-            remote.targetOnGround =
-                !!data.onGround;
+            if (
+                incoming.onGround !==
+                undefined
+            ) {
+                remote.targetOnGround =
+                    !!incoming.onGround;
+            }
 
-            remote.targetCrouching =
-                !!data.crouching;
+            if (
+                incoming.crouching !==
+                undefined
+            ) {
+                remote.targetCrouching =
+                    !!incoming.crouching;
+            }
 
-            remote.alive =
-                data.alive !==
-                false;
+            if (
+                incoming.alive !==
+                undefined
+            ) {
+                remote.alive =
+                    incoming.alive !==
+                    false;
+            }
+
+            if (
+                incoming.avatar !==
+                undefined
+            ) {
+                remote.avatar =
+                    incoming.avatar;
+            }
+
+            if (
+                incoming.avatarEnabled !==
+                undefined
+            ) {
+                remote.avatarEnabled =
+                    incoming.avatarEnabled !==
+                    false;
+            }
 
             if (
                 data.avatar !==
@@ -3328,13 +3371,52 @@ receive(data) {
             remote.lastUpdate =
                 performance.now();
 
+            remote.packetCount++;
+
+            /*
+             * MUITO IMPORTANTE:
+             *
+             * Aqui chamamos SOMENTE attach().
+             *
+             * Não chamamos createBot() antes,
+             * porque attach() já cria o bot.
+             */
             if (
                 !remote.bot
             ) {
-                RemoteBots.attach(
+                this.attach(
                     remote
                 );
             }
+
+            /*
+             * Se o bot já existe, apenas atualiza
+             * os dados. Nunca recria.
+             */
+            if (
+                remote.bot
+            ) {
+                try {
+                    remote.bot.name =
+                        remote.name;
+                } catch {}
+
+                try {
+                    remote.bot.team =
+                        remote.team;
+                } catch {}
+
+                try {
+                    remote.bot.alive =
+                        remote.alive;
+                } catch {}
+            }
+
+            try {
+                this.applyAvatars(
+                    remote
+                );
+            } catch {}
         },
 updateBot(remote, dt) {
   const bot = remote && remote.bot;
