@@ -3373,14 +3373,6 @@
 
             remote.packetCount++;
 
-            /*
-             * MUITO IMPORTANTE:
-             *
-             * Aqui chamamos SOMENTE attach().
-             *
-             * Não chamamos createBot() antes,
-             * porque attach() já cria o bot.
-             */
             if (
                 !remote.bot
             ) {
@@ -3389,10 +3381,6 @@
                 );
             }
 
-            /*
-             * Se o bot já existe, apenas atualiza
-             * os dados. Nunca recria.
-             */
             if (
                 remote.bot
             ) {
@@ -3418,6 +3406,7 @@
                 );
             } catch {}
         },
+
 updateBot(remote, dt) {
   const bot = remote && remote.bot;
   if (!remote || !bot) return;
