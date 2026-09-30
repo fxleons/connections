@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.0.0
+// @version      1.0.1
 // @description  clutcher.io multiply players
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
@@ -19,7 +19,7 @@
             : window;
 
     const CONFIG = {
-        VERSION: "1.0.0",
+        VERSION: "1.0.1",
 
         WS_URL:
             "wss://diagram-candle-carried-forever.trycloudflare.com",
@@ -61,6 +61,8 @@
 
         matchEnding: false,
 
+        outsideMatchSince: 0,
+
         isHost: false,
 
         originalBots: [],
@@ -68,6 +70,8 @@
         originalBotArray: null,
 
         botTemplate: null,
+
+        botCtor: null,
 
         avatar: null,
 
@@ -87,7 +91,21 @@
 
         avatarTimer: null,
 
-        visibilityTimer: null
+        visibilityTimer: null,
+
+        matchSync: {
+            hostId: null,
+            roundSeq: 0,
+            lastActive: null,
+            roundEndAt: 0,
+            endAt: 0,
+            lastReceived: 0
+        },
+
+        hostRoundSeq: 0,
+        hostLastActive: null,
+        hostRoundEndAt: 0,
+        hostEndAt: 0
     };
 
     function log(...args) {
@@ -200,8 +218,8 @@
 
         try {
             if (
-                game.gameState ===
-                "playing"
+                game.gameState === "playing" ||
+                game.gameState === "teamselect"
             ) {
                 return true;
             }
@@ -209,8 +227,8 @@
 
         try {
             if (
-                game.state ===
-                "playing"
+                game.state === "playing" ||
+                game.state === "teamselect"
             ) {
                 return true;
             }
@@ -249,29 +267,30 @@
                 saved &&
                 saved.trim()
             ) {
-                return saved
-                    .trim()
-                    .slice(0, 24);
+                return saved.trim();
             }
         } catch {}
 
         let name = "Player";
 
         try {
-            const value =
+            const input =
                 prompt(
                     "Connections username:",
                     "Player"
                 );
 
             if (
-                value &&
-                value.trim()
+                input &&
+                input.trim()
             ) {
                 name =
-                    value
+                    input
                         .trim()
-                        .slice(0, 24);
+                        .slice(
+                            0,
+                            24
+                        );
             }
         } catch {}
 
@@ -287,137 +306,617 @@
 
     State.name = getName();
 
+    function sendJSON(data) {
+        if (
+            !State.ws ||
+            State.ws.readyState !==
+            WebSocket.OPEN
+        ) {
+            return false;
+        }
+
+        try {
+            State.ws.send(
+                JSON.stringify(data)
+            );
+
+            return true;
+        } catch (e) {
+            warn(
+                "WebSocket send failed:",
+                e
+            );
+
+            return false;
+        }
+    }
+
+    function safeNumber(value, fallback = 0) {
+        const n =
+            Number(value);
+
+        return Number.isFinite(n)
+            ? n
+            : fallback;
+    }
+
+    function clamp(
+        value,
+        min,
+        max
+    ) {
+        return Math.max(
+            min,
+            Math.min(
+                max,
+                value
+            )
+        );
+    }
+
+    function normalizeTeam(team) {
+        const t =
+            String(
+                team ||
+                ""
+            ).toUpperCase();
+
+        if (
+            t === "T" ||
+            t === "TERRORIST"
+        ) {
+            return "T";
+        }
+
+        return "CT";
+    }
+
+    function getVectorPosition(
+        object
+    ) {
+        if (!object) {
+            return {
+                x: 0,
+                y: 0,
+                z: 0
+            };
+        }
+
+        let x =
+            safeNumber(
+                object.x,
+                NaN
+            );
+
+        let y =
+            safeNumber(
+                object.y,
+                NaN
+            );
+
+        let z =
+            safeNumber(
+                object.z,
+                NaN
+            );
+
+        if (
+            !Number.isFinite(x) ||
+            !Number.isFinite(y) ||
+            !Number.isFinite(z)
+        ) {
+            try {
+                if (
+                    object.position
+                ) {
+                    x =
+                        safeNumber(
+                            object.position.x,
+                            0
+                        );
+
+                    y =
+                        safeNumber(
+                            object.position.y,
+                            0
+                        );
+
+                    z =
+                        safeNumber(
+                            object.position.z,
+                            0
+                        );
+                }
+            } catch {}
+        }
+
+        return {
+            x: Number.isFinite(x)
+                ? x
+                : 0,
+
+            y: Number.isFinite(y)
+                ? y
+                : 0,
+
+            z: Number.isFinite(z)
+                ? z
+                : 0
+        };
+    }
+
+    function getYaw(object) {
+        if (!object) {
+            return 0;
+        }
+
+        const candidates = [
+            object.yaw,
+            object.rotationY,
+            object.rotY
+        ];
+
+        for (
+            const value
+            of candidates
+        ) {
+            const n =
+                Number(value);
+
+            if (
+                Number.isFinite(n)
+            ) {
+                return n;
+            }
+        }
+
+        try {
+            if (
+                object.rotation
+            ) {
+                const n =
+                    Number(
+                        object.rotation.y
+                    );
+
+                if (
+                    Number.isFinite(n)
+                ) {
+                    return n;
+                }
+            }
+        } catch {}
+
+        return 0;
+    }
+
+    function getPitch(object) {
+        if (!object) {
+            return 0;
+        }
+
+        const candidates = [
+            object.pitch,
+            object.lookPitch,
+            object._lookPitch,
+            object.rotationX,
+            object.rotX
+        ];
+
+        for (
+            const value
+            of candidates
+        ) {
+            const n =
+                Number(value);
+
+            if (
+                Number.isFinite(n)
+            ) {
+                return n;
+            }
+        }
+
+        return 0;
+    }
+
+    function getVelocity(
+        object
+    ) {
+        if (!object) {
+            return {
+                x: 0,
+                y: 0,
+                z: 0
+            };
+        }
+
+        let vx =
+            safeNumber(
+                object.vx,
+                NaN
+            );
+
+        let vy =
+            safeNumber(
+                object.vy,
+                NaN
+            );
+
+        let vz =
+            safeNumber(
+                object.vz,
+                NaN
+            );
+
+        try {
+            if (
+                object.velocity
+            ) {
+                vx =
+                    safeNumber(
+                        object.velocity.x,
+                        0
+                    );
+
+                vy =
+                    safeNumber(
+                        object.velocity.y,
+                        0
+                    );
+
+                vz =
+                    safeNumber(
+                        object.velocity.z,
+                        0
+                    );
+            }
+        } catch {}
+
+        return {
+            x: Number.isFinite(vx)
+                ? vx
+                : 0,
+
+            y: Number.isFinite(vy)
+                ? vy
+                : 0,
+
+            z: Number.isFinite(vz)
+                ? vz
+                : 0
+        };
+    }
+
+    function getAlive(
+        object
+    ) {
+        if (!object) {
+            return false;
+        }
+
+        if (
+            typeof object.alive ===
+            "boolean"
+        ) {
+            return object.alive;
+        }
+
+        if (
+            typeof object.dead ===
+            "boolean"
+        ) {
+            return !object.dead;
+        }
+
+        if (
+            typeof object.health ===
+            "number"
+        ) {
+            return object.health > 0;
+        }
+
+        return true;
+    }
+
+    function getOnGround(
+        object
+    ) {
+        if (!object) {
+            return false;
+        }
+
+        if (
+            typeof object.onGround ===
+            "boolean"
+        ) {
+            return object.onGround;
+        }
+
+        if (
+            typeof object.grounded ===
+            "boolean"
+        ) {
+            return object.grounded;
+        }
+
+        if (
+            typeof object.isGrounded ===
+            "boolean"
+        ) {
+            return object.isGrounded;
+        }
+
+        return false;
+    }
+
+    function getCrouching(
+        object
+    ) {
+        if (!object) {
+            return false;
+        }
+
+        return !!(
+            object.crouching ||
+            object.crouched ||
+            object.isCrouching
+        );
+    }
+
+    function getTeam(
+        object
+    ) {
+        if (!object) {
+            return "CT";
+        }
+
+        return normalizeTeam(
+            object.team ||
+            object.side ||
+            object.teamName
+        );
+    }
+
+    function setTransform(
+        object,
+        x,
+        y,
+        z
+    ) {
+        if (!object) {
+            return;
+        }
+
+        try {
+            object.x = x;
+            object.y = y;
+            object.z = z;
+        } catch {}
+
+        try {
+            if (
+                object.position
+            ) {
+                object.position.x = x;
+                object.position.y = y;
+                object.position.z = z;
+            }
+        } catch {}
+    }
+
+    function setRotation(
+        object,
+        yaw,
+        pitch
+    ) {
+        if (!object) {
+            return;
+        }
+
+        try {
+            object.yaw = yaw;
+        } catch {}
+
+        try {
+            object.rotationY =
+                yaw;
+        } catch {}
+
+        try {
+            object.rotY =
+                yaw;
+        } catch {}
+
+        try {
+            object.pitch =
+                pitch;
+        } catch {}
+
+        try {
+            object.lookPitch =
+                pitch;
+        } catch {}
+
+        try {
+            object._lookPitch =
+                pitch;
+        } catch {}
+
+        try {
+            if (
+                object.rotation
+            ) {
+                object.rotation.y =
+                    yaw;
+            }
+        } catch {}
+    }
+
+    function setVelocity(
+        object,
+        vx,
+        vy,
+        vz
+    ) {
+        if (!object) {
+            return;
+        }
+
+        try {
+            object.vx = vx;
+            object.vy = vy;
+            object.vz = vz;
+        } catch {}
+
+        try {
+            if (
+                object.velocity
+            ) {
+                object.velocity.x =
+                    vx;
+
+                object.velocity.y =
+                    vy;
+
+                object.velocity.z =
+                    vz;
+            }
+        } catch {}
+    }
+
+    function escapeHtml(
+        value
+    ) {
+        return String(
+            value ??
+            ""
+        )
+            .replace(
+                /&/g,
+                "&amp;"
+            )
+            .replace(
+                /</g,
+                "&lt;"
+            )
+            .replace(
+                />/g,
+                "&gt;"
+            )
+            .replace(
+                /"/g,
+                "&quot;"
+            )
+            .replace(
+                /'/g,
+                "&#039;"
+            );
+    }
+
     /*
      * =========================================================
-     * AVATAR
+     * AVATAR SYSTEM
      * =========================================================
      */
 
     const Avatar = {
 
+        storeKey:
+            "pp-avatar",
+
+        stateKey:
+            "pp-avatar-on",
+
         load() {
             try {
-                State.avatar =
+                const value =
                     localStorage.getItem(
-                        "pp-avatar"
-                    ) || null;
+                        this.storeKey
+                    );
 
+                if (
+                    value &&
+                    typeof value ===
+                    "string"
+                ) {
+                    State.avatar =
+                        value;
+                }
+            } catch {}
+
+            try {
                 State.avatarEnabled =
                     localStorage.getItem(
-                        "pp-avatar-on"
-                    ) !== "0";
-
+                        this.stateKey
+                    ) !== "false";
             } catch {
-                State.avatar = null;
-                State.avatarEnabled = true;
+                State.avatarEnabled =
+                    true;
             }
 
-            State.avatarDirty = true;
+            State.avatarDirty =
+                true;
         },
 
-        get() {
+        isValid(
+            value
+        ) {
             if (
-                !State.avatarEnabled
-            ) {
-                return null;
-            }
-
-            if (
-                typeof State.avatar !==
+                typeof value !==
                 "string"
             ) {
-                return null;
+                return false;
             }
 
             if (
-                !State.avatar.startsWith(
+                !value.startsWith(
                     "data:image/"
                 )
             ) {
+                return false;
+            }
+
+            return (
+                value.length <=
+                CONFIG.AVATAR_MAX_BYTES
+            );
+        },
+
+        async readFile(
+            file
+        ) {
+            if (!file) {
                 return null;
             }
 
-            return State.avatar;
-        },
-
-        async setFile(file) {
-            if (!file) {
-                return;
-            }
-
             if (
-                !file.type.startsWith(
+                !String(
+                    file.type ||
+                    ""
+                ).startsWith(
                     "image/"
                 )
             ) {
-                UI.setMessage(
-                    "Choose an image file."
+                throw new Error(
+                    "Please choose an image."
                 );
-
-                return;
             }
 
             if (
                 file.size >
                 CONFIG.AVATAR_MAX_BYTES
             ) {
-                UI.setMessage(
+                throw new Error(
                     "Avatar is too large."
                 );
-
-                return;
             }
 
-            try {
-                const data =
-                    await Avatar.readFile(
-                        file
-                    );
-
-                State.avatar =
-                    data;
-
-                State.avatarEnabled =
-                    true;
-
-                localStorage.setItem(
-                    "pp-avatar",
-                    data
-                );
-
-                localStorage.setItem(
-                    "pp-avatar-on",
-                    "1"
-                );
-
-                State.avatarDirty =
-                    true;
-
-                UI.updateAvatar();
-
-                RemoteBots.applyAvatars();
-
-                UI.setMessage(
-                    "Avatar saved."
-                );
-
-            } catch (e) {
-
-                error(
-                    "Avatar load failed:",
-                    e
-                );
-
-                UI.setMessage(
-                    "Failed to load avatar."
-                );
-            }
-        },
-
-        readFile(file) {
-            return new Promise(
-                (resolve, reject) => {
-
+            return await new Promise(
+                (
+                    resolve,
+                    reject
+                ) => {
                     const reader =
                         new FileReader();
 
@@ -431,7 +930,13 @@
                         };
 
                     reader.onerror =
-                        reject;
+                        () => {
+                            reject(
+                                new Error(
+                                    "Could not read avatar."
+                                )
+                            );
+                        };
 
                     reader.readAsDataURL(
                         file
@@ -440,25 +945,79 @@
             );
         },
 
+        async setFile(
+            file
+        ) {
+            try {
+                const data =
+                    await this.readFile(
+                        file
+                    );
+
+                if (
+                    !this.isValid(
+                        data
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid avatar."
+                    );
+                }
+
+                State.avatar =
+                    data;
+
+                State.avatarEnabled =
+                    true;
+
+                State.avatarDirty =
+                    true;
+
+                try {
+                    localStorage.setItem(
+                        this.storeKey,
+                        data
+                    );
+
+                    localStorage.setItem(
+                        this.stateKey,
+                        "true"
+                    );
+                } catch {}
+
+                UI.setMessage(
+                    "Avatar updated."
+                );
+
+                RemoteBots.rebuildAvatars();
+
+            } catch (e) {
+                UI.setMessage(
+                    e?.message ||
+                    "Avatar failed."
+                );
+            }
+        },
+
         toggle() {
             State.avatarEnabled =
                 !State.avatarEnabled;
 
-            try {
-                localStorage.setItem(
-                    "pp-avatar-on",
-                    State.avatarEnabled
-                        ? "1"
-                        : "0"
-                );
-            } catch {}
-
             State.avatarDirty =
                 true;
 
-            UI.updateAvatar();
+            try {
+                localStorage.setItem(
+                    this.stateKey,
+                    State.avatarEnabled
+                        ? "true"
+                        : "false"
+                );
+            } catch {}
 
-            RemoteBots.applyAvatars();
+            RemoteBots.rebuildAvatars();
+
+            UI.updateAvatarControls();
         },
 
         reset() {
@@ -468,23 +1027,23 @@
             State.avatarEnabled =
                 true;
 
-            try {
-                localStorage.removeItem(
-                    "pp-avatar"
-                );
-
-                localStorage.setItem(
-                    "pp-avatar-on",
-                    "1"
-                );
-            } catch {}
-
             State.avatarDirty =
                 true;
 
-            UI.updateAvatar();
+            try {
+                localStorage.removeItem(
+                    this.storeKey
+                );
 
-            RemoteBots.applyAvatars();
+                localStorage.setItem(
+                    this.stateKey,
+                    "true"
+                );
+            } catch {}
+
+            RemoteBots.rebuildAvatars();
+
+            UI.updateAvatarControls();
 
             UI.setMessage(
                 "Avatar reset."
@@ -513,23 +1072,22 @@
             if (
                 !State.confirmedMatch
             ) {
-                UI.setMessage(
-                    "Click I AM IN A MATCH first."
-                );
-
                 return;
             }
 
-            State.connecting = true;
+            State.connecting =
+                true;
 
-            UI.updateStatus();
+            UI.updateStatus(
+                "Connecting..."
+            );
 
             log(
                 "Connecting:",
                 CONFIG.WS_URL
             );
 
-            let ws;
+            let ws = null;
 
             try {
                 ws =
@@ -537,7 +1095,6 @@
                         CONFIG.WS_URL
                     );
             } catch (e) {
-
                 State.connecting =
                     false;
 
@@ -546,57 +1103,54 @@
                     e
                 );
 
-                UI.updateStatus();
+                UI.updateStatus(
+                    "Connection failed"
+                );
 
                 return;
             }
 
-            State.ws = ws;
+            State.ws =
+                ws;
 
-            ws.addEventListener(
-                "open",
+            ws.onopen =
                 () => {
-
                     State.connecting =
                         false;
 
                     State.connected =
                         true;
 
+                    UI.updateStatus(
+                        "Connected"
+                    );
+
                     log(
                         "WebSocket connected."
                     );
 
-                    Network.send({
-                        type: "hello",
+                    this.send({
+                        type:
+                            "hello",
 
                         name:
                             State.name
                     });
 
-                    Network.send({
-                        type: "list_rooms"
+                    this.send({
+                        type:
+                            "list_rooms"
                     });
 
-                    State.avatarDirty =
-                        true;
+                    startSync();
+                };
 
-                    UI.setMessage(
-                        "Connected. Loading rooms..."
-                    );
-
-                    UI.updateStatus();
-                }
-            );
-
-            ws.addEventListener(
-                "message",
+            ws.onmessage =
                 event => {
-
-                    let msg;
+                    let data = null;
 
                     try {
-                        msg =
+                        data =
                             JSON.parse(
                                 event.data
                             );
@@ -604,13 +1158,27 @@
                         return;
                     }
 
-                    Network.handle(msg);
-                }
-            );
+                    this.handle(
+                        data
+                    );
+                };
 
-            ws.addEventListener(
-                "close",
+            ws.onerror =
+                event => {
+                    warn(
+                        "WebSocket error:",
+                        event
+                    );
+
+                    UI.updateStatus(
+                        "Socket error"
+                    );
+                };
+
+            ws.onclose =
                 () => {
+                    const wasConnected =
+                        State.connected;
 
                     State.connected =
                         false;
@@ -618,294 +1186,177 @@
                     State.connecting =
                         false;
 
-                    State.id =
+                    State.ws =
                         null;
 
-                    State.room =
-                        null;
+                    stopSync();
 
-                    State.isHost =
-                        false;
-
-                    State.avatarDirty =
-                        true;
-
-                    RemoteBots.clear();
-
-                    log(
-                        "WebSocket closed."
+                    UI.updateStatus(
+                        "Disconnected"
                     );
 
-                    UI.updateStatus();
+                    if (
+                        wasConnected
+                    ) {
+                        log(
+                            "WebSocket disconnected."
+                        );
+                    }
+                };
+        },
 
-                    UI.renderRoom();
+        disconnect() {
+            if (
+                State.ws
+            ) {
+                try {
+                    State.ws.close();
+                } catch {}
+            }
 
-                    UI.renderRooms();
-                }
-            );
+            State.ws =
+                null;
 
-            ws.addEventListener(
-                "error",
-                e => {
+            State.connected =
+                false;
 
-                    error(
-                        "WebSocket error:",
-                        e
-                    );
+            State.connecting =
+                false;
 
-                    UI.setMessage(
-                        "Connection error."
-                    );
-                }
-            );
+            stopSync();
         },
 
         send(data) {
-            if (
-                !State.ws ||
-                State.ws.readyState !==
-                WebSocket.OPEN
-            ) {
-                return false;
-            }
-
-            try {
-
-                State.ws.send(
-                    JSON.stringify(
-                        data
-                    )
-                );
-
-                return true;
-
-            } catch (e) {
-
-                error(
-                    "Send failed:",
-                    e
-                );
-
-                return false;
-            }
+            return sendJSON(
+                data
+            );
         },
 
-        handle(msg) {
-
+        handle(data) {
             if (
-                !msg ||
-                !msg.type
+                !data ||
+                typeof data !==
+                "object"
             ) {
                 return;
             }
 
-            switch (
-                msg.type
-            ) {
+            const type =
+                String(
+                    data.type ||
+                    ""
+                );
+
+            switch (type) {
 
                 case "connected": {
-
-                    const id =
-                        msg.id ??
-                        msg.clientId ??
-                        msg.playerId ??
-                        msg.client?.id;
-
                     if (
-                        id != null
+                        data.id
                     ) {
                         State.id =
-                            String(id);
+                            String(
+                                data.id
+                            );
+
+                        log(
+                            "Assigned ID:",
+                            State.id
+                        );
                     }
 
-                    log(
-                        "Assigned ID:",
-                        State.id
-                    );
+                    if (
+                        data.profile
+                    ) {
+                        UI.setMessage(
+                            `RTP: ${safeNumber(
+                                data.profile.rtp,
+                                1000
+                            )}`
+                        );
+                    }
 
                     break;
                 }
 
                 case "hello": {
-
-                    const id =
-                        msg.id ??
-                        msg.clientId ??
-                        msg.playerId ??
-                        msg.client?.id;
-
                     if (
-                        id != null
+                        data.id &&
+                        !State.id
                     ) {
                         State.id =
-                            String(id);
+                            String(
+                                data.id
+                            );
                     }
 
                     break;
                 }
 
                 case "rooms": {
-
                     State.rooms =
                         Array.isArray(
-                            msg.rooms
+                            data.rooms
                         )
-                            ? msg.rooms
+                            ? data.rooms
                             : [];
 
                     UI.renderRooms();
 
-                    UI.renderRoom();
+                    break;
+                }
+
+                case "room_snapshot": {
+                    if (
+                        Array.isArray(
+                            data.rooms
+                        )
+                    ) {
+                        State.rooms =
+                            data.rooms;
+
+                        UI.renderRooms();
+                    }
 
                     break;
                 }
 
                 case "room_joined": {
-
-                    const raw =
-                        msg.room ??
-                        msg.roomId ??
-                        msg.id ??
-                        msg.data;
-
                     const id =
-                        roomId(raw);
+                        roomId(
+                            data.room ||
+                            data.roomId
+                        );
 
-                    if (id) {
-
+                    if (
+                        id
+                    ) {
                         State.room =
                             id;
-
-                        State.matchEnding =
-                            false;
-
-                        State.avatarDirty =
-                            true;
-
-                        const room =
-                            getRoomObject(
-                                id
-                            );
-
-                        State.isHost =
-                            !!(
-                                room?.host &&
-                                State.id &&
-                                String(
-                                    room.host
-                                ) ===
-                                String(
-                                    State.id
-                                )
-                            );
-
-                        log(
-                            "Joined room:",
-                            id
-                        );
-
-                        UI.setMessage(
-                            "Joined room."
-                        );
-
-                        UI.renderRooms();
-
-                        UI.renderRoom();
                     }
+
+                    State.isHost =
+                        !!(
+                            data.isHost
+                        );
+
+                    UI.renderRoom();
+
+                    log(
+                        "Joined room:",
+                        State.room
+                    );
 
                     break;
                 }
 
                 case "player_joined": {
-
-                    const player =
-                        msg.player ||
-                        msg.client ||
-                        msg.data ||
-                        {};
-
-                    const id =
-                        msg.id ??
-                        msg.playerId ??
-                        player.id;
-
                     if (
-                        id != null &&
-                        String(id) !==
-                        String(State.id)
+                        data.player
                     ) {
-
-                        let remote =
-                            State.remotes.get(
-                                String(id)
-                            );
-
-                        if (!remote) {
-
-                            remote = {
-                                id:
-                                    String(id),
-
-                                name:
-                                    String(
-                                        msg.name ??
-                                        player.name ??
-                                        "Player"
-                                    ).slice(
-                                        0,
-                                        24
-                                    ),
-
-                                team:
-                                    player.team ===
-                                    "T"
-                                        ? "T"
-                                        : "CT",
-
-                                avatar:
-                                    player.avatar ||
-                                    null,
-
-                                current: {
-                                    x: 0,
-                                    y: 0,
-                                    z: 0,
-                                    yaw: 0,
-                                    pitch: 0,
-                                    alive: true
-                                },
-
-                                target: {
-                                    x: 0,
-                                    y: 0,
-                                    z: 0,
-                                    yaw: 0,
-                                    pitch: 0,
-                                    alive: true
-                                },
-
-                                lastPacket:
-                                    performance.now(),
-
-                                bot: null,
-
-                                lastAlive:
-                                    true
-                            };
-
-                            State.remotes.set(
-                                String(id),
-                                remote
-                            );
-
-                            RemoteBots.attach(
-                                remote
-                            );
-                        }
+                        RemoteBots.receive(
+                            data.player
+                        );
                     }
-
-                    State.avatarDirty =
-                        true;
 
                     UI.renderRoom();
 
@@ -913,18 +1364,15 @@
                 }
 
                 case "player_left": {
-
                     const id =
-                        msg.id ??
-                        msg.playerId ??
-                        msg.player?.id;
+                        data.id ||
+                        data.playerId;
 
                     if (
-                        id != null
+                        id
                     ) {
-
                         RemoteBots.remove(
-                            String(id)
+                            id
                         );
                     }
 
@@ -934,32 +1382,21 @@
                 }
 
                 case "state": {
-
-                    Network.receiveState(
-                        msg
+                    this.receiveState(
+                        data
                     );
 
                     break;
                 }
 
                 case "left_room": {
-
-                    RemoteBots.clear();
-
                     State.room =
                         null;
 
                     State.isHost =
                         false;
 
-                    State.avatarDirty =
-                        true;
-
-                    UI.setMessage(
-                        "Left room."
-                    );
-
-                    UI.renderRooms();
+                    RemoteBots.clear();
 
                     UI.renderRoom();
 
@@ -967,219 +1404,1129 @@
                 }
 
                 case "room_deleted": {
-
-                    RemoteBots.clear();
-
-                    State.room =
-                        null;
-
-                    State.isHost =
-                        false;
-
-                    UI.setMessage(
-                        msg.reason ||
-                        "Room deleted."
-                    );
-
-                    UI.renderRooms();
-
-                    UI.renderRoom();
-
-                    break;
-                }
-
-                case "error": {
-
-                    const message =
-                        msg.message ??
-                        msg.error ??
-                        "Server error";
-
-                    error(
-                        "Server error:",
-                        message
-                    );
-
-                    UI.setMessage(
-                        message
-                    );
-
-                    break;
-                }
-
-                case "pong":
-                    break;
-            }
-        },
-
-        receiveState(msg) {
-
-            let id =
-                msg.id ??
-                msg.playerId;
-
-            if (
-                !id &&
-                msg.player
-            ) {
-                id =
-                    msg.player.id;
-            }
-
-            if (
-                id == null
-            ) {
-                return;
-            }
-
-            id =
-                String(id);
-
-            if (
-                State.id &&
-                id ===
-                String(State.id)
-            ) {
-                return;
-            }
-
-            const state =
-                msg.state ??
-                msg.player ??
-                msg.data;
-
-            if (!state) {
-                return;
-            }
-
-            RemoteBots.receive(
-                id,
-                state
-            );
-        },
-
-        createRoom(
-            name,
-            maxPlayers
-        ) {
-
-            if (
-                !State.connected
-            ) {
-                UI.setMessage(
-                    "Connect first."
-                );
-
-                return;
-            }
-
-            Network.send({
-                type: "create_room",
-
-                name:
-                    name ||
-                    "Connections Room",
-
-                maxPlayers:
-                    Number(
-                        maxPlayers
-                    ) || 8
-            });
-        },
-
-        joinRoom(id) {
-
-            if (
-                !State.connected
-            ) {
-                UI.setMessage(
-                    "Not connected."
-                );
-
-                return;
-            }
-
-            const normalized =
-                roomId(id);
-
-            if (
-                !normalized
-            ) {
-                return;
-            }
-
-            log(
-                "Joining room:",
-                normalized
-            );
-
-            Network.send({
-                type: "join_room",
-
-                room:
-                    normalized,
-
-                roomId:
-                    normalized,
-
-                id:
-                    normalized
-            });
-        },
-
-        leaveRoom() {
-
-            if (
-                !State.connected
-            ) {
-                return;
-            }
-
-            Network.send({
-                type:
-                    "leave_room"
-            });
-
-            /*
-             * Do not wait for the backend
-             * to clean the local game.
-             */
-            setTimeout(
-                () => {
+                    const deleted =
+                        roomId(
+                            data.room ||
+                            data.roomId
+                        );
 
                     if (
-                        State.room
+                        deleted &&
+                        String(
+                            State.room
+                        ) ===
+                        String(
+                            deleted
+                        )
                     ) {
-
-                        RemoteBots.clear();
-
                         State.room =
                             null;
 
                         State.isHost =
                             false;
 
+                        RemoteBots.clear();
+
                         UI.renderRoom();
+                    }
+
+                    State.rooms =
+                        State.rooms.filter(
+                            room =>
+                                String(
+                                    room.id ??
+                                    room.roomId ??
+                                    ""
+                                ) !==
+                                String(
+                                    deleted
+                                )
+                        );
+
+                    UI.renderRooms();
+
+                    break;
+                }
+
+                case "room_update": {
+                    if (
+                        data.room
+                    ) {
+                        const id =
+                            roomId(
+                                data.room
+                            );
+
+                        const index =
+                            State.rooms.findIndex(
+                                room =>
+                                    String(
+                                        room.id ??
+                                        room.roomId ??
+                                        ""
+                                    ) ===
+                                    String(
+                                        id
+                                    )
+                            );
+
+                        if (
+                            index !== -1
+                        ) {
+                            State.rooms[
+                                index
+                            ] =
+                                data.room;
+                        } else {
+                            State.rooms.push(
+                                data.room
+                            );
+                        }
 
                         UI.renderRooms();
                     }
 
-                },
-                250
-            );
+                    break;
+                }
+
+                case "chat": {
+                    UI.addChatMessage(
+                        data
+                    );
+
+                    break;
+                }
+
+                case "round_state":
+                case "round": {
+                    applyMatchSnapshot(
+                        data
+                    );
+
+                    break;
+                }
+
+                case "music_event":
+                case "music_kit": {
+                    Music.handleNetwork(
+                        data
+                    );
+
+                    break;
+                }
+
+                case "head_boost": {
+                    HeadBoost.receive(
+                        data
+                    );
+
+                    break;
+                }
+
+                case "rafit_profile": {
+                    if (
+                        data.profile
+                    ) {
+                        UI.setMessage(
+                            `RTP ${safeNumber(
+                                data.profile.rtp,
+                                1000
+                            )}`
+                        );
+                    }
+
+                    break;
+                }
+
+                case "rafit_flag":
+                case "rafit_movement": {
+                    break;
+                }
+
+                case "pong": {
+                    break;
+                }
+
+                case "error": {
+                    UI.setMessage(
+                        data.message ||
+                        data.error ||
+                        "Server error."
+                    );
+
+                    warn(
+                        "Server error:",
+                        data
+                    );
+
+                    break;
+                }
+
+                default:
+                    break;
+            }
+        },
+
+        receiveState(data) {
+            const id =
+                data.id ||
+                data.playerId ||
+                data.senderId;
+
+            if (
+                !id ||
+                String(id) ===
+                String(State.id)
+            ) {
+                return;
+            }
+
+            const state =
+                data.state ||
+                data;
+
+            RemoteBots.receive({
+                id:
+                    String(id),
+
+                name:
+                    state.name ||
+                    data.name ||
+                    "Player",
+
+                team:
+                    normalizeTeam(
+                        state.team ||
+                        data.team
+                    ),
+
+                x:
+                    safeNumber(
+                        state.x,
+                        0
+                    ),
+
+                y:
+                    safeNumber(
+                        state.y,
+                        0
+                    ),
+
+                z:
+                    safeNumber(
+                        state.z,
+                        0
+                    ),
+
+                yaw:
+                    safeNumber(
+                        state.yaw,
+                        0
+                    ),
+
+                pitch:
+                    safeNumber(
+                        state.pitch,
+                        0
+                    ),
+
+                vx:
+                    safeNumber(
+                        state.vx,
+                        0
+                    ),
+
+                vy:
+                    safeNumber(
+                        state.vy,
+                        0
+                    ),
+
+                vz:
+                    safeNumber(
+                        state.vz,
+                        0
+                    ),
+
+                onGround:
+                    !!state.onGround,
+
+                crouching:
+                    !!state.crouching,
+
+                alive:
+                    state.alive !==
+                    false,
+
+                avatar:
+                    state.avatar ??
+                    data.avatar ??
+                    null,
+
+                avatarEnabled:
+                    state.avatarEnabled !==
+                    false
+            });
         }
     };
 
     /*
      * =========================================================
-     * NATIVE BOT SYSTEM
+     * LOCAL STATE SYNC
      * =========================================================
      */
+
+    function buildLocalState() {
+        const game =
+            getGame();
+
+        const player =
+            getPlayer();
+
+        if (
+            !game ||
+            !player
+        ) {
+            return null;
+        }
+
+        const position =
+            getVectorPosition(
+                player
+            );
+
+        const velocity =
+            getVelocity(
+                player
+            );
+
+        return {
+            x:
+                position.x,
+
+            y:
+                position.y,
+
+            z:
+                position.z,
+
+            yaw:
+                getYaw(
+                    player
+                ),
+
+            pitch:
+                getPitch(
+                    player
+                ),
+
+            vx:
+                velocity.x,
+
+            vy:
+                velocity.y,
+
+            vz:
+                velocity.z,
+
+            onGround:
+                getOnGround(
+                    player
+                ),
+
+            crouching:
+                getCrouching(
+                    player
+                ),
+
+            alive:
+                getAlive(
+                    player
+                ),
+
+            team:
+                getTeam(
+                    player
+                ),
+
+            name:
+                State.name,
+
+            avatar:
+                State.avatarDirty ||
+                Date.now() -
+                    State.lastAvatarSent >=
+                    CONFIG.AVATAR_SEND_INTERVAL
+                    ? (
+                        State.avatarEnabled
+                            ? State.avatar
+                            : null
+                    )
+                    : undefined,
+
+            avatarEnabled:
+                State.avatarEnabled
+        };
+    }
+
+    function sendLocalState() {
+        if (
+            !State.confirmedMatch ||
+            !State.connected ||
+            !State.room
+        ) {
+            return;
+        }
+
+        const game =
+            getGame();
+
+        if (
+            !game ||
+            !isInsideMatch(
+                game
+            )
+        ) {
+            return;
+        }
+
+        const state =
+            buildLocalState();
+
+        if (
+            !state
+        ) {
+            return;
+        }
+
+        const sent =
+            Network.send({
+                type:
+                    "state",
+
+                state
+            });
+
+        if (
+            sent
+        ) {
+            if (
+                state.avatar !==
+                undefined
+            ) {
+                State.avatarDirty =
+                    false;
+
+                State.lastAvatarSent =
+                    Date.now();
+            }
+        }
+    }
+
+    function startSync() {
+        stopSync();
+
+        State.sendTimer =
+            setInterval(
+                sendLocalState,
+                CONFIG.SEND_RATE
+            );
+    }
+
+    function stopSync() {
+        if (
+            State.sendTimer
+        ) {
+            clearInterval(
+                State.sendTimer
+            );
+
+            State.sendTimer =
+                null;
+        }
+    }
+
+    /*
+     * =========================================================
+     * MATCH / ROUND SYNC
+     * =========================================================
+     */
+
+    function getRoundSnapshot() {
+        const game =
+            getGame();
+
+        if (
+            !game
+        ) {
+            return null;
+        }
+
+        let active = false;
+
+        try {
+            active =
+                game.roundActive ===
+                true;
+        } catch {}
+
+        try {
+            if (
+                !active &&
+                game.gameState ===
+                "playing"
+            ) {
+                active = true;
+            }
+        } catch {}
+
+        let roundEndAt =
+            safeNumber(
+                game.roundEndAt,
+                0
+            );
+
+        let endAt =
+            safeNumber(
+                game.endAt,
+                0
+            );
+
+        if (
+            !roundEndAt
+        ) {
+            try {
+                roundEndAt =
+                    safeNumber(
+                        game.roundEndT,
+                        0
+                    );
+            } catch {}
+        }
+
+        if (
+            !endAt
+        ) {
+            try {
+                endAt =
+                    safeNumber(
+                        game.endT,
+                        0
+                    );
+            } catch {}
+        }
+
+        return {
+            active,
+            roundSeq:
+                State.hostRoundSeq,
+
+            roundEndAt,
+            endAt
+        };
+    }
+
+    function broadcastRoundState() {
+        if (
+            !State.isHost ||
+            !State.connected ||
+            !State.room
+        ) {
+            return;
+        }
+
+        const snapshot =
+            getRoundSnapshot();
+
+        if (
+            !snapshot
+        ) {
+            return;
+        }
+
+        const active =
+            snapshot.active;
+
+        if (
+            State.hostLastActive !==
+            active
+        ) {
+            State.hostLastActive =
+                active;
+
+            State.hostRoundSeq++;
+
+            snapshot.roundSeq =
+                State.hostRoundSeq;
+        }
+
+        State.hostRoundEndAt =
+            snapshot.roundEndAt;
+
+        State.hostEndAt =
+            snapshot.endAt;
+
+        Network.send({
+            type:
+                "round_state",
+
+            active:
+                snapshot.active,
+
+            roundSeq:
+                snapshot.roundSeq,
+
+            roundEndAt:
+                snapshot.roundEndAt,
+
+            endAt:
+                snapshot.endAt
+        });
+    }
+
+    function applyMatchAuthoritative(
+        snapshot
+    ) {
+        const game =
+            getGame();
+
+        if (
+            !game ||
+            !snapshot ||
+            State.isHost
+        ) {
+            return;
+        }
+
+        const active =
+            snapshot.active ===
+            true;
+
+        const seq =
+            Number(
+                snapshot.roundSeq
+            ) || 0;
+
+        const now =
+            Date.now();
+
+        if (
+            State.matchSync.lastActive !==
+            null &&
+            State.matchSync.lastActive !==
+            active
+        ) {
+            try {
+                if (
+                    active
+                ) {
+                    if (
+                        typeof game.startRound ===
+                        "function"
+                    ) {
+                        game.startRound();
+                    } else {
+                        game.roundActive =
+                            true;
+                    }
+                } else {
+                    if (
+                        typeof game.endRound ===
+                        "function"
+                    ) {
+                        game.endRound();
+                    } else {
+                        game.roundActive =
+                            false;
+                    }
+                }
+            } catch (e) {
+                warn(
+                    "Match transition sync failed:",
+                    e
+                );
+            }
+        }
+
+        State.matchSync.lastActive =
+            active;
+
+        State.matchSync.roundSeq =
+            seq;
+
+        State.matchSync.lastReceived =
+            now;
+
+        State.matchSync.roundEndAt =
+            Number(
+                snapshot.roundEndAt
+            ) || 0;
+
+        State.matchSync.endAt =
+            Number(
+                snapshot.endAt
+            ) || 0;
+
+        try {
+            if (
+                active
+            ) {
+                const remaining =
+                    Math.max(
+                        0,
+                        (
+                            State.matchSync.roundEndAt -
+                            now
+                        ) / 1000
+                    );
+
+                game.roundActive =
+                    true;
+
+                game.roundTimeLeft =
+                    remaining;
+
+                game.endT =
+                    0;
+            } else {
+                const remaining =
+                    Math.max(
+                        0,
+                        (
+                            State.matchSync.endAt -
+                            now
+                        ) / 1000
+                    );
+
+                game.roundActive =
+                    false;
+
+                game.roundTimeLeft =
+                    0;
+
+                game.endT =
+                    remaining;
+            }
+
+            if (
+                game.hud
+            ) {
+                if (
+                    typeof game.hud.update ===
+                    "function"
+                ) {
+                    game.hud.update();
+                }
+
+                if (
+                    typeof game.hud.updateHealth ===
+                    "function"
+                ) {
+                    game.hud.updateHealth();
+                }
+            }
+        } catch {}
+    }
+
+    function applyAuthoritativeMatchState() {
+        if (
+            !State.room ||
+            !State.connected ||
+            State.isHost
+        ) {
+            return;
+        }
+
+        if (
+            !State.matchSync.lastReceived
+        ) {
+            return;
+        }
+
+        applyMatchAuthoritative({
+            active:
+                State.matchSync.lastActive,
+
+            roundSeq:
+                State.matchSync.roundSeq,
+
+            roundEndAt:
+                State.matchSync.roundEndAt,
+
+            endAt:
+                State.matchSync.endAt
+        });
+    }
+
+    function applyMatchSnapshot(
+        snapshot
+    ) {
+        applyMatchAuthoritative(
+            snapshot
+        );
+    }
+
+    /*
+     * =========================================================
+     * HEAD BOOST
+     * =========================================================
+     */
+
+    const HeadBoost = {
+
+        receive(data) {
+            if (
+                !data ||
+                !data.targetId
+            ) {
+                return;
+            }
+
+            const target =
+                State.remotes.get(
+                    String(
+                        data.targetId
+                    )
+                );
+
+            if (
+                !target
+            ) {
+                return;
+            }
+
+            target.headBoost =
+                {
+                    active:
+                        data.active !==
+                        false,
+
+                    carrierId:
+                        data.carrierId ||
+                        null
+                };
+        },
+
+        send(
+            targetId,
+            active,
+            carrierId
+        ) {
+            if (
+                !State.connected ||
+                !State.room
+            ) {
+                return;
+            }
+
+            Network.send({
+                type:
+                    "head_boost",
+
+                targetId:
+                    String(
+                        targetId
+                    ),
+
+                active:
+                    !!active,
+
+                carrierId:
+                    carrierId
+                        ? String(
+                            carrierId
+                        )
+                        : null
+            });
+        }
+    };
+
+    /*
+     * =========================================================
+     * MUSIC
+     * =========================================================
+     */
+
+    const Music = {
+
+        current:
+            null,
+
+        audio:
+            null,
+
+        stop() {
+            if (
+                this.audio
+            ) {
+                try {
+                    this.audio.pause();
+                    this.audio.currentTime =
+                        0;
+                } catch {}
+            }
+
+            this.audio =
+                null;
+
+            this.current =
+                null;
+        },
+
+        play(url) {
+            this.stop();
+
+            if (
+                !url ||
+                typeof url !==
+                "string"
+            ) {
+                return;
+            }
+
+            try {
+                const audio =
+                    new Audio(
+                        url
+                    );
+
+                audio.volume =
+                    0.75;
+
+                audio.loop =
+                    false;
+
+                this.audio =
+                    audio;
+
+                this.current =
+                    url;
+
+                const promise =
+                    audio.play();
+
+                if (
+                    promise &&
+                    typeof promise.catch ===
+                    "function"
+                ) {
+                    promise.catch(
+                        () => {}
+                    );
+                }
+            } catch {}
+        },
+
+        handleNetwork(data) {
+            if (
+                !data
+            ) {
+                return;
+            }
+
+            const event =
+                String(
+                    data.event ||
+                    data.action ||
+                    ""
+                );
+
+            if (
+                event === "stop" ||
+                data.stop === true
+            ) {
+                this.stop();
+                return;
+            }
+
+            if (
+                data.url
+            ) {
+                this.play(
+                    data.url
+                );
+            }
+        },
+
+        stopForMatchEnd() {
+            this.stop();
+        }
+    };
+
+    /*
+     * =========================================================
+     * REMOTE BOT SYSTEM
+     * =========================================================
+     */
+
+    function collisionSafeRemoteTarget(
+        bot,
+        target,
+        dt
+    ) {
+        const game =
+            getGame();
+
+        const physics =
+            game &&
+            game.physics;
+
+        if (
+            !physics ||
+            typeof physics.raycast !==
+            "function"
+        ) {
+            return target;
+        }
+
+        const fromX =
+            Number(bot.x) ||
+            0;
+
+        const fromY =
+            Number(bot.y) ||
+            0;
+
+        const fromZ =
+            Number(bot.z) ||
+            0;
+
+        const toX =
+            Number(target.x) ||
+            fromX;
+
+        const toY =
+            Number(target.y) ||
+            fromY;
+
+        const toZ =
+            Number(target.z) ||
+            fromZ;
+
+        let dx =
+            toX -
+            fromX;
+
+        let dy =
+            toY -
+            fromY;
+
+        let dz =
+            toZ -
+            fromZ;
+
+        const distance =
+            Math.sqrt(
+                dx * dx +
+                dy * dy +
+                dz * dz
+            );
+
+        if (
+            !Number.isFinite(
+                distance
+            ) ||
+            distance <
+            0.0001
+        ) {
+            return target;
+        }
+
+        const maxStep =
+            Math.max(
+                0.35,
+                Math.min(
+                    2.5,
+                    7.0 *
+                    Math.max(
+                        dt,
+                        0.016
+                    )
+                )
+            );
+
+        if (
+            distance >
+            maxStep
+        ) {
+            const scale =
+                maxStep /
+                distance;
+
+            dx *= scale;
+            dy *= scale;
+            dz *= scale;
+        }
+
+        const stepDistance =
+            Math.sqrt(
+                dx * dx +
+                dy * dy +
+                dz * dz
+            );
+
+        if (
+            stepDistance <
+            0.0001
+        ) {
+            return {
+                x:
+                    fromX,
+
+                y:
+                    fromY,
+
+                z:
+                    fromZ
+            };
+        }
+
+        try {
+            const result =
+                physics.raycast(
+                    fromX,
+                    fromY,
+                    fromZ,
+                    dx,
+                    dy,
+                    dz,
+                    stepDistance
+                );
+
+            if (
+                result
+            ) {
+                return {
+                    x:
+                        fromX,
+
+                    y:
+                        fromY,
+
+                    z:
+                        fromZ
+                };
+            }
+        } catch {}
+
+        return {
+            x:
+                fromX +
+                dx,
+
+            y:
+                fromY +
+                dy,
+
+            z:
+                fromZ +
+                dz
+        };
+    }
 
     const RemoteBots = {
 
         preparePool() {
-
             const game =
                 getGame();
 
@@ -1192,7 +2539,6 @@
                     mgr.bots
                 )
             ) {
-
                 warn(
                     "botMgr.bots unavailable."
                 );
@@ -1207,7 +2553,7 @@
             }
 
             if (
-                State.originalBots.length
+                State.botCtor
             ) {
                 return true;
             }
@@ -1215,54 +2561,216 @@
             State.preparingBots =
                 true;
 
-            log(
-                "Preparing native bot removal:",
-                mgr.bots.length
-            );
+            const existingBots =
+                [
+                    ...mgr.bots
+                ];
 
             State.originalBotArray =
                 mgr.bots;
 
             State.originalBots =
-                [...mgr.bots];
+                existingBots;
 
             State.botTemplate =
-                mgr.bots[0] || null;
+                existingBots[0] ||
+                null;
 
-            /*
-             * Completely remove the normal
-             * AI bots from the game's active
-             * bot list.
-             */
+            log(
+                "Preparing native bot system:",
+                existingBots.length
+            );
+
+            if (
+                !State.botCtor &&
+                !existingBots.length
+            ) {
+                try {
+                    const player =
+                        getPlayer();
+
+                    const team =
+                        player?.team ===
+                        "T"
+                            ? "T"
+                            : "CT";
+
+                    if (
+                        typeof mgr.setup ===
+                        "function"
+                    ) {
+                        log(
+                            "No native bots present. Bootstrapping one temporary native bot to capture the constructor."
+                        );
+
+                        mgr.setup(
+                            1,
+                            3,
+                            team
+                        );
+
+                        const bootstrap =
+                            mgr.bots.find(
+                                b =>
+                                    b &&
+                                    b.team !==
+                                        undefined &&
+                                    typeof b.constructor ===
+                                        "function"
+                            );
+
+                        if (
+                            bootstrap
+                        ) {
+                            State.botCtor =
+                                bootstrap.constructor;
+
+                            log(
+                                "REAL BOT CONSTRUCTOR CAPTURED:",
+                                State.botCtor.name ||
+                                "(anonymous)"
+                            );
+                        }
+
+                        for (
+                            const bot
+                            of [
+                                ...mgr.bots
+                            ]
+                        ) {
+                            try {
+                                bot.alive =
+                                    false;
+
+                                bot.dead =
+                                    true;
+
+                                if (
+                                    typeof bot.die ===
+                                    "function"
+                                ) {
+                                    bot.die();
+                                }
+
+                                if (
+                                    typeof bot.despawn ===
+                                    "function"
+                                ) {
+                                    bot.despawn();
+                                }
+
+                                if (
+                                    bot.cs2Agent?.root?.parent
+                                ) {
+                                    bot.cs2Agent.root.parent.remove(
+                                        bot.cs2Agent.root
+                                    );
+                                }
+
+                                if (
+                                    bot.mesh?.parent
+                                ) {
+                                    bot.mesh.parent.remove(
+                                        bot.mesh
+                                    );
+                                }
+
+                                if (
+                                    bot.shadow?.parent
+                                ) {
+                                    bot.shadow.parent.remove(
+                                        bot.shadow
+                                    );
+                                }
+                            } catch {}
+                        }
+
+                        mgr.bots.length =
+                            0;
+                    }
+                } catch (e) {
+                    warn(
+                        "Temporary native bot bootstrap failed:",
+                        e
+                    );
+                }
+            }
+
+            if (
+                !State.botCtor
+            ) {
+                const found =
+                    existingBots.find(
+                        b =>
+                            b &&
+                            b.team !==
+                                undefined &&
+                            typeof b.constructor ===
+                                "function"
+                    );
+
+                if (
+                    found
+                ) {
+                    State.botCtor =
+                        found.constructor;
+
+                    log(
+                        "REAL BOT CONSTRUCTOR CAPTURED:",
+                        State.botCtor.name ||
+                        "(anonymous)"
+                    );
+                }
+            }
+
+            if (
+                !State.botCtor
+            ) {
+                State.preparingBots =
+                    false;
+
+                State.originalBots =
+                    [];
+
+                State.originalBotArray =
+                    null;
+
+                State.botTemplate =
+                    null;
+
+                warn(
+                    "Could not capture the native bot constructor."
+                );
+
+                return false;
+            }
+
             for (
                 const bot
-                of State.originalBots
+                of existingBots
             ) {
-
                 RemoteBots.disableBot(
                     bot
                 );
             }
 
             try {
-
                 mgr.bots.length =
                     0;
-
             } catch {}
 
             State.preparingBots =
                 false;
 
             log(
-                "Native AI bots removed from active manager."
+                "Native AI bots removed from active manager.",
+                existingBots.length
             );
 
             return true;
         },
 
         disableBot(bot) {
-
             if (!bot) {
                 return;
             }
@@ -1319,28 +2827,22 @@
             } catch {}
 
             try {
-
                 if (
                     bot.cs2Agent?.root
                 ) {
-
                     bot.cs2Agent.root.visible =
                         false;
                 }
-
             } catch {}
 
             try {
-
                 if (
                     typeof bot.update ===
                     "function"
                 ) {
-
                     if (
                         !bot.__connectionsOriginalUpdate
                     ) {
-
                         bot.__connectionsOriginalUpdate =
                             bot.update;
                     }
@@ -1348,7 +2850,6 @@
                     bot.update =
                         function() {};
                 }
-
             } catch {}
         },
 
@@ -1357,7 +2858,6 @@
         },
 
         createBot(remote) {
-
             const game =
                 getGame();
 
@@ -1377,7 +2877,6 @@
                 mgr.bots.length >=
                 CONFIG.MAX_REMOTE_BOTS
             ) {
-
                 warn(
                     "Maximum remote bot count reached."
                 );
@@ -1385,14 +2884,13 @@
                 return null;
             }
 
-            const template =
-                State.botTemplate;
+            const ctor =
+                State.botCtor;
 
             if (
-                !template ||
-                !template.constructor
+                typeof ctor !==
+                "function"
             ) {
-
                 warn(
                     "No native bot constructor available."
                 );
@@ -1400,23 +2898,22 @@
                 return null;
             }
 
-            let bot = null;
+            let bot =
+                null;
 
             try {
-
                 bot =
-                    new template.constructor(
+                    new ctor(
                         game,
-
-                        remote.team,
-
-                        remote.name,
-
+                        remote.team ===
+                            "T"
+                            ? "T"
+                            : "CT",
+                        remote.name ||
+                            "Player",
                         3
                     );
-
             } catch (e) {
-
                 error(
                     "Native bot constructor failed:",
                     e
@@ -1439,20 +2936,16 @@
                 null;
 
             try {
-
                 if (
                     typeof bot.update ===
                     "function"
                 ) {
-
                     bot.__connectionsOriginalUpdate =
                         bot.update;
-
                 }
 
                 bot.update =
                     function() {};
-
             } catch {}
 
             try {
@@ -1465,7 +2958,6 @@
         },
 
         attach(remote) {
-
             const game =
                 getGame();
 
@@ -1486,8 +2978,9 @@
                     remote
                 );
 
-            if (!bot) {
-
+            if (
+                !bot
+            ) {
                 UI.setMessage(
                     "Could not create remote player."
                 );
@@ -1511,54 +3004,50 @@
                 remote.name;
 
             bot.team =
-                remote.team;
+                normalizeTeam(
+                    remote.team
+                );
 
             bot.difficulty =
                 3;
 
             bot.isPlayer =
-                false;
+                true;
 
             bot.alive =
-                remote.target.alive;
+                remote.alive !==
+                false;
 
-            if (
-                typeof bot.health !==
-                "number"
-            ) {
-                bot.health =
-                    100;
-            }
+            bot.health =
+                bot.alive
+                    ? 100
+                    : 0;
 
             try {
-
                 if (
                     typeof bot.spawn ===
                     "function"
                 ) {
-
-                    bot.respawnT =
-                        0;
-
                     bot.spawn();
                 }
-
             } catch (e) {
-
                 warn(
-                    "bot.spawn() failed:",
+                    "Remote bot spawn failed:",
                     e
                 );
             }
 
-            bot.update =
-                function(dt) {
-
-                    RemoteBots.updateBot(
-                        remote,
+            try {
+                bot.update =
+                    function(
                         dt
-                    );
-                };
+                    ) {
+                        RemoteBots.updateBot(
+                            remote,
+                            dt
+                        );
+                    };
+            } catch {}
 
             RemoteBots.applyImmediate(
                 remote
@@ -1566,124 +3055,189 @@
 
             RemoteBots.rebuildAvatars();
 
-            RemoteBots.applyAvatars();
-
             log(
                 "Remote bot attached:",
                 remote.name,
+                "|",
                 remote.id
             );
         },
 
-        receive(
-            id,
-            state
-        ) {
+        receive(data) {
+            if (
+                !data ||
+                !data.id
+            ) {
+                return;
+            }
 
-            id =
-                String(id);
+            const id =
+                String(
+                    data.id
+                );
+
+            if (
+                State.id &&
+                id ===
+                String(
+                    State.id
+                )
+            ) {
+                return;
+            }
 
             let remote =
-                State.remotes.get(id);
+                State.remotes.get(
+                    id
+                );
 
-            if (!remote) {
-
+            if (
+                !remote
+            ) {
                 remote = {
-
                     id,
 
                     name:
-                        String(
-                            state.name ||
-                            "Player"
-                        ).slice(
-                            0,
-                            24
-                        ),
+                        data.name ||
+                        "Player",
 
                     team:
-                        state.team ===
-                        "T"
-                            ? "T"
-                            : "CT",
-
-                    avatar:
-                        typeof state.avatar ===
-                        "string"
-                            ? state.avatar
-                            : null,
-
-                    current: {
-                        x:
-                            Number(
-                                state.x
-                            ) || 0,
-
-                        y:
-                            Number(
-                                state.y
-                            ) || 0,
-
-                        z:
-                            Number(
-                                state.z
-                            ) || 0,
-
-                        yaw:
-                            Number(
-                                state.yaw
-                            ) || 0,
-
-                        pitch:
-                            Number(
-                                state.pitch
-                            ) || 0,
-
-                        alive:
-                            state.alive !==
-                            false
-                    },
-
-                    target: {
-                        x:
-                            Number(
-                                state.x
-                            ) || 0,
-
-                        y:
-                            Number(
-                                state.y
-                            ) || 0,
-
-                        z:
-                            Number(
-                                state.z
-                            ) || 0,
-
-                        yaw:
-                            Number(
-                                state.yaw
-                            ) || 0,
-
-                        pitch:
-                            Number(
-                                state.pitch
-                            ) || 0,
-
-                        alive:
-                            state.alive !==
-                            false
-                    },
-
-                    lastPacket:
-                        performance.now(),
+                        normalizeTeam(
+                            data.team
+                        ),
 
                     bot:
                         null,
 
-                    lastAlive:
-                        state.alive !==
-                        false
+                    x:
+                        safeNumber(
+                            data.x,
+                            0
+                        ),
+
+                    y:
+                        safeNumber(
+                            data.y,
+                            0
+                        ),
+
+                    z:
+                        safeNumber(
+                            data.z,
+                            0
+                        ),
+
+                    yaw:
+                        safeNumber(
+                            data.yaw,
+                            0
+                        ),
+
+                    pitch:
+                        safeNumber(
+                            data.pitch,
+                            0
+                        ),
+
+                    vx:
+                        safeNumber(
+                            data.vx,
+                            0
+                        ),
+
+                    vy:
+                        safeNumber(
+                            data.vy,
+                            0
+                        ),
+
+                    vz:
+                        safeNumber(
+                            data.vz,
+                            0
+                        ),
+
+                    onGround:
+                        !!data.onGround,
+
+                    crouching:
+                        !!data.crouching,
+
+                    alive:
+                        data.alive !==
+                        false,
+
+                    targetX:
+                        safeNumber(
+                            data.x,
+                            0
+                        ),
+
+                    targetY:
+                        safeNumber(
+                            data.y,
+                            0
+                        ),
+
+                    targetZ:
+                        safeNumber(
+                            data.z,
+                            0
+                        ),
+
+                    targetYaw:
+                        safeNumber(
+                            data.yaw,
+                            0
+                        ),
+
+                    targetPitch:
+                        safeNumber(
+                            data.pitch,
+                            0
+                        ),
+
+                    targetVx:
+                        safeNumber(
+                            data.vx,
+                            0
+                        ),
+
+                    targetVy:
+                        safeNumber(
+                            data.vy,
+                            0
+                        ),
+
+                    targetVz:
+                        safeNumber(
+                            data.vz,
+                            0
+                        ),
+
+                    targetOnGround:
+                        !!data.onGround,
+
+                    targetCrouching:
+                        !!data.crouching,
+
+                    avatar:
+                        data.avatar ||
+                        null,
+
+                    avatarEnabled:
+                        data.avatarEnabled !==
+                        false,
+
+                    lastUpdate:
+                        performance.now(),
+
+                    previousAlive:
+                        data.alive !==
+                        false,
+
+                    headBoost:
+                        null
                 };
 
                 State.remotes.set(
@@ -1694,139 +3248,95 @@
                 RemoteBots.attach(
                     remote
                 );
-
-                return;
             }
 
-            const x =
-                Number(
-                    state.x
+            remote.name =
+                data.name ||
+                remote.name ||
+                "Player";
+
+            remote.team =
+                normalizeTeam(
+                    data.team ||
+                    remote.team
                 );
 
-            const y =
-                Number(
-                    state.y
+            remote.targetX =
+                safeNumber(
+                    data.x,
+                    remote.targetX
                 );
 
-            const z =
-                Number(
-                    state.z
+            remote.targetY =
+                safeNumber(
+                    data.y,
+                    remote.targetY
                 );
 
-            const yaw =
-                Number(
-                    state.yaw
+            remote.targetZ =
+                safeNumber(
+                    data.z,
+                    remote.targetZ
                 );
 
-            const pitch =
-                Number(
-                    state.pitch
+            remote.targetYaw =
+                safeNumber(
+                    data.yaw,
+                    remote.targetYaw
                 );
 
-            if (
-                Number.isFinite(x)
-            ) {
-                remote.target.x =
-                    x;
-            }
+            remote.targetPitch =
+                safeNumber(
+                    data.pitch,
+                    remote.targetPitch
+                );
 
-            if (
-                Number.isFinite(y)
-            ) {
-                remote.target.y =
-                    y;
-            }
+            remote.targetVx =
+                safeNumber(
+                    data.vx,
+                    remote.targetVx
+                );
 
-            if (
-                Number.isFinite(z)
-            ) {
-                remote.target.z =
-                    z;
-            }
+            remote.targetVy =
+                safeNumber(
+                    data.vy,
+                    remote.targetVy
+                );
 
-            if (
-                Number.isFinite(yaw)
-            ) {
-                remote.target.yaw =
-                    yaw;
-            }
+            remote.targetVz =
+                safeNumber(
+                    data.vz,
+                    remote.targetVz
+                );
 
-            if (
-                Number.isFinite(pitch)
-            ) {
-                remote.target.pitch =
-                    pitch;
-            }
+            remote.targetOnGround =
+                !!data.onGround;
 
-            remote.target.alive =
-                state.alive !==
+            remote.targetCrouching =
+                !!data.crouching;
+
+            remote.alive =
+                data.alive !==
                 false;
 
             if (
-                typeof state.avatar ===
-                "string"
+                data.avatar !==
+                undefined
             ) {
-
-                if (
-                    remote.avatar !==
-                    state.avatar
-                ) {
-
-                    remote.avatar =
-                        state.avatar;
-
-                    RemoteBots.applyAvatars();
-                }
-
-            } else if (
-                state.avatar ===
-                null
-            ) {
-
                 remote.avatar =
-                    null;
-
-                RemoteBots.applyAvatars();
+                    data.avatar;
             }
 
             if (
-                state.name
+                data.avatarEnabled !==
+                undefined
             ) {
-
-                remote.name =
-                    String(
-                        state.name
-                    ).slice(
-                        0,
-                        24
-                    );
+                remote.avatarEnabled =
+                    data.avatarEnabled !==
+                    false;
             }
 
-            if (
-                state.team ===
-                "T" ||
-                state.team ===
-                "CT"
-            ) {
-
-                if (
-                    remote.team !==
-                    state.team
-                ) {
-
-                    remote.team =
-                        state.team;
-
-                    if (
-                        remote.bot
-                    ) {
-                        remote.bot.team =
-                            state.team;
-                    }
-                }
-            }
-
-            remote.lastPacket =
+            remote.lastUpdate =
                 performance.now();
 
             if (
@@ -1837,377 +3347,738 @@
                 );
             }
         },
-
-        updateBot(
-            remote,
-            dt
-        ) {
-
-            const bot =
-                remote.bot;
-
+        updateBot(remote, dt) {
             if (
-                !bot
+                !remote ||
+                !remote.bot
             ) {
                 return;
             }
 
-            const delta =
+            const bot =
+                remote.bot;
+
+            const frameDt =
+                clamp(
+                    safeNumber(
+                        dt,
+                        0.016
+                    ),
+                    0.001,
+                    0.1
+                );
+
+            const current = {
+                x:
+                    safeNumber(
+                        bot.x,
+                        remote.x
+                    ),
+
+                y:
+                    safeNumber(
+                        bot.y,
+                        remote.y
+                    ),
+
+                z:
+                    safeNumber(
+                        bot.z,
+                        remote.z
+                    )
+            };
+
+            const target = {
+                x:
+                    safeNumber(
+                        remote.targetX,
+                        current.x
+                    ),
+
+                y:
+                    safeNumber(
+                        remote.targetY,
+                        current.y
+                    ),
+
+                z:
+                    safeNumber(
+                        remote.targetZ,
+                        current.z
+                    )
+            };
+
+            /*
+             * Never teleport the native bot directly to a
+             * network packet. The local game collision system
+             * gets a chance to reject/block the movement.
+             */
+            const safeTarget =
+                collisionSafeRemoteTarget(
+                    bot,
+                    target,
+                    frameDt
+                );
+
+            const interpolation =
+                1 -
+                Math.exp(
+                    -CONFIG.INTERPOLATION *
+                    frameDt
+                );
+
+            let nextX =
+                current.x +
+                (
+                    safeTarget.x -
+                    current.x
+                ) *
+                interpolation;
+
+            let nextY =
+                current.y +
+                (
+                    safeTarget.y -
+                    current.y
+                ) *
+                interpolation;
+
+            let nextZ =
+                current.z +
+                (
+                    safeTarget.z -
+                    current.z
+                ) *
+                interpolation;
+
+            /*
+             * Final movement clamp. This is deliberately small
+             * enough that a bad packet cannot launch the native
+             * player through half the map.
+             */
+            const dx =
+                nextX -
+                current.x;
+
+            const dy =
+                nextY -
+                current.y;
+
+            const dz =
+                nextZ -
+                current.z;
+
+            const movement =
+                Math.sqrt(
+                    dx * dx +
+                    dy * dy +
+                    dz * dz
+                );
+
+            const maxMovement =
                 Math.max(
-                    0.016,
-
+                    0.08,
                     Math.min(
-                        Number(dt) ||
-                        0.016,
-
-                        0.1
+                        0.75,
+                        8 *
+                        frameDt
                     )
                 );
 
-            const factor =
-                1 -
-                Math.exp(
-                    -(
-                        CONFIG.INTERPOLATION *
-                        delta
-                    ) /
-                    100
-                );
+            if (
+                movement >
+                maxMovement
+            ) {
+                const scale =
+                    maxMovement /
+                    movement;
 
-            const oldX =
-                remote.current.x;
+                nextX =
+                    current.x +
+                    dx * scale;
 
-            const oldZ =
-                remote.current.z;
+                nextY =
+                    current.y +
+                    dy * scale;
 
-            remote.current.x +=
-                (
-                    remote.target.x -
-                    remote.current.x
-                ) *
-                factor;
+                nextZ =
+                    current.z +
+                    dz * scale;
+            }
 
-            remote.current.y +=
-                (
-                    remote.target.y -
-                    remote.current.y
-                ) *
-                factor;
-
-            remote.current.z +=
-                (
-                    remote.target.z -
-                    remote.current.z
-                ) *
-                factor;
-
-            remote.current.yaw =
-                RemoteBots.lerpAngle(
-                    remote.current.yaw,
-
-                    remote.target.yaw,
-
-                    factor
-                );
-
-            remote.current.pitch +=
-                (
-                    remote.target.pitch -
-                    remote.current.pitch
-                ) *
-                factor;
-
-            remote.current.alive =
-                remote.target.alive;
-
-            const vx =
-                (
-                    remote.current.x -
-                    oldX
-                ) / delta;
-
-            const vz =
-                (
-                    remote.current.z -
-                    oldZ
-                ) / delta;
-
-            bot.x =
-                remote.current.x;
-
-            bot.y =
-                remote.current.y;
-
-            bot.z =
-                remote.current.z;
-
-            bot.yaw =
-                remote.current.yaw;
-
-            bot.pitch =
-                remote.current.pitch;
-
-            bot._lookPitch =
-                remote.current.pitch;
-
-            bot._visY =
-                bot.y;
-
-            bot.team =
-                remote.team;
-
-            bot.name =
-                remote.name;
+            setTransform(
+                bot,
+                nextX,
+                nextY,
+                nextZ
+            );
 
             /*
-             * Do not overwrite health every frame.
-             *
-             * This lets the native damage system
-             * actually damage the remote bot.
+             * Rotation is synchronized separately from movement.
+             * This prevents the old problem where the body moved
+             * correctly but the native look direction stayed behind.
              */
-            bot.alive =
-                remote.current.alive;
+            let currentYaw =
+                safeNumber(
+                    getYaw(bot),
+                    remote.targetYaw
+                );
 
-            bot.vx =
-                vx;
+            let targetYaw =
+                safeNumber(
+                    remote.targetYaw,
+                    currentYaw
+                );
 
-            bot.vy =
-                0;
+            let yawDelta =
+                targetYaw -
+                currentYaw;
 
-            bot.vz =
-                vz;
+            while (
+                yawDelta >
+                Math.PI
+            ) {
+                yawDelta -=
+                    Math.PI * 2;
+            }
 
-            bot.onGround =
-                true;
+            while (
+                yawDelta <
+                -Math.PI
+            ) {
+                yawDelta +=
+                    Math.PI * 2;
+            }
+
+            currentYaw +=
+                yawDelta *
+                interpolation;
+
+            let currentPitch =
+                safeNumber(
+                    getPitch(bot),
+                    remote.targetPitch
+                );
+
+            const targetPitch =
+                safeNumber(
+                    remote.targetPitch,
+                    currentPitch
+                );
+
+            currentPitch +=
+                (
+                    targetPitch -
+                    currentPitch
+                ) *
+                interpolation;
+
+            setRotation(
+                bot,
+                currentYaw,
+                currentPitch
+            );
+
+            /*
+             * Estimate local velocity from the actual movement
+             * instead of blindly trusting network velocity.
+             */
+            const localVx =
+                (
+                    nextX -
+                    current.x
+                ) /
+                frameDt;
+
+            const localVy =
+                (
+                    nextY -
+                    current.y
+                ) /
+                frameDt;
+
+            const localVz =
+                (
+                    nextZ -
+                    current.z
+                ) /
+                frameDt;
+
+            const networkVx =
+                safeNumber(
+                    remote.targetVx,
+                    localVx
+                );
+
+            const networkVy =
+                safeNumber(
+                    remote.targetVy,
+                    localVy
+                );
+
+            const networkVz =
+                safeNumber(
+                    remote.targetVz,
+                    localVz
+                );
+
+            /*
+             * Blend network velocity with actual local velocity.
+             * This makes jumping/falling look much less robotic.
+             */
+            setVelocity(
+                bot,
+                localVx * 0.65 +
+                    networkVx * 0.35,
+
+                localVy * 0.65 +
+                    networkVy * 0.35,
+
+                localVz * 0.65 +
+                    networkVz * 0.35
+            );
 
             try {
+                bot.onGround =
+                    !!remote.targetOnGround;
+            } catch {}
 
+            try {
+                bot.grounded =
+                    !!remote.targetOnGround;
+            } catch {}
+
+            try {
+                bot.isGrounded =
+                    !!remote.targetOnGround;
+            } catch {}
+
+            try {
+                bot.crouching =
+                    !!remote.targetCrouching;
+            } catch {}
+
+            try {
+                bot.crouched =
+                    !!remote.targetCrouching;
+            } catch {}
+
+            try {
+                bot.team =
+                    normalizeTeam(
+                        remote.team
+                    );
+            } catch {}
+
+            try {
+                bot.name =
+                    remote.name;
+            } catch {}
+
+            try {
+                bot._visY =
+                    nextY;
+            } catch {}
+
+            /*
+             * Some versions of the Clutcher engine use a CS2
+             * collision/body object underneath the bot.
+             */
+            try {
                 if (
                     typeof bot._updateCS2Body ===
                     "function"
                 ) {
-
-                    bot._updateCS2Body(
-                        delta,
-                        getGame()
-                    );
+                    bot._updateCS2Body();
                 }
+            } catch {}
 
-            } catch (e) {
+            try {
+                const agent =
+                    bot.cs2Agent;
 
                 if (
-                    !bot.__connectionsBodyError
+                    agent
                 ) {
+                    if (
+                        typeof agent.setTransform ===
+                        "function"
+                    ) {
+                        agent.setTransform(
+                            nextX,
+                            nextY,
+                            nextZ
+                        );
+                    }
 
-                    bot.__connectionsBodyError =
-                        true;
+                    if (
+                        typeof agent.setPitch ===
+                        "function"
+                    ) {
+                        agent.setPitch(
+                            currentPitch
+                        );
+                    }
 
-                    warn(
-                        "CS2 body error:",
-                        e
-                    );
+                    if (
+                        typeof agent.update ===
+                        "function"
+                    ) {
+                        agent.update(
+                            frameDt,
+                            false,
+                            remote.targetCrouching
+                                ? 1
+                                : 0
+                        );
+                    }
+                }
+            } catch {}
+
+            /*
+             * Keep the render root synchronized too.
+             */
+            try {
+                const root =
+                    bot.cs2Agent?.root;
+
+                if (
+                    root
+                ) {
+                    if (
+                        root.position
+                    ) {
+                        root.position.x =
+                            nextX;
+
+                        root.position.y =
+                            nextY;
+
+                        root.position.z =
+                            nextZ;
+                    }
+
+                    if (
+                        root.rotation
+                    ) {
+                        root.rotation.y =
+                            currentYaw;
+                    }
+                }
+            } catch {}
+
+            /*
+             * Native visual objects.
+             */
+            try {
+                if (
+                    bot.mesh?.position
+                ) {
+                    bot.mesh.position.x =
+                        nextX;
+
+                    bot.mesh.position.y =
+                        nextY;
+
+                    bot.mesh.position.z =
+                        nextZ;
+                }
+            } catch {}
+
+            try {
+                if (
+                    bot.shadow?.position
+                ) {
+                    bot.shadow.position.x =
+                        nextX;
+
+                    bot.shadow.position.y =
+                        nextY;
+
+                    bot.shadow.position.z =
+                        nextZ;
+                }
+            } catch {}
+
+            /*
+             * Visibility/alive state.
+             */
+            if (
+                remote.previousAlive !==
+                remote.alive
+            ) {
+                remote.previousAlive =
+                    remote.alive;
+
+                try {
+                    bot.alive =
+                        remote.alive;
+                } catch {}
+
+                try {
+                    bot.health =
+                        remote.alive
+                            ? 100
+                            : 0;
+                } catch {}
+
+                if (
+                    !remote.alive
+                ) {
+                    try {
+                        if (
+                            typeof bot.die ===
+                            "function"
+                        ) {
+                            bot.die();
+                        }
+                    } catch {}
                 }
             }
 
             try {
-
-                const agent =
-                    bot.cs2Agent;
-
-                if (!agent) {
-                    return;
-                }
-
                 if (
-                    typeof agent.setTransform ===
-                    "function"
+                    bot.cs2Agent?.root
                 ) {
-
-                    agent.setTransform(
-                        bot.x,
-                        bot._visY,
-                        bot.z,
-                        bot.yaw
-                    );
+                    bot.cs2Agent.root.visible =
+                        true;
                 }
-
-                if (
-                    typeof agent.setPitch ===
-                    "function"
-                ) {
-
-                    agent.setPitch(
-                        bot._lookPitch ||
-                        0
-                    );
-                }
-
-                if (
-                    typeof agent.update ===
-                    "function"
-                ) {
-
-                    agent.update(
-                        delta,
-                        {
-                            vx,
-
-                            vz,
-
-                            airborne:
-                                false,
-
-                            crouch:
-                                0,
-
-                            pitch:
-                                bot._lookPitch ||
-                                0
-                        }
-                    );
-                }
-
-                if (
-                    agent.root
-                ) {
-
-                    agent.root.visible =
-                        !!bot.alive;
-                }
-
             } catch {}
 
-            if (
-                remote.lastAlive !==
-                remote.current.alive
-            ) {
+            try {
+                if (
+                    bot.mesh
+                ) {
+                    bot.mesh.visible =
+                        true;
+                }
+            } catch {}
 
-                remote.lastAlive =
-                    remote.current.alive;
+            try {
+                if (
+                    bot.shadow
+                ) {
+                    bot.shadow.visible =
+                        true;
+                }
+            } catch {}
 
-                try {
-
-                    if (
-                        !remote.current.alive &&
-                        typeof bot.cs2Agent?.die ===
-                        "function"
-                    ) {
-
-                        bot.cs2Agent.die();
-                    }
-
-                } catch {}
-            }
-
-            RemoteBots.applyAvatars();
+            this.applyAvatars(
+                remote
+            );
         },
 
         applyImmediate(remote) {
-
-            const bot =
-                remote.bot;
-
             if (
-                !bot
+                !remote ||
+                !remote.bot
             ) {
                 return;
             }
 
-            bot.x =
-                remote.target.x;
+            const bot =
+                remote.bot;
 
-            bot.y =
-                remote.target.y;
+            const x =
+                safeNumber(
+                    remote.targetX,
+                    0
+                );
 
-            bot.z =
-                remote.target.z;
+            const y =
+                safeNumber(
+                    remote.targetY,
+                    0
+                );
 
-            bot.yaw =
-                remote.target.yaw;
+            const z =
+                safeNumber(
+                    remote.targetZ,
+                    0
+                );
 
-            bot.pitch =
-                remote.target.pitch;
+            const yaw =
+                safeNumber(
+                    remote.targetYaw,
+                    0
+                );
 
-            bot._lookPitch =
-                remote.target.pitch;
+            const pitch =
+                safeNumber(
+                    remote.targetPitch,
+                    0
+                );
 
-            bot._visY =
-                bot.y;
+            setTransform(
+                bot,
+                x,
+                y,
+                z
+            );
 
-            bot.alive =
-                remote.target.alive;
+            setRotation(
+                bot,
+                yaw,
+                pitch
+            );
+
+            setVelocity(
+                bot,
+                safeNumber(
+                    remote.targetVx,
+                    0
+                ),
+                safeNumber(
+                    remote.targetVy,
+                    0
+                ),
+                safeNumber(
+                    remote.targetVz,
+                    0
+                )
+            );
 
             try {
+                bot.onGround =
+                    !!remote.targetOnGround;
+            } catch {}
 
+            try {
+                bot.grounded =
+                    !!remote.targetOnGround;
+            } catch {}
+
+            try {
+                bot.crouching =
+                    !!remote.targetCrouching;
+            } catch {}
+
+            try {
+                bot.alive =
+                    remote.alive !==
+                    false;
+            } catch {}
+
+            try {
+                bot.health =
+                    remote.alive !==
+                    false
+                        ? 100
+                        : 0;
+            } catch {}
+
+            try {
+                bot.team =
+                    normalizeTeam(
+                        remote.team
+                    );
+            } catch {}
+
+            try {
+                bot.name =
+                    remote.name;
+            } catch {}
+
+            try {
+                if (
+                    typeof bot._updateCS2Body ===
+                    "function"
+                ) {
+                    bot._updateCS2Body();
+                }
+            } catch {}
+
+            try {
                 const agent =
                     bot.cs2Agent;
 
-                if (!agent) {
-                    return;
-                }
-
                 if (
-                    typeof agent.setTransform ===
-                    "function"
+                    agent
                 ) {
+                    if (
+                        typeof agent.setTransform ===
+                        "function"
+                    ) {
+                        agent.setTransform(
+                            x,
+                            y,
+                            z
+                        );
+                    }
 
-                    agent.setTransform(
-                        bot.x,
-                        bot._visY,
-                        bot.z,
-                        bot.yaw
-                    );
+                    if (
+                        typeof agent.setPitch ===
+                        "function"
+                    ) {
+                        agent.setPitch(
+                            pitch
+                        );
+                    }
                 }
-
-                if (
-                    typeof agent.setPitch ===
-                    "function"
-                ) {
-
-                    agent.setPitch(
-                        bot._lookPitch ||
-                        0
-                    );
-                }
-
-                if (
-                    typeof agent.update ===
-                    "function"
-                ) {
-
-                    agent.update(
-                        0.016,
-                        {
-                            vx: 0,
-                            vz: 0,
-                            airborne: false,
-                            crouch: 0,
-                            pitch:
-                                bot._lookPitch ||
-                                0
-                        }
-                    );
-                }
-
-                if (
-                    agent.root
-                ) {
-
-                    agent.root.visible =
-                        !!bot.alive;
-                }
-
             } catch {}
+
+            try {
+                const root =
+                    bot.cs2Agent?.root;
+
+                if (
+                    root
+                ) {
+                    if (
+                        root.position
+                    ) {
+                        root.position.x =
+                            x;
+
+                        root.position.y =
+                            y;
+
+                        root.position.z =
+                            z;
+                    }
+
+                    if (
+                        root.rotation
+                    ) {
+                        root.rotation.y =
+                            yaw;
+                    }
+
+                    root.visible =
+                        true;
+                }
+            } catch {}
+
+            try {
+                if (
+                    bot.mesh
+                ) {
+                    bot.mesh.visible =
+                        true;
+                }
+            } catch {}
+
+            try {
+                if (
+                    bot.shadow
+                ) {
+                    bot.shadow.visible =
+                        true;
+                }
+            } catch {}
+
+            this.applyAvatars(
+                remote
+            );
         },
 
         remove(id) {
-
-            id =
+            const key =
                 String(id);
 
             const remote =
                 State.remotes.get(
-                    id
+                    key
                 );
 
             if (
@@ -2216,121 +4087,135 @@
                 return;
             }
 
-            const bot =
-                remote.bot;
-
             if (
-                bot
+                remote.bot
             ) {
-
-                RemoteBots.destroyRemoteBot(
-                    bot
+                this.destroyRemoteBot(
+                    remote.bot
                 );
+
+                remote.bot =
+                    null;
             }
 
             State.remotes.delete(
-                id
+                key
             );
 
-            RemoteBots.rebuildAvatars();
-
-            UI.renderRoom();
+            log(
+                "Remote player removed:",
+                key
+            );
         },
 
         destroyRemoteBot(bot) {
-
-            if (!bot) {
+            if (
+                !bot
+            ) {
                 return;
             }
 
             try {
+                bot.__connectionsRemote =
+                    false;
+
+                bot.__connectionsRemoved =
+                    true;
 
                 bot.alive =
                     false;
 
                 bot.health =
                     0;
-
             } catch {}
 
             try {
-
                 if (
                     typeof bot.die ===
                     "function"
                 ) {
                     bot.die();
                 }
-
             } catch {}
 
             try {
-
                 if (
-                    bot.cs2Agent?.root
+                    typeof bot.despawn ===
+                    "function"
                 ) {
-
-                    bot.cs2Agent.root.visible =
-                        false;
+                    bot.despawn();
                 }
-
             } catch {}
 
-            const game =
-                getGame();
-
-            const mgr =
-                game?.botMgr;
-
-            if (
-                Array.isArray(
-                    mgr?.bots
-                )
-            ) {
-
-                const index =
-                    mgr.bots.indexOf(
-                        bot
-                    );
-
+            try {
                 if (
-                    index !== -1
+                    bot.cs2Agent?.root?.parent
                 ) {
-
-                    mgr.bots.splice(
-                        index,
-                        1
+                    bot.cs2Agent.root.parent.remove(
+                        bot.cs2Agent.root
                     );
                 }
-            }
+            } catch {}
 
-            bot.__connectionsRemote =
-                false;
+            try {
+                if (
+                    bot.mesh?.parent
+                ) {
+                    bot.mesh.parent.remove(
+                        bot.mesh
+                    );
+                }
+            } catch {}
 
-            bot.__connectionsRemoteId =
-                null;
+            try {
+                if (
+                    bot.shadow?.parent
+                ) {
+                    bot.shadow.parent.remove(
+                        bot.shadow
+                    );
+                }
+            } catch {}
 
-            bot.__connectionsPool =
-                false;
+            try {
+                if (
+                    State.game?.botMgr?.bots
+                ) {
+                    const list =
+                        State.game.botMgr.bots;
 
-            bot.update =
-                function() {};
+                    const index =
+                        list.indexOf(
+                            bot
+                        );
+
+                    if (
+                        index !==
+                        -1
+                    ) {
+                        list.splice(
+                            index,
+                            1
+                        );
+                    }
+                }
+            } catch {}
+
+            try {
+                bot.update =
+                    function() {};
+            } catch {}
         },
 
         clear() {
-
             for (
                 const remote
-                of [
-                    ...State.remotes.values()
-                ]
+                of State.remotes.values()
             ) {
-
                 if (
                     remote.bot
                 ) {
-
-                    RemoteBots.destroyRemoteBot(
+                    this.destroyRemoteBot(
                         remote.bot
                     );
                 }
@@ -2338,9 +4223,9 @@
 
             State.remotes.clear();
 
-            RemoteBots.restoreOriginalBots();
+            this.restoreOriginalBots();
 
-            RemoteBots.rebuildAvatars();
+            this.rebuildAvatars();
 
             log(
                 "Remote bots cleared."
@@ -2348,7 +4233,6 @@
         },
 
         restoreOriginalBots() {
-
             const game =
                 getGame();
 
@@ -2356,21 +4240,21 @@
                 game?.botMgr;
 
             if (
-                !mgr
-            ) {
-                return;
-            }
-
-            if (
+                !mgr ||
                 !Array.isArray(
-                    State.originalBots
+                    mgr.bots
                 )
             ) {
                 return;
             }
 
-            try {
+            if (
+                !State.originalBots.length
+            ) {
+                return;
+            }
 
+            try {
                 mgr.bots.length =
                     0;
 
@@ -2378,53 +4262,79 @@
                     const bot
                     of State.originalBots
                 ) {
-
-                    if (!bot) {
+                    if (
+                        !bot
+                    ) {
                         continue;
                     }
 
-                    bot.__connectionsRemoved =
+                    bot.__connectionsPool =
                         false;
 
                     bot.__connectionsRemote =
                         false;
 
-                    bot.__connectionsRemoteId =
-                        null;
-
-                    bot.__connectionsPool =
+                    bot.__connectionsRemoved =
                         false;
 
-                    if (
-                        bot.__connectionsOriginalUpdate
-                    ) {
-
-                        bot.update =
-                            bot.__connectionsOriginalUpdate;
-                    }
+                    try {
+                        bot.alive =
+                            true;
+                    } catch {}
 
                     try {
+                        if (
+                            bot.health <=
+                            0
+                        ) {
+                            bot.health =
+                                100;
+                        }
+                    } catch {}
 
+                    try {
+                        if (
+                            bot.__connectionsOriginalUpdate
+                        ) {
+                            bot.update =
+                                bot.__connectionsOriginalUpdate;
+                        }
+                    } catch {}
+
+                    try {
                         if (
                             typeof bot.spawn ===
                             "function"
                         ) {
-
                             bot.spawn();
                         }
-
                     } catch {}
 
                     try {
-
                         if (
                             bot.cs2Agent?.root
                         ) {
-
                             bot.cs2Agent.root.visible =
                                 true;
                         }
+                    } catch {}
 
+                    try {
+                        if (
+                            bot.mesh
+                        ) {
+                            bot.mesh.visible =
+                                true;
+                        }
+                    } catch {}
+
+                    try {
+                        if (
+                            bot.shadow
+                        ) {
+                            bot.shadow.visible =
+                                true;
+                        }
                     } catch {}
 
                     mgr.bots.push(
@@ -2432,8 +4342,10 @@
                     );
                 }
 
+                log(
+                    "Original AI bots restored."
+                );
             } catch (e) {
-
                 warn(
                     "Failed to restore original bots:",
                     e
@@ -2449,598 +4361,356 @@
             State.botTemplate =
                 null;
 
-            log(
-                "Original AI bots restored."
-            );
+            State.preparingBots =
+                false;
         },
 
         rebuildAvatars() {
-
             const game =
                 getGame();
 
-            try {
+            if (
+                !game
+            ) {
+                return;
+            }
 
+            try {
                 if (
-                    game?.hud &&
+                    game.hud &&
                     typeof game.hud.buildAvatars ===
                     "function"
                 ) {
-
                     game.hud.buildAvatars();
                 }
-
-            } catch (e) {
-
-                warn(
-                    "buildAvatars failed:",
-                    e
-                );
-            }
+            } catch {}
 
             setTimeout(
                 () => {
-                    RemoteBots.applyAvatars();
+                    for (
+                        const remote
+                        of State.remotes.values()
+                    ) {
+                        this.applyAvatars(
+                            remote
+                        );
+                    }
                 },
                 50
             );
         },
 
-        applyAvatars() {
+        applyAvatars(remote) {
+            if (
+                !remote
+            ) {
+                return;
+            }
+
+            const avatar =
+                remote.avatarEnabled !==
+                    false &&
+                remote.avatar
+                    ? remote.avatar
+                    : null;
 
             const game =
                 getGame();
 
-            if (!game) {
+            if (
+                !game
+            ) {
                 return;
             }
 
-            const lists = [];
-
             try {
+                const hud =
+                    game.hud;
 
                 if (
-                    Array.isArray(
-                        game.hud?._avatars
-                    )
+                    hud
                 ) {
+                    const roots = [
+                        hud.avatars,
+                        hud.avatarRows,
+                        hud.scoreboard,
+                        hud.scoreboardRows
+                    ];
 
-                    lists.push(
-                        game.hud._avatars
-                    );
-                }
-
-            } catch {}
-
-            try {
-
-                if (
-                    Array.isArray(
-                        game._avatars
-                    )
-                ) {
-
-                    lists.push(
-                        game._avatars
-                    );
-                }
-
-            } catch {}
-
-            for (
-                const list
-                of lists
-            ) {
-
-                for (
-                    const item
-                    of list
-                ) {
-
-                    const ent =
-                        item?.ent;
-
-                    if (
-                        !ent ||
-                        !ent.__connectionsRemote
+                    for (
+                        const root
+                        of roots
                     ) {
-                        continue;
-                    }
+                        if (
+                            !root
+                        ) {
+                            continue;
+                        }
 
-                    const remoteId =
-                        ent.__connectionsRemoteId;
-
-                    const remote =
-                        State.remotes.get(
-                            String(
-                                remoteId
-                            )
+                        this.walkAvatarObjects(
+                            root,
+                            remote,
+                            avatar
                         );
-
-                    if (
-                        !remote
-                    ) {
-                        continue;
                     }
-
-                    const avatar =
-                        remote.avatar;
-
-                    if (!avatar) {
-                        continue;
-                    }
-
-                    const el =
-                        item.el;
-
-                    if (!el) {
-                        continue;
-                    }
-
-                    try {
-
-                        const img =
-                            el.querySelector(
-                                "img"
-                            );
-
-                        if (img) {
-
-                            if (
-                                !img.dataset
-                                    .connectionsOriginalSrc
-                            ) {
-
-                                img.dataset
-                                    .connectionsOriginalSrc =
-                                    img.src;
-                            }
-
-                            img.src =
-                                avatar;
-                        }
-
-                    } catch {}
-
-                    try {
-
-                        const bg =
-                            el.querySelector(
-                                ".CSGOAvatarImage"
-                            );
-
-                        if (bg) {
-
-                            bg.style.backgroundImage =
-                                `url("${avatar}")`;
-
-                            bg.style.backgroundSize =
-                                "100% 100%";
-
-                            bg.style.backgroundPosition =
-                                "center";
-
-                            bg.style.backgroundRepeat =
-                                "no-repeat";
-                        }
-
-                    } catch {}
                 }
-            }
+            } catch {}
 
-            /*
-             * Also cover scoreboard rows that
-             * reference our remote native bot.
-             */
             try {
-
                 const rows =
                     document.querySelectorAll(
-                        ".sb-row"
+                        "[data-player-id], [data-id]"
                     );
 
-                for (
-                    const row
-                    of rows
-                ) {
-
-                    const name =
-                        row.querySelector(
-                            ".sb-name, .sb-row-name"
-                        );
-
-                    if (!name) {
-                        continue;
-                    }
-
-                    const remote =
-                        [
-                            ...State.remotes.values()
-                        ].find(
-                            r =>
-                                r.bot &&
-                                String(
-                                    r.name
-                                ) ===
-                                String(
-                                    name.textContent
-                                ).trim()
-                        );
-
-                    if (
-                        !remote ||
-                        !remote.avatar
-                    ) {
-                        continue;
-                    }
-
-                    const img =
-                        row.querySelector(
-                            "img"
-                        );
-
-                    if (img) {
-                        img.src =
-                            remote.avatar;
-                    }
-
-                    const bg =
-                        row.querySelector(
-                            ".CSGOAvatarImage"
-                        );
-
-                    if (bg) {
-                        bg.style.backgroundImage =
-                            `url("${remote.avatar}")`;
-                    }
-                }
-
-            } catch {}
-        },
-
-        restoreAI() {
-            RemoteBots.restoreOriginalBots();
-        },
-
-        lerpAngle(
-            a,
-            b,
-            t
-        ) {
-
-            let diff =
-                (
-                    (
-                        b -
-                        a +
-                        Math.PI
-                    ) %
-                    (
-                        Math.PI *
-                        2
-                    )
-                ) -
-                Math.PI;
-
-            return (
-                a +
-                diff * t
-            );
-        }
-    };
-
-    /*
-     * =========================================================
-     * LOCAL PLAYER SYNC
-     * =========================================================
-     */
-
-    function sendLocalState() {
-
-        if (
-            !State.confirmedMatch ||
-            !State.connected ||
-            !State.room
-        ) {
-            return;
-        }
-
-        const game =
-            getGame();
-
-        const player =
-            getPlayer();
-
-        if (
-            !game ||
-            !player
-        ) {
-            return;
-        }
-
-        if (
-            !isInsideMatch(
-                game
-            )
-        ) {
-            return;
-        }
-
-        const now =
-            performance.now();
-
-        const state = {
-
-            x:
-                Number(
-                    player.x
-                ) || 0,
-
-            y:
-                Number(
-                    player.y
-                ) || 0,
-
-            z:
-                Number(
-                    player.z
-                ) || 0,
-
-            yaw:
-                Number(
-                    player.yaw
-                ) || 0,
-
-            pitch:
-                Number(
-                    player.pitch
-                ) || 0,
-
-            alive:
-                player.alive !==
-                false,
-
-            team:
-                player.team ===
-                "T"
-                    ? "T"
-                    : "CT",
-
-            name:
-                State.name
-        };
-
-        /*
-         * Avatar is NOT sent every 50ms.
-         * It is sent when changed and occasionally
-         * so a player joining later can receive it.
-         */
-        const avatar =
-            Avatar.get();
-
-        if (
-            State.avatarDirty ||
-            (
-                now -
-                State.lastAvatarSent
-            ) >=
-            CONFIG.AVATAR_SEND_INTERVAL
-        ) {
-
-            state.avatar =
-                avatar;
-
-            State.avatarDirty =
-                false;
-
-            State.lastAvatarSent =
-                now;
-        }
-
-        Network.send({
-
-            type:
-                "state",
-
-            state
-        });
-    }
-
-    function startSync() {
-
-        stopSync();
-
-        State.sendTimer =
-            setInterval(
-                sendLocalState,
-                CONFIG.SEND_RATE
-            );
-    }
-
-    function stopSync() {
-
-        if (
-            State.sendTimer
-        ) {
-
-            clearInterval(
-                State.sendTimer
-            );
-
-            State.sendTimer =
-                null;
-        }
-    }
-
-    /*
-     * =========================================================
-     * TAB OUT / ONLINE MODE
-     * =========================================================
-     */
-
-    const OnlineMode = {
-
-        install() {
-
-            /*
-             * The browser still controls actual
-             * rendering when the tab is hidden,
-             * but we prevent Connections from treating
-             * focus loss as a match end.
-             */
-
-            document.addEventListener(
-                "visibilitychange",
-                () => {
-
-                    if (
-                        !State.confirmedMatch
-                    ) {
-                        return;
-                    }
-
-                    /*
-                     * Keep the game marked as playing
-                     * when the game's pause logic exposes
-                     * these fields.
-                     */
-                    const game =
-                        getGame();
-
-                    if (!game) {
-                        return;
-                    }
-
-                    try {
+                rows.forEach(
+                    row => {
+                        const rowId =
+                            row.getAttribute(
+                                "data-player-id"
+                            ) ||
+                            row.getAttribute(
+                                "data-id"
+                            );
 
                         if (
-                            document.visibilityState ===
-                            "visible"
-                        ) {
-
-                            if (
-                                game.gameState !==
-                                "playing"
-                            ) {
-
-                                if (
-                                    game.state ===
-                                    "playing"
-                                ) {
-                                    game.gameState =
-                                        "playing";
-                                }
-                            }
-                        }
-
-                    } catch {}
-                },
-                true
-            );
-
-            /*
-             * Some games pause on blur.
-             * Do not let our monitor interpret
-             * blur/focus as leaving the match.
-             */
-            window.addEventListener(
-                "blur",
-                () => {
-
-                    if (
-                        State.confirmedMatch
-                    ) {
-
-                        log(
-                            "Window unfocused. Multiplayer remains active."
-                        );
-                    }
-
-                },
-                true
-            );
-
-            window.addEventListener(
-                "focus",
-                () => {
-
-                    if (
-                        State.confirmedMatch
-                    ) {
-
-                        const game =
-                            getGame();
-
-                        if (
-                            game &&
-                            game.state !==
-                            "playing" &&
-                            isInsideMatch(
-                                game
+                            String(
+                                rowId
+                            ) !==
+                            String(
+                                remote.id
                             )
-                        ) {
-
-                            try {
-                                game.state =
-                                    "playing";
-                            } catch {}
-                        }
-
-                        State.avatarDirty =
-                            true;
-                    }
-
-                },
-                true
-            );
-
-            State.visibilityTimer =
-                setInterval(
-                    () => {
-
-                        if (
-                            !State.confirmedMatch
                         ) {
                             return;
                         }
 
-                        /*
-                         * WebSocket stays alive.
-                         */
-                        if (
-                            State.connected &&
-                            State.ws?.readyState ===
-                            WebSocket.OPEN
-                        ) {
+                        const image =
+                            row.querySelector(
+                                "img"
+                            );
 
-                            Network.send({
-                                type:
-                                    "ping"
-                            });
+                        if (
+                            image &&
+                            avatar
+                        ) {
+                            image.src =
+                                avatar;
+
+                            image.style.display =
+                                "block";
+                        }
+                    }
+                );
+            } catch {}
+        },
+
+        walkAvatarObjects(
+            object,
+            remote,
+            avatar
+        ) {
+            if (
+                !object
+            ) {
+                return;
+            }
+
+            if (
+                object.nodeType ===
+                1
+            ) {
+                try {
+                    const id =
+                        object.getAttribute(
+                            "data-player-id"
+                        ) ||
+                        object.getAttribute(
+                            "data-id"
+                        );
+
+                    if (
+                        id &&
+                        String(id) ===
+                        String(remote.id)
+                    ) {
+                        const img =
+                            object.querySelector(
+                                "img"
+                            );
+
+                        if (
+                            img
+                        ) {
+                            if (
+                                avatar
+                            ) {
+                                img.src =
+                                    avatar;
+
+                                img.style.display =
+                                    "block";
+                            } else {
+                                img.style.display =
+                                    "none";
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            if (
+                typeof object !==
+                "object"
+            ) {
+                return;
+            }
+
+            const visited =
+                new Set();
+
+            const walk = value => {
+                if (
+                    !value ||
+                    typeof value !==
+                    "object"
+                ) {
+                    return;
+                }
+
+                if (
+                    visited.has(
+                        value
+                    )
+                ) {
+                    return;
+                }
+
+                visited.add(
+                    value
+                );
+
+                try {
+                    if (
+                        value.playerId !==
+                        undefined &&
+                        String(
+                            value.playerId
+                        ) ===
+                        String(
+                            remote.id
+                        )
+                    ) {
+                        if (
+                            value.src !==
+                            undefined
+                        ) {
+                            value.src =
+                                avatar ||
+                                "";
                         }
 
-                        /*
-                         * Re-apply remote avatars because
-                         * the game's HUD can rebuild itself.
-                         */
-                        RemoteBots.applyAvatars();
+                        if (
+                            value.texture !==
+                            undefined
+                        ) {
+                            value.texture =
+                                avatar ||
+                                "";
+                        }
+                    }
+                } catch {}
 
-                    },
-                    1000
-                );
+                const keys = [
+                    "children",
+                    "avatars",
+                    "rows",
+                    "players",
+                    "items",
+                    "elements"
+                ];
+
+                for (
+                    const key
+                    of keys
+                ) {
+                    try {
+                        const child =
+                            value[key];
+
+                        if (
+                            Array.isArray(
+                                child
+                            )
+                        ) {
+                            child.forEach(
+                                walk
+                            );
+                        } else if (
+                            child &&
+                            typeof child ===
+                            "object"
+                        ) {
+                            walk(
+                                child
+                            );
+                        }
+                    } catch {}
+                }
+            };
+
+            walk(
+                object
+            );
         }
     };
 
     /*
      * =========================================================
-     * MATCH END
+     * CHAT
+     * =========================================================
+     */
+
+    const Chat = {
+
+        send(message) {
+            const text =
+                String(
+                    message ||
+                    ""
+                )
+                    .trim()
+                    .slice(
+                        0,
+                        300
+                    );
+
+            if (
+                !text ||
+                !State.connected ||
+                !State.room
+            ) {
+                return;
+            }
+
+            Network.send({
+                type:
+                    "chat",
+
+                message:
+                    text,
+
+                name:
+                    State.name
+            });
+        }
+    };
+    /*
+     * =========================================================
+     * MATCH LIFECYCLE
      * =========================================================
      */
 
     function handleMatchEnd() {
-
         if (
-            !State.confirmedMatch ||
             State.matchEnding
         ) {
             return;
@@ -3050,25 +4720,14 @@
             true;
 
         log(
-            "Match ended."
+            "Match ended. Cleaning multiplayer state."
         );
 
-        /*
-         * IMPORTANT:
-         *
-         * Do NOT send end_room.
-         *
-         * Your current backend explicitly returned:
-         * "unknown message type"
-         *
-         * So we only clean the local state and
-         * send leave_room when applicable.
-         */
-        if (
-            State.connected &&
-            State.room
-        ) {
+        Music.stopForMatchEnd();
 
+        if (
+            State.connected
+        ) {
             Network.send({
                 type:
                     "leave_room"
@@ -3080,56 +4739,237 @@
         State.room =
             null;
 
-        State.confirmedMatch =
-            false;
-
         State.isHost =
             false;
 
-        State.avatarDirty =
-            true;
+        State.matchSync.hostId =
+            null;
 
-        UI.setMessage(
-            "Match ended."
+        State.matchSync.roundSeq =
+            0;
+
+        State.matchSync.lastActive =
+            null;
+
+        State.matchSync.roundEndAt =
+            0;
+
+        State.matchSync.endAt =
+            0;
+
+        State.matchSync.lastReceived =
+            0;
+
+        State.hostRoundSeq =
+            0;
+
+        State.hostLastActive =
+            null;
+
+        State.hostRoundEndAt =
+            0;
+
+        State.hostEndAt =
+            0;
+
+        State.confirmedMatch =
+            false;
+
+        State.outsideMatchSince =
+            0;
+
+        UI.setScanState(
+            false
         );
-
-        UI.renderRooms();
 
         UI.renderRoom();
 
-        UI.updateStatus();
+        UI.setMessage(
+            "Lobby. Enter a match and press Confirm."
+        );
+
+        State.matchEnding =
+            false;
     }
 
-    /*
-     * =========================================================
-     * ENGINE SCAN
-     * =========================================================
-     */
+    function monitorGame() {
+        const game =
+            getGame();
 
-    function confirmMatch() {
+        if (
+            game &&
+            State.game !==
+            game
+        ) {
+            State.game =
+                game;
+
+            log(
+                "Game engine detected."
+            );
+        }
+
+        if (
+            !game
+        ) {
+            return;
+        }
 
         if (
             State.confirmedMatch
         ) {
+            const inside =
+                isInsideMatch(
+                    game
+                );
 
-            UI.setMessage(
-                "Match already confirmed."
+            if (
+                inside
+            ) {
+                State.outsideMatchSince =
+                    0;
+            } else if (
+                State.room
+            ) {
+                if (
+                    !State.outsideMatchSince
+                ) {
+                    State.outsideMatchSince =
+                        Date.now();
+
+                    log(
+                        "Temporarily outside match state. Waiting for transition..."
+                    );
+                }
+
+                /*
+                 * Team selection / round transitions can briefly
+                 * report a non-playing state. Do not instantly
+                 * destroy all remote players.
+                 */
+                if (
+                    Date.now() -
+                    State.outsideMatchSince >
+                    1800
+                ) {
+                    handleMatchEnd();
+                }
+            }
+        }
+
+        if (
+            State.confirmedMatch &&
+            State.room &&
+            State.isHost
+        ) {
+            broadcastRoundState();
+        }
+
+        if (
+            State.confirmedMatch &&
+            State.room &&
+            !State.isHost
+        ) {
+            applyAuthoritativeMatchState();
+        }
+    }
+
+    function startMonitor() {
+        if (
+            State.monitorTimer
+        ) {
+            return;
+        }
+
+        State.monitorTimer =
+            setInterval(
+                monitorGame,
+                CONFIG.MATCH_CHECK_RATE
+            );
+    }
+
+    /*
+     * =========================================================
+     * ENGINE SCANNER
+     * =========================================================
+     */
+
+    function scanEngine() {
+        const game =
+            getGame();
+
+        if (
+            !game
+        ) {
+            warn(
+                "Game engine not found."
             );
 
+            return null;
+        }
+
+        State.game =
+            game;
+
+        const result = {
+            game,
+            player:
+                getPlayer(),
+
+            botMgr:
+                game.botMgr ||
+                null,
+
+            physics:
+                game.physics ||
+                null,
+
+            hud:
+                game.hud ||
+                null
+        };
+
+        log(
+            "Engine scan:",
+            result
+        );
+
+        return result;
+    }
+
+    /*
+     * =========================================================
+     * MATCH CONFIRMATION
+     * =========================================================
+     */
+
+    function confirmMatch() {
+        if (
+            State.confirmedMatch
+        ) {
             return;
         }
 
         const game =
             getGame();
 
-        if (!game) {
-
+        if (
+            !game
+        ) {
             UI.setMessage(
                 "Game engine not found."
             );
 
-            warn(
-                "window.game was not found."
+            return;
+        }
+
+        if (
+            !isInsideMatch(
+                game
+            )
+        ) {
+            UI.setMessage(
+                "You must already be inside a match."
             );
 
             return;
@@ -3143,95 +4983,67 @@
             "Scanning game engine..."
         );
 
-        log(
-            "Scanning game engine..."
-        );
-
         setTimeout(
             () => {
-
-                const currentGame =
-                    getGame();
+                const result =
+                    scanEngine();
 
                 if (
-                    !currentGame
+                    !result
                 ) {
-
                     UI.setScanState(
                         false
                     );
 
                     UI.setMessage(
-                        "Game engine disappeared."
+                        "Engine scan failed."
                     );
 
                     return;
                 }
 
-                const playing =
-                    isInsideMatch(
-                        currentGame
+                if (
+                    !result.botMgr ||
+                    !Array.isArray(
+                        result.botMgr.bots
+                    )
+                ) {
+                    UI.setScanState(
+                        false
                     );
+
+                    UI.setMessage(
+                        "Native bot manager not found."
+                    );
+
+                    warn(
+                        "botMgr.bots unavailable."
+                    );
+
+                    return;
+                }
 
                 log(
-                    "Engine scan:",
-                    {
-                        playing,
-
-                        state:
-                            currentGame.state,
-
-                        gameState:
-                            currentGame.gameState,
-
-                        inMatch:
-                            currentGame.inMatch,
-
-                        player:
-                            !!currentGame.player,
-
-                        botManager:
-                            !!currentGame.botMgr,
-
-                        botCount:
-                            currentGame
-                                .botMgr
-                                ?.bots
-                                ?.length
-                    }
+                    "Preparing native bot removal:",
+                    result.botMgr.bots.length
                 );
 
-                if (!playing) {
-
-                    UI.setScanState(
-                        false
-                    );
-
-                    UI.setMessage(
-                        "You must be inside a match."
-                    );
-
-                    return;
-                }
-
-                const poolReady =
+                const prepared =
                     RemoteBots.preparePool();
 
-                if (!poolReady) {
-
+                if (
+                    !prepared
+                ) {
                     UI.setScanState(
                         false
                     );
 
                     UI.setMessage(
-                        "Native bot system was not found."
+                        "Could not prepare native bots."
                     );
 
                     return;
                 }
-
-                State.game =
-                    currentGame;
 
                 State.confirmedMatch =
                     true;
@@ -3239,33 +5051,22 @@
                 State.matchEnding =
                     false;
 
-                State.avatarDirty =
-                    true;
+                State.outsideMatchSince =
+                    0;
 
                 UI.setScanState(
                     false
                 );
 
                 UI.setMessage(
-                    "Match detected. Connecting..."
+                    "Multiplayer active."
                 );
 
-                if (
-                    State.connected
-                ) {
+                log(
+                    "Match confirmed."
+                );
 
-                    Network.send({
-                        type:
-                            "list_rooms"
-                    });
-
-                } else {
-
-                    Network.connect();
-                }
-
-                UI.updateStatus();
-
+                Network.connect();
             },
             80
         );
@@ -3273,59 +5074,145 @@
 
     /*
      * =========================================================
-     * GAME MONITOR
+     * ROOM MANAGEMENT
      * =========================================================
      */
 
-    function monitorGame() {
+    function createRoom(
+        name,
+        maxPlayers
+    ) {
+        if (
+            !State.connected
+        ) {
+            UI.setMessage(
+                "Not connected."
+            );
 
-        const game =
-            getGame();
-
-        if (!game) {
             return;
         }
 
         if (
-            State.game !==
-            game
+            !State.confirmedMatch
         ) {
-
-            State.game =
-                game;
-
-            log(
-                "Game engine detected."
+            UI.setMessage(
+                "Confirm that you are inside a match first."
             );
+
+            return;
         }
 
-        /*
-         * Only treat an actual match state
-         * change as match ending.
-         *
-         * Browser blur/tab visibility is ignored.
-         */
-        if (
-            State.confirmedMatch &&
-            State.room
-        ) {
+        const roomName =
+            String(
+                name ||
+                ""
+            )
+                .trim()
+                .slice(
+                    0,
+                    32
+                );
 
-            if (
-                !isInsideMatch(
-                    game
-                )
-            ) {
+        const max =
+            clamp(
+                Number(
+                    maxPlayers
+                ) || 8,
+                2,
+                32
+            );
 
-                handleMatchEnd();
-            }
-        }
+        Network.send({
+            type:
+                "create_room",
+
+            name:
+                roomName ||
+                "Connections Room",
+
+            maxPlayers:
+                max
+        });
     }
 
-    State.monitorTimer =
-        setInterval(
-            monitorGame,
-            CONFIG.MATCH_CHECK_RATE
+    function joinRoom(
+        room
+    ) {
+        if (
+            !State.connected
+        ) {
+            UI.setMessage(
+                "Not connected."
+            );
+
+            return;
+        }
+
+        const id =
+            roomId(
+                room
+            );
+
+        if (
+            !id
+        ) {
+            return;
+        }
+
+        Network.send({
+            type:
+                "join_room",
+
+            room:
+                id,
+
+            roomId:
+                id,
+
+            id
+        });
+
+        UI.setMessage(
+            "Joining room..."
         );
+    }
+
+    function leaveRoom() {
+        if (
+            !State.room
+        ) {
+            return;
+        }
+
+        Music.stop();
+
+        Network.send({
+            type:
+                "leave_room"
+        });
+
+        const oldRoom =
+            State.room;
+
+        State.room =
+            null;
+
+        State.isHost =
+            false;
+
+        RemoteBots.clear();
+
+        UI.renderRoom();
+
+        UI.setMessage(
+            "Left room."
+        );
+
+        log(
+            "Left room:",
+            oldRoom
+        );
+    }
 
     /*
      * =========================================================
@@ -3338,7 +5225,7 @@
         root:
             null,
 
-        roomList:
+        serverList:
             null,
 
         roomInfo:
@@ -3350,253 +5237,243 @@
         message:
             null,
 
-        scanButton:
+        chatLog:
             null,
 
-        avatarPreview:
-            null,
-
-        avatarButton:
+        avatarInput:
             null,
 
         avatarToggle:
             null,
 
-        create() {
+        scanButton:
+            null,
 
+        roomName:
+            null,
+
+        roomMax:
+            null,
+
+        init() {
             if (
-                document.getElementById(
-                    "connections-real-ui"
-                )
+                this.root
             ) {
                 return;
             }
 
-            GM_addStyle(`
-                #connections-real-ui {
-                    position: fixed;
-                    left: 40px;
-                    top: 120px;
-                    width: 430px;
-                    max-height: 760px;
-                    background: rgba(13,13,18,.98);
-                    color: #eee;
-                    border: 1px solid #333;
-                    border-radius: 14px;
-                    z-index: 2147483647;
-                    font-family: Arial,sans-serif;
-                    box-shadow: 0 20px 70px rgba(0,0,0,.65);
-                    overflow: hidden;
-                    display: none;
-                }
+            const style =
+                document.createElement(
+                    "style"
+                );
 
-                #connections-real-ui * {
+            style.textContent = `
+                #connections-root {
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 430px;
+                    max-height: 86vh;
+                    overflow-y: auto;
+                    z-index: 2147483647;
+                    background: #111318;
+                    color: #f4f4f5;
+                    border: 1px solid #2c2f38;
+                    border-radius: 14px;
+                    box-shadow: 0 20px 70px rgba(0,0,0,.65);
+                    font-family: Inter, Arial, sans-serif;
+                    padding: 16px;
+                    display: none;
                     box-sizing: border-box;
                 }
 
-                .cr-head {
-                    padding: 15px 17px;
-                    background: #17171f;
-                    border-bottom: 1px solid #292933;
+                #connections-root * {
+                    box-sizing: border-box;
+                }
+
+                .connections-title {
                     display: flex;
-                    justify-content: space-between;
                     align-items: center;
-                }
-
-                .cr-title {
-                    font-size: 17px;
-                    font-weight: 800;
-                }
-
-                .cr-status {
-                    font-size: 11px;
-                    color: #888;
-                    margin-top: 3px;
-                }
-
-                .cr-body {
-                    padding: 15px;
-                    overflow-y: auto;
-                    max-height: 690px;
-                }
-
-                .cr-section {
+                    justify-content: space-between;
                     margin-bottom: 14px;
                 }
 
-                .cr-label {
-                    color: #999;
-                    font-size: 11px;
-                    text-transform: uppercase;
-                    letter-spacing: .08em;
-                    margin-bottom: 7px;
+                .connections-title h2 {
+                    margin: 0;
+                    font-size: 20px;
+                    font-weight: 800;
                 }
 
-                .cr-input {
-                    width: 100%;
-                    border: 1px solid #343440;
-                    background: #101016;
-                    color: white;
+                .connections-version {
+                    font-size: 11px;
+                    color: #737985;
+                }
+
+                .connections-status {
+                    padding: 9px 10px;
                     border-radius: 8px;
-                    padding: 10px;
+                    background: #191c23;
+                    color: #9ca3af;
+                    font-size: 12px;
+                    margin-bottom: 12px;
+                }
+
+                .connections-section {
+                    background: #171a20;
+                    border: 1px solid #262a33;
+                    border-radius: 10px;
+                    padding: 12px;
+                    margin-bottom: 10px;
+                }
+
+                .connections-section-title {
+                    font-size: 12px;
+                    font-weight: 800;
+                    text-transform: uppercase;
+                    letter-spacing: .06em;
+                    color: #8f96a3;
+                    margin-bottom: 9px;
+                }
+
+                .connections-row {
+                    display: flex;
+                    gap: 7px;
+                    align-items: center;
+                }
+
+                .connections-row + .connections-row {
+                    margin-top: 7px;
+                }
+
+                .connections-input {
+                    width: 100%;
+                    border: 1px solid #30343e;
+                    background: #0e1014;
+                    color: #fff;
+                    border-radius: 8px;
+                    padding: 9px 10px;
                     outline: none;
                 }
 
-                .cr-input:focus {
-                    border-color: #7167ff;
+                .connections-input:focus {
+                    border-color: #7289da;
                 }
 
-                .cr-row {
-                    display: flex;
-                    gap: 8px;
-                }
-
-                .cr-button {
+                .connections-button {
                     border: 0;
                     border-radius: 8px;
-                    padding: 9px 12px;
-                    background: #262631;
-                    color: #eee;
-                    cursor: pointer;
+                    background: #7289da;
+                    color: white;
+                    padding: 9px 11px;
                     font-weight: 700;
+                    cursor: pointer;
+                    white-space: nowrap;
                 }
 
-                .cr-button:hover {
-                    background: #343442;
+                .connections-button:hover {
+                    filter: brightness(1.08);
                 }
 
-                .cr-button:disabled {
-                    opacity: .55;
+                .connections-button.secondary {
+                    background: #252932;
+                }
+
+                .connections-button.danger {
+                    background: #7f2932;
+                }
+
+                .connections-button:disabled {
+                    opacity: .5;
                     cursor: default;
                 }
 
-                .cr-primary {
-                    background: #665cff;
-                }
-
-                .cr-primary:hover {
-                    background: #766cff;
-                }
-
-                .cr-danger {
-                    background: #8e3030;
-                }
-
-                .cr-scan {
+                .connections-scan {
                     width: 100%;
-                    padding: 14px;
-                    font-size: 14px;
-                    margin-bottom: 14px;
-                    background: #665cff;
-                }
-
-                .cr-scan:hover {
-                    background: #766cff;
-                }
-
-                .cr-room {
-                    background: #111118;
-                    border: 1px solid #292933;
-                    border-radius: 9px;
-                    padding: 11px;
-                    margin-bottom: 7px;
-                }
-
-                .cr-room-name {
-                    font-weight: 800;
-                }
-
-                .cr-room-meta {
-                    color: #888;
-                    font-size: 11px;
-                    margin-top: 4px;
-                }
-
-                .cr-room-actions {
-                    margin-top: 8px;
-                }
-
-                .cr-message {
-                    font-size: 12px;
-                    color: #aaa;
-                    min-height: 17px;
-                    margin-top: 8px;
-                }
-
-                .cr-empty {
-                    padding: 20px;
-                    text-align: center;
-                    color: #777;
-                    border: 1px dashed #30303a;
-                    border-radius: 9px;
-                }
-
-                .cr-room-current {
                     padding: 12px;
-                    border: 1px solid #39365d;
-                    background: #17162a;
-                    border-radius: 9px;
-                }
-
-                .cr-match-ok {
-                    color: #71d58b;
-                    font-size: 11px;
-                    margin-top: 5px;
-                }
-
-                .cr-match-no {
-                    color: #e4c96b;
-                    font-size: 11px;
-                    margin-top: 5px;
-                }
-
-                .cr-avatar-box {
-                    display: flex;
-                    gap: 12px;
-                    align-items: center;
-                    background: #111118;
-                    border: 1px solid #292933;
-                    border-radius: 10px;
-                    padding: 10px;
-                }
-
-                .cr-avatar-preview {
-                    width: 58px;
-                    height: 58px;
-                    border-radius: 9px;
-                    background: #20202a;
-                    border: 1px solid #3a3a48;
-                    object-fit: cover;
-                    display: block;
-                }
-
-                .cr-avatar-info {
-                    flex: 1;
-                    min-width: 0;
-                }
-
-                .cr-avatar-name {
-                    font-weight: 800;
                     font-size: 13px;
+                    margin-bottom: 10px;
                 }
 
-                .cr-avatar-state {
-                    color: #888;
-                    font-size: 11px;
-                    margin-top: 3px;
-                    margin-bottom: 8px;
+                .connections-room {
+                    font-size: 13px;
+                    color: #d5d7dc;
                 }
 
-                .cr-avatar-actions {
+                .connections-room strong {
+                    color: #fff;
+                }
+
+                .connections-room-item {
                     display: flex;
-                    gap: 6px;
-                    flex-wrap: wrap;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 8px;
+                    padding: 9px;
+                    border-radius: 8px;
+                    background: #101218;
+                    margin-top: 6px;
                 }
 
-                .cr-file {
-                    display: none;
+                .connections-room-name {
+                    min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
                 }
-            `);
+
+                .connections-room-meta {
+                    font-size: 10px;
+                    color: #747a86;
+                    margin-top: 2px;
+                }
+
+                .connections-message {
+                    min-height: 18px;
+                    font-size: 11px;
+                    color: #8e96a5;
+                    margin-top: 8px;
+                }
+
+                .connections-avatar-preview {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 50%;
+                    object-fit: cover;
+                    background: #0b0d11;
+                    border: 1px solid #30343e;
+                }
+
+                .connections-chat {
+                    height: 145px;
+                    overflow-y: auto;
+                    background: #0d0f13;
+                    border-radius: 8px;
+                    border: 1px solid #272b34;
+                    padding: 8px;
+                    font-size: 12px;
+                }
+
+                .connections-chat-line {
+                    padding: 4px 0;
+                    word-break: break-word;
+                }
+
+                .connections-chat-name {
+                    font-weight: 800;
+                    color: #aebcff;
+                }
+
+                .connections-help {
+                    color: #747b88;
+                    font-size: 10px;
+                    line-height: 1.5;
+                }
+            `;
+
+            document.head.appendChild(
+                style
+            );
 
             const root =
                 document.createElement(
@@ -3604,212 +5481,191 @@
                 );
 
             root.id =
-                "connections-real-ui";
+                "connections-root";
 
             root.innerHTML = `
-                <div class="cr-head">
-
-                    <div>
-
-                        <div class="cr-title">
-                            Connections
-                        </div>
-
-                        <div
-                            class="cr-status"
-                            id="cr-status"
-                        >
-                            Waiting for match
-                        </div>
-
-                    </div>
-
-                    <button
-                        class="cr-button"
-                        id="cr-close"
-                    >
-                        ×
-                    </button>
-
+                <div class="connections-title">
+                    <h2>Connections</h2>
+                    <span class="connections-version">
+                        v${escapeHtml(
+                            CONFIG.VERSION
+                        )}
+                    </span>
                 </div>
 
-                <div class="cr-body">
+                <div
+                    id="connections-status"
+                    class="connections-status"
+                >
+                    Disconnected
+                </div>
 
-                    <div class="cr-section">
+                <button
+                    id="connections-scan"
+                    class="connections-button connections-scan"
+                >
+                    I AM IN A MATCH
+                </button>
+
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Player
+                    </div>
+
+                    <div class="connections-row">
+                        <input
+                            id="connections-name"
+                            class="connections-input"
+                            maxlength="24"
+                            placeholder="Username"
+                        />
 
                         <button
-                            class="cr-button cr-primary cr-scan"
-                            id="cr-scan"
+                            id="connections-name-save"
+                            class="connections-button"
                         >
-                            I AM IN A MATCH
+                            Save
                         </button>
+                    </div>
+                </div>
 
-                        <div
-                            id="cr-match-state"
-                            class="cr-match-no"
-                        >
-                            Click this after entering a match.
-                        </div>
-
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Avatar
                     </div>
 
-                    <div class="cr-section">
-
-                        <div class="cr-label">
-                            Player
-                        </div>
-
-                        <div class="cr-row">
-
-                            <input
-                                class="cr-input"
-                                id="cr-name"
-                                placeholder="Username"
-                            >
-
-                            <button
-                                class="cr-button"
-                                id="cr-name-save"
-                            >
-                                Save
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                    <div class="cr-section">
-
-                        <div class="cr-label">
-                            Avatar
-                        </div>
-
-                        <div class="cr-avatar-box">
-
-                            <img
-                                class="cr-avatar-preview"
-                                id="cr-avatar-preview"
-                                alt=""
-                            >
-
-                            <div class="cr-avatar-info">
-
-                                <div
-                                    class="cr-avatar-name"
-                                >
-                                    Player Avatar
-                                </div>
-
-                                <div
-                                    class="cr-avatar-state"
-                                    id="cr-avatar-state"
-                                >
-                                    No avatar
-                                </div>
-
-                                <div
-                                    class="cr-avatar-actions"
-                                >
-
-                                    <button
-                                        class="cr-button cr-primary"
-                                        id="cr-avatar-button"
-                                    >
-                                        Choose Avatar
-                                    </button>
-
-                                    <button
-                                        class="cr-button"
-                                        id="cr-avatar-toggle"
-                                    >
-                                        Disable
-                                    </button>
-
-                                    <button
-                                        class="cr-button"
-                                        id="cr-avatar-reset"
-                                    >
-                                        Reset
-                                    </button>
-
-                                </div>
-
-                            </div>
-
-                        </div>
+                    <div class="connections-row">
+                        <img
+                            id="connections-avatar-preview"
+                            class="connections-avatar-preview"
+                            alt=""
+                        />
 
                         <input
+                            id="connections-avatar-input"
                             type="file"
-                            id="cr-avatar-file"
-                            class="cr-file"
                             accept="image/*"
-                        >
-
+                            class="connections-input"
+                        />
                     </div>
 
-                    <div class="cr-section">
-
-                        <div class="cr-label">
-                            Current room
-                        </div>
-
-                        <div id="cr-room-info">
-                            Not in a room
-                        </div>
-
-                    </div>
-
-                    <div class="cr-section">
-
-                        <div class="cr-label">
-                            Create room
-                        </div>
-
-                        <div class="cr-row">
-
-                            <input
-                                class="cr-input"
-                                id="cr-room-name"
-                                placeholder="Room name"
-                            >
-
-                            <input
-                                class="cr-input"
-                                id="cr-room-max"
-                                type="number"
-                                min="2"
-                                max="32"
-                                value="8"
-                                style="width:80px"
-                            >
-
-                        </div>
-
+                    <div class="connections-row">
                         <button
-                            class="cr-button cr-primary"
-                            id="cr-create"
-                            style="margin-top:8px;width:100%"
+                            id="connections-avatar-toggle"
+                            class="connections-button secondary"
                         >
-                            Create Room
+                            Avatar: ON
                         </button>
 
+                        <button
+                            id="connections-avatar-reset"
+                            class="connections-button danger"
+                        >
+                            Reset
+                        </button>
                     </div>
+                </div>
 
-                    <div class="cr-section">
-
-                        <div class="cr-label">
-                            Servers
-                        </div>
-
-                        <div id="cr-rooms"></div>
-
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Current room
                     </div>
 
                     <div
-                        class="cr-message"
-                        id="cr-message"
+                        id="connections-room-info"
+                        class="connections-room"
+                    >
+                        Not in a room.
+                    </div>
+
+                    <div class="connections-row" style="margin-top:8px;">
+                        <button
+                            id="connections-leave"
+                            class="connections-button danger"
+                        >
+                            Leave
+                        </button>
+                    </div>
+                </div>
+
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Create room
+                    </div>
+
+                    <div class="connections-row">
+                        <input
+                            id="connections-room-name"
+                            class="connections-input"
+                            maxlength="32"
+                            placeholder="Room name"
+                        />
+
+                        <input
+                            id="connections-room-max"
+                            class="connections-input"
+                            type="number"
+                            min="2"
+                            max="32"
+                            value="8"
+                            style="max-width:75px;"
+                        />
+
+                        <button
+                            id="connections-create"
+                            class="connections-button"
+                        >
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Servers
+                    </div>
+
+                    <div
+                        id="connections-servers"
+                    ></div>
+                </div>
+
+                <div class="connections-section">
+                    <div class="connections-section-title">
+                        Chat
+                    </div>
+
+                    <div
+                        id="connections-chat"
+                        class="connections-chat"
                     ></div>
 
+                    <div class="connections-row">
+                        <input
+                            id="connections-chat-input"
+                            class="connections-input"
+                            maxlength="300"
+                            placeholder="Message..."
+                        />
+
+                        <button
+                            id="connections-chat-send"
+                            class="connections-button"
+                        >
+                            Send
+                        </button>
+                    </div>
+                </div>
+
+                <div
+                    id="connections-message"
+                    class="connections-message"
+                ></div>
+
+                <div class="connections-help">
+                    Backspace: open/close menu.<br>
+                    Enter a match first, then press
+                    "I AM IN A MATCH".
                 </div>
             `;
 
@@ -3820,573 +5676,393 @@
             this.root =
                 root;
 
-            this.roomList =
+            this.serverList =
                 root.querySelector(
-                    "#cr-rooms"
+                    "#connections-servers"
                 );
 
             this.roomInfo =
                 root.querySelector(
-                    "#cr-room-info"
+                    "#connections-room-info"
                 );
 
             this.status =
                 root.querySelector(
-                    "#cr-status"
+                    "#connections-status"
                 );
 
             this.message =
                 root.querySelector(
-                    "#cr-message"
+                    "#connections-message"
                 );
 
-            this.scanButton =
+            this.chatLog =
                 root.querySelector(
-                    "#cr-scan"
+                    "#connections-chat"
                 );
 
-            this.avatarPreview =
+            this.avatarInput =
                 root.querySelector(
-                    "#cr-avatar-preview"
-                );
-
-            this.avatarButton =
-                root.querySelector(
-                    "#cr-avatar-button"
+                    "#connections-avatar-input"
                 );
 
             this.avatarToggle =
                 root.querySelector(
-                    "#cr-avatar-toggle"
+                    "#connections-avatar-toggle"
+                );
+
+            this.scanButton =
+                root.querySelector(
+                    "#connections-scan"
+                );
+
+            this.roomName =
+                root.querySelector(
+                    "#connections-room-name"
+                );
+
+            this.roomMax =
+                root.querySelector(
+                    "#connections-room-max"
                 );
 
             const nameInput =
                 root.querySelector(
-                    "#cr-name"
+                    "#connections-name"
                 );
 
             nameInput.value =
                 State.name;
 
             root.querySelector(
-                "#cr-close"
-            ).onclick =
+                "#connections-name-save"
+            ).addEventListener(
+                "click",
                 () => {
-                    UI.toggle(false);
-                };
-
-            this.scanButton.onclick =
-                () => {
-                    confirmMatch();
-                };
-
-            this.avatarButton.onclick =
-                () => {
-
-                    root.querySelector(
-                        "#cr-avatar-file"
-                    ).click();
-
-                };
-
-            root.querySelector(
-                "#cr-avatar-file"
-            ).onchange =
-                event => {
-
-                    Avatar.setFile(
-                        event.target.files?.[0]
-                    );
-
-                    event.target.value =
-                        "";
-                };
-
-            this.avatarToggle.onclick =
-                () => {
-                    Avatar.toggle();
-                };
-
-            root.querySelector(
-                "#cr-avatar-reset"
-            ).onclick =
-                () => {
-                    Avatar.reset();
-                };
-
-            root.querySelector(
-                "#cr-create"
-            ).onclick =
-                () => {
+                    const value =
+                        String(
+                            nameInput.value ||
+                            ""
+                        )
+                            .trim()
+                            .slice(
+                                0,
+                                24
+                            );
 
                     if (
-                        !State.confirmedMatch
+                        !value
                     ) {
-
-                        UI.setMessage(
-                            "Click I AM IN A MATCH first."
-                        );
-
-                        return;
-                    }
-
-                    const name =
-                        root.querySelector(
-                            "#cr-room-name"
-                        )
-                            .value
-                            .trim();
-
-                    const max =
-                        root.querySelector(
-                            "#cr-room-max"
-                        )
-                            .value;
-
-                    Network.createRoom(
-                        name ||
-                        "Connections Room",
-
-                        max
-                    );
-                };
-
-            root.querySelector(
-                "#cr-name-save"
-            ).onclick =
-                () => {
-
-                    const value =
-                        nameInput.value
-                            .trim();
-
-                    if (!value) {
                         return;
                     }
 
                     State.name =
-                        value.slice(
-                            0,
-                            24
-                        );
+                        value;
 
                     try {
-
                         localStorage.setItem(
                             "connections_player_name",
-                            State.name
+                            value
                         );
-
                     } catch {}
-
-                    State.avatarDirty =
-                        true;
 
                     UI.setMessage(
                         "Username saved."
                     );
-                };
-
-            this.renderRooms();
-
-            this.renderRoom();
-
-            this.updateAvatar();
-
-            this.updateStatus();
-        },
-
-        updateAvatar() {
-
-            if (
-                !this.avatarPreview
-            ) {
-                return;
-            }
-
-            const avatar =
-                Avatar.get();
-
-            if (avatar) {
-
-                this.avatarPreview.src =
-                    avatar;
-
-                this.avatarPreview.style.display =
-                    "block";
-
-            } else {
-
-                this.avatarPreview.removeAttribute(
-                    "src"
-                );
-
-                this.avatarPreview.style.display =
-                    "none";
-            }
-
-            const state =
-                this.root?.querySelector(
-                    "#cr-avatar-state"
-                );
-
-            if (state) {
-
-                if (!State.avatar) {
-
-                    state.textContent =
-                        "No avatar";
-
-                } else if (
-                    State.avatarEnabled
-                ) {
-
-                    state.textContent =
-                        "Enabled • synced to room";
-
-                } else {
-
-                    state.textContent =
-                        "Disabled";
                 }
-            }
+            );
 
-            if (
-                this.avatarToggle
-            ) {
+            this.scanButton.addEventListener(
+                "click",
+                confirmMatch
+            );
 
-                this.avatarToggle.textContent =
-                    State.avatarEnabled
-                        ? "Disable"
-                        : "Enable";
-            }
+            this.avatarInput.addEventListener(
+                "change",
+                event => {
+                    const file =
+                        event.target
+                            ?.files?.[0];
+
+                    Avatar.setFile(
+                        file
+                    );
+                }
+            );
+
+            this.avatarToggle.addEventListener(
+                "click",
+                () => {
+                    Avatar.toggle();
+                }
+            );
+
+            root.querySelector(
+                "#connections-avatar-reset"
+            ).addEventListener(
+                "click",
+                () => {
+                    Avatar.reset();
+                }
+            );
+
+            root.querySelector(
+                "#connections-create"
+            ).addEventListener(
+                "click",
+                () => {
+                    createRoom(
+                        this.roomName.value,
+                        this.roomMax.value
+                    );
+                }
+            );
+
+            root.querySelector(
+                "#connections-leave"
+            ).addEventListener(
+                "click",
+                leaveRoom
+            );
+
+            root.querySelector(
+                "#connections-chat-send"
+            ).addEventListener(
+                "click",
+                () => {
+                    const input =
+                        root.querySelector(
+                            "#connections-chat-input"
+                        );
+
+                    Chat.send(
+                        input.value
+                    );
+
+                    input.value =
+                        "";
+                }
+            );
+
+            root.querySelector(
+                "#connections-chat-input"
+            ).addEventListener(
+                "keydown",
+                event => {
+                    if (
+                        event.key ===
+                        "Enter"
+                    ) {
+                        event.preventDefault();
+
+                        const input =
+                            event.currentTarget;
+
+                        Chat.send(
+                            input.value
+                        );
+
+                        input.value =
+                            "";
+                    }
+                }
+            );
+
+            this.updateAvatarControls();
+            this.renderRooms();
+            this.renderRoom();
         },
 
-        toggle(force) {
-
-            this.create();
+        toggle() {
+            this.init();
 
             State.ui.open =
-                typeof force ===
-                "boolean"
-                    ? force
-                    : !State.ui.open;
+                !State.ui.open;
 
             this.root.style.display =
                 State.ui.open
                     ? "block"
                     : "none";
-
-            if (
-                State.ui.open
-            ) {
-
-                this.renderRooms();
-
-                this.renderRoom();
-
-                this.updateAvatar();
-
-                this.updateStatus();
-            }
         },
 
         setScanState(
             scanning
         ) {
+            this.init();
 
             if (
-                !this.scanButton
-            ) {
-                return;
-            }
-
-            this.scanButton.disabled =
-                scanning;
-
-            this.scanButton.textContent =
                 scanning
-                    ? "SCANNING GAME..."
-                    : "I AM IN A MATCH";
+            ) {
+                this.scanButton.disabled =
+                    true;
+
+                this.scanButton.textContent =
+                    "SCANNING...";
+            } else {
+                this.scanButton.disabled =
+                    false;
+
+                this.scanButton.textContent =
+                    State.confirmedMatch
+                        ? "MATCH CONFIRMED"
+                        : "I AM IN A MATCH";
+            }
         },
 
-        updateStatus() {
-
-            if (
-                !this.status
-            ) {
-                return;
-            }
-
-            if (
-                State.room
-            ) {
-
-                this.status.textContent =
-                    `Online • Room ${State.room}`;
-
-                this.status.style.color =
-                    "#71d58b";
-
-                return;
-            }
-
-            if (
-                State.connected
-            ) {
-
-                this.status.textContent =
-                    "Online • No room";
-
-                this.status.style.color =
-                    "#71d58b";
-
-                return;
-            }
-
-            if (
-                State.connecting
-            ) {
-
-                this.status.textContent =
-                    "Connecting...";
-
-                this.status.style.color =
-                    "#e4c96b";
-
-                return;
-            }
-
-            if (
-                State.confirmedMatch
-            ) {
-
-                this.status.textContent =
-                    "Match confirmed";
-
-                this.status.style.color =
-                    "#71d58b";
-
-                return;
-            }
+        updateStatus(
+            text
+        ) {
+            this.init();
 
             this.status.textContent =
-                "Waiting for match";
-
-            this.status.style.color =
-                "#888";
+                String(
+                    text ||
+                    ""
+                );
         },
 
         setMessage(
             text
         ) {
-
-            if (
-                !this.message
-            ) {
-                return;
-            }
+            this.init();
 
             this.message.textContent =
                 String(
-                    text || ""
+                    text ||
+                    ""
+                );
+        },
+
+        updateAvatarControls() {
+            if (
+                !this.avatarToggle
+            ) {
+                return;
+            }
+
+            this.avatarToggle.textContent =
+                `Avatar: ${
+                    State.avatarEnabled
+                        ? "ON"
+                        : "OFF"
+                }`;
+
+            const preview =
+                this.root.querySelector(
+                    "#connections-avatar-preview"
                 );
 
-            clearTimeout(
-                this._messageTimer
-            );
-
-            this._messageTimer =
-                setTimeout(
-                    () => {
-
-                        if (
-                            this.message
-                        ) {
-
-                            this.message.textContent =
-                                "";
-                        }
-
-                    },
-                    5000
-                );
+            if (
+                preview
+            ) {
+                if (
+                    State.avatar &&
+                    State.avatarEnabled
+                ) {
+                    preview.src =
+                        State.avatar;
+                } else {
+                    preview.removeAttribute(
+                        "src"
+                    );
+                }
+            }
         },
 
         renderRooms() {
-
             if (
-                !this.roomList
+                !this.serverList
             ) {
                 return;
             }
 
-            const rooms =
-                Array.isArray(
-                    State.rooms
-                )
-                    ? State.rooms
-                    : [];
-
             if (
-                !rooms.length
+                !State.rooms.length
             ) {
-
-                this.roomList.innerHTML = `
-                    <div class="cr-empty">
+                this.serverList.innerHTML =
+                    `
+                    <div class="connections-help">
                         No rooms available.
                     </div>
-                `;
+                    `;
 
                 return;
             }
 
-            this.roomList.innerHTML =
-                "";
+            this.serverList.innerHTML =
+                State.rooms
+                    .map(
+                        room => {
+                            const id =
+                                room.id ??
+                                room.roomId ??
+                                "";
 
-            for (
-                const room
-                of rooms
-            ) {
+                            const name =
+                                room.name ??
+                                "Room";
 
-                const id =
-                    roomId(
-                        room
-                    );
+                            const players =
+                                room.players ??
+                                room.count ??
+                                0;
 
-                if (
-                    !id
-                ) {
-                    continue;
-                }
+                            const max =
+                                room.maxPlayers ??
+                                0;
 
-                const name =
-                    room.name ||
-                    "Unnamed Room";
+                            return `
+                                <div class="connections-room-item">
+                                    <div class="connections-room-name">
+                                        <div>
+                                            ${escapeHtml(
+                                                name
+                                            )}
+                                        </div>
+                                        <div class="connections-room-meta">
+                                            ${escapeHtml(
+                                                players
+                                            )}/${escapeHtml(
+                                                max
+                                            )}
+                                        </div>
+                                    </div>
 
-                let players =
-                    room.players ??
-                    room.playerCount ??
-                    room.currentPlayers ??
-                    room.count;
+                                    <button
+                                        class="connections-button"
+                                        data-join-room="${escapeHtml(
+                                            id
+                                        )}"
+                                    >
+                                        Join
+                                    </button>
+                                </div>
+                            `;
+                        }
+                    )
+                    .join("");
 
-                if (
-                    players == null
-                ) {
-
-                    if (
-                        Array.isArray(
-                            room.clients
-                        )
-                    ) {
-
-                        players =
-                            room.clients.length;
-
-                    } else if (
-                        room.clients &&
-                        typeof room.clients ===
-                        "object"
-                    ) {
-
-                        players =
-                            Object.keys(
-                                room.clients
-                            ).length;
-
-                    } else {
-
-                        players = 0;
-                    }
-                }
-
-                const max =
-                    Number(
-                        room.maxPlayers ??
-                        room.max ??
-                        8
-                    ) || 8;
-
-                const div =
-                    document.createElement(
-                        "div"
-                    );
-
-                div.className =
-                    "cr-room";
-
-                div.innerHTML = `
-                    <div class="cr-room-name">
-                        ${escapeHtml(name)}
-                    </div>
-
-                    <div class="cr-room-meta">
-                        ${Number(players) || 0}/${max} players
-                    </div>
-
-                    <div class="cr-room-actions">
-
-                        <button
-                            class="cr-button cr-primary"
-                        >
-                            ${
-                                String(
-                                    State.room
-                                ) ===
-                                String(id)
-                                    ? "Joined"
-                                    : "Join"
-                            }
-                        </button>
-
-                    </div>
-                `;
-
-                const button =
-                    div.querySelector(
-                        "button"
-                    );
-
-                if (
-                    String(
-                        State.room
-                    ) ===
-                    String(id)
-                ) {
-
-                    button.disabled =
-                        true;
-
-                } else {
-
-                    button.onclick =
-                        () => {
-
-                            if (
-                                !State.confirmedMatch
-                            ) {
-
-                                UI.setMessage(
-                                    "Click I AM IN A MATCH first."
+            this.serverList
+                .querySelectorAll(
+                    "[data-join-room]"
+                )
+                .forEach(
+                    button => {
+                        button.addEventListener(
+                            "click",
+                            () => {
+                                joinRoom(
+                                    button.getAttribute(
+                                        "data-join-room"
+                                    )
                                 );
-
-                                return;
                             }
-
-                            Network.joinRoom(
-                                id
-                            );
-                        };
-                }
-
-                this.roomList.appendChild(
-                    div
+                        );
+                    }
                 );
-            }
         },
 
         renderRoom() {
-
             if (
                 !this.roomInfo
             ) {
@@ -4396,14 +6072,8 @@
             if (
                 !State.room
             ) {
-
-                this.roomInfo.innerHTML = `
-                    <div style="color:#777">
-                        Not in a room
-                    </div>
-                `;
-
-                this.updateStatus();
+                this.roomInfo.innerHTML =
+                    "Not in a room.";
 
                 return;
             }
@@ -4413,308 +6083,370 @@
                     State.room
                 );
 
-            const name =
+            const roomName =
                 room?.name ||
                 State.room;
 
-            const players =
+            const count =
                 room?.players ??
-                room?.playerCount ??
-                room?.currentPlayers ??
-                (
-                    State.remotes.size +
-                    1
-                );
+                room?.count ??
+                State.remotes.size +
+                1;
 
             const max =
                 room?.maxPlayers ??
-                room?.max ??
-                8;
+                "?";
 
             this.roomInfo.innerHTML = `
-                <div class="cr-room-current">
-
-                    <b>
-                        ${escapeHtml(name)}
-                    </b>
-
-                    <div
-                        style="
-                            color:#999;
-                            font-size:11px;
-                            margin-top:4px
-                        "
-                    >
-                        ${players}/${max} players
-                    </div>
-
-                    <div
-                        style="
-                            color:#777;
-                            font-size:10px;
-                            margin-top:3px
-                        "
-                    >
-                        ${
-                            State.isHost
-                                ? "Host"
-                                : "Client"
-                        }
-                    </div>
-
-                    <button
-                        class="cr-button cr-danger"
-                        id="cr-leave"
-                        style="margin-top:9px"
-                    >
-                        Leave Room
-                    </button>
-
-                </div>
+                <strong>
+                    ${escapeHtml(
+                        roomName
+                    )}
+                </strong>
+                <br>
+                ID:
+                ${escapeHtml(
+                    State.room
+                )}
+                <br>
+                Players:
+                ${escapeHtml(
+                    count
+                )}/${escapeHtml(
+                    max
+                )}
             `;
+        },
 
-            const leave =
-                this.roomInfo.querySelector(
-                    "#cr-leave"
-                );
-
+        addChatMessage(data) {
             if (
-                leave
+                !this.chatLog
             ) {
-
-                leave.onclick =
-                    () => {
-                        Network.leaveRoom();
-                    };
+                return;
             }
 
-            this.updateStatus();
+            const name =
+                data.name ||
+                data.playerName ||
+                "Player";
+
+            const message =
+                data.message ||
+                "";
+
+            const line =
+                document.createElement(
+                    "div"
+                );
+
+            line.className =
+                "connections-chat-line";
+
+            line.innerHTML = `
+                <span class="connections-chat-name">
+                    ${escapeHtml(
+                        name
+                    )}
+                </span>
+                :
+                ${escapeHtml(
+                    message
+                )}
+            `;
+
+            this.chatLog.appendChild(
+                line
+            );
+
+            while (
+                this.chatLog.children
+                    .length > 100
+            ) {
+                this.chatLog.firstChild
+                    ?.remove();
+            }
+
+            this.chatLog.scrollTop =
+                this.chatLog.scrollHeight;
         }
     };
 
-    function escapeHtml(
-        value
-    ) {
+    /*
+     * =========================================================
+     * KEYBOARD / VISIBILITY
+     * =========================================================
+     */
 
-        return String(
-            value ?? ""
-        )
-            .replaceAll(
-                "&",
-                "&amp;"
-            )
-            .replaceAll(
-                "<",
-                "&lt;"
-            )
-            .replaceAll(
-                ">",
-                "&gt;"
-            )
-            .replaceAll(
-                '"',
-                "&quot;"
-            )
-            .replaceAll(
-                "'",
-                "&#039;"
+    function installKeyboard() {
+        window.addEventListener(
+            "keydown",
+            event => {
+                if (
+                    event.repeat
+                ) {
+                    return;
+                }
+
+                if (
+                    event.key ===
+                    "Backspace"
+                ) {
+                    const target =
+                        event.target;
+
+                    const typing =
+                        target &&
+                        (
+                            target.tagName ===
+                                "INPUT" ||
+                            target.tagName ===
+                                "TEXTAREA" ||
+                            target.isContentEditable
+                        );
+
+                    if (
+                        typing
+                    ) {
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    UI.toggle();
+                }
+            },
+            true
+        );
+    }
+
+    function installVisibilityHooks() {
+        document.addEventListener(
+            "visibilitychange",
+            () => {
+                if (
+                    document.hidden
+                ) {
+                    log(
+                        "Window unfocused. Multiplayer remains active."
+                    );
+
+                    return;
+                }
+
+                log(
+                    "Window focused."
+                );
+
+                if (
+                    State.confirmedMatch
+                ) {
+                    State.avatarDirty =
+                        true;
+
+                    RemoteBots.rebuildAvatars();
+                }
+            }
+        );
+
+        window.addEventListener(
+            "focus",
+            () => {
+                if (
+                    State.confirmedMatch
+                ) {
+                    State.avatarDirty =
+                        true;
+                }
+            }
+        );
+
+        window.addEventListener(
+            "blur",
+            () => {
+                /*
+                 * Intentionally do not disconnect.
+                 */
+            }
+        );
+    }
+
+    /*
+     * =========================================================
+     * HEARTBEAT
+     * =========================================================
+     */
+
+    function startHeartbeat() {
+        if (
+            State.visibilityTimer
+        ) {
+            return;
+        }
+
+        State.visibilityTimer =
+            setInterval(
+                () => {
+                    if (
+                        State.connected
+                    ) {
+                        Network.send({
+                            type:
+                                "ping",
+                            t:
+                                Date.now()
+                        });
+                    }
+                },
+                1000
             );
     }
 
     /*
      * =========================================================
-     * BACKSPACE
+     * GLOBAL DEBUG API
      * =========================================================
      */
 
-    document.addEventListener(
-        "keydown",
+    function installDebugAPI() {
+        try {
+            PAGE.__connections_multiplayer = {
+                state:
+                    State,
 
-        event => {
+                network:
+                    Network,
 
-            if (
-                event.key !==
-                "Backspace"
-            ) {
-                return;
-            }
+                remoteBots:
+                    RemoteBots,
 
-            if (
-                event.target.matches(
-                    "input, textarea"
-                )
-            ) {
-                return;
-            }
+                avatar:
+                    Avatar,
 
-            event.preventDefault();
+                music:
+                    Music,
 
-            UI.toggle();
+                headBoost:
+                    HeadBoost,
 
-        },
+                chat:
+                    Chat,
 
-        true
-    );
+                getGame,
 
-    /*
-     * =========================================================
-     * START
-     * =========================================================
-     */
+                getPlayer,
 
-    OnlineMode.install();
+                isInsideMatch,
 
-    UI.create();
+                confirmMatch,
 
-    startSync();
+                createRoom,
 
-    log(
-        `Connections ${CONFIG.VERSION} loaded.`
-    );
+                joinRoom,
 
-    log(
-        "Press [Backspace] to open."
-    );
+                leaveRoom,
 
-    log(
-        'Click "I AM IN A MATCH" after entering a match.'
-    );
+                scanEngine,
 
-    /*
-     * =========================================================
-     * DEBUG
-     * =========================================================
-     */
+                sendLocalState,
 
-    PAGE.__connections_multiplayer = {
+                debug() {
+                    return {
+                        version:
+                            CONFIG.VERSION,
 
-        state:
-            State,
+                        connected:
+                            State.connected,
 
-        network:
-            Network,
+                        id:
+                            State.id,
 
-        remoteBots:
-            RemoteBots,
+                        room:
+                            State.room,
 
-        avatar:
-            Avatar,
+                        confirmedMatch:
+                            State.confirmedMatch,
 
-        getGame,
+                        remotes:
+                            State.remotes.size,
 
-        getPlayer,
+                        isHost:
+                            State.isHost,
 
-        isInsideMatch,
+                        game:
+                            !!getGame(),
 
-        confirmMatch,
+                        inMatch:
+                            isInsideMatch(),
 
-        debug() {
-
-            const game =
-                getGame();
-
-            console.log(
-                "[Connections] DEBUG",
-
-                {
-
-                    version:
-                        CONFIG.VERSION,
-
-                    connected:
-                        State.connected,
-
-                    connecting:
-                        State.connecting,
-
-                    confirmedMatch:
-                        State.confirmedMatch,
-
-                    room:
-                        State.room,
-
-                    id:
-                        State.id,
-
-                    name:
-                        State.name,
-
-                    localAvatar:
-                        !!Avatar.get(),
-
-                    avatarEnabled:
-                        State.avatarEnabled,
-
-                    gameState:
-                        game?.state,
-
-                    gameGameState:
-                        game?.gameState,
-
-                    botCount:
-                        game?.botMgr
-                            ?.bots
-                            ?.length,
-
-                    originalBots:
-                        State.originalBots
-                            ?.length,
-
-                    remoteCount:
-                        State.remotes.size,
-
-                    remoteBots:
-                        game?.botMgr
-                            ?.bots
-                            ?.filter(
-                                b =>
-                                    b?.__connectionsRemote
-                            )
-                            ?.length,
-
-                    remotes:
-                        [
-                            ...State.remotes.values()
-                        ].map(
-                            r => ({
-
-                                id:
-                                    r.id,
-
-                                name:
-                                    r.name,
-
-                                team:
-                                    r.team,
-
-                                avatar:
-                                    !!r.avatar,
-
-                                bot:
-                                    !!r.bot,
-
-                                x:
-                                    r.current.x,
-
-                                y:
-                                    r.current.y,
-
-                                z:
-                                    r.current.z,
-
-                                yaw:
-                                    r.current.yaw,
-
-                                pitch:
-                                    r.current.pitch,
-
-                                alive:
-                                    r.current.alive
-                            })
-                        )
+                        botConstructor:
+                            !!State.botCtor
+                    };
                 }
+            };
+        } catch (e) {
+            warn(
+                "Could not install debug API:",
+                e
             );
         }
-    };
+    }
+
+    /*
+     * =========================================================
+     * INITIALIZATION
+     * =========================================================
+     */
+
+    function init() {
+        UI.init();
+
+        installKeyboard();
+
+        installVisibilityHooks();
+
+        startMonitor();
+
+        startHeartbeat();
+
+        installDebugAPI();
+
+        State.game =
+            getGame();
+
+        log(
+            `Connections ${CONFIG.VERSION} loaded.`
+        );
+
+        log(
+            'Press [Backspace] to open.'
+        );
+
+        log(
+            'Click "I AM IN A MATCH" after entering a match.'
+        );
+
+        if (
+            State.game
+        ) {
+            log(
+                "Game engine detected."
+            );
+        }
+    }
+
+    if (
+        document.readyState ===
+        "loading"
+    ) {
+        document.addEventListener(
+            "DOMContentLoaded",
+            init,
+            {
+                once: true
+            }
+        );
+    } else {
+        init();
+    }
 
 })();
