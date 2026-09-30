@@ -3063,192 +3063,181 @@
             );
         },
 
-        receive(data) {
-            if (
-                !data ||
-                !data.id
-            ) {
-                return;
-            }
+receive(data) {
+  if (!data || !data.id) return;
 
-            const id =
-                String(
-                    data.id
-                );
+  const id = String(data.id);
 
-            if (
-                State.id &&
-                id ===
-                String(
-                    State.id
-                )
-            ) {
-                return;
-            }
+  if (id === String(State.id)) {
+    return;
+  }
 
-            let remote =
-                State.remotes.get(
-                    id
-                );
+  const incoming = data.state || data;
 
-            if (
-                !remote
-            ) {
-                remote = {
-                    id,
+  if (!incoming || typeof incoming !== "object") {
+    return;
+  }
 
-                    name:
-                        data.name ||
-                        "Player",
+  let remote = this.remotes.get(id);
 
-                    team:
-                        normalizeTeam(
-                            data.team
-                        ),
+  if (!remote) {
+    remote = {
+      id,
 
-                    bot:
-                        null,
+      name: String(incoming.name || data.name || "Player"),
 
-                    x:
-                        safeNumber(
-                            data.x,
-                            0
-                        ),
+      team: incoming.team || data.team || "CT",
 
-                    y:
-                        safeNumber(
-                            data.y,
-                            0
-                        ),
+      x: Number(incoming.x) || 0,
+      y: Number(incoming.y) || 0,
+      z: Number(incoming.z) || 0,
 
-                    z:
-                        safeNumber(
-                            data.z,
-                            0
-                        ),
+      targetX: Number(incoming.x) || 0,
+      targetY: Number(incoming.y) || 0,
+      targetZ: Number(incoming.z) || 0,
 
-                    yaw:
-                        safeNumber(
-                            data.yaw,
-                            0
-                        ),
+      yaw: Number(incoming.yaw) || 0,
+      pitch: Number(incoming.pitch) || 0,
 
-                    pitch:
-                        safeNumber(
-                            data.pitch,
-                            0
-                        ),
+      targetYaw: Number(incoming.yaw) || 0,
+      targetPitch: Number(incoming.pitch) || 0,
 
-                    vx:
-                        safeNumber(
-                            data.vx,
-                            0
-                        ),
+      vx: Number(incoming.vx) || 0,
+      vy: Number(incoming.vy) || 0,
+      vz: Number(incoming.vz) || 0,
 
-                    vy:
-                        safeNumber(
-                            data.vy,
-                            0
-                        ),
+      onGround: incoming.onGround !== false,
+      crouching: !!incoming.crouching,
+      alive: incoming.alive !== false,
 
-                    vz:
-                        safeNumber(
-                            data.vz,
-                            0
-                        ),
+      avatar: incoming.avatar || data.avatar || null,
 
-                    onGround:
-                        !!data.onGround,
+      bot: null,
 
-                    crouching:
-                        !!data.crouching,
+      lastPacket: performance.now(),
+      lastApplied: performance.now(),
 
-                    alive:
-                        data.alive !==
-                        false,
+      packetCount: 0
+    };
 
-                    targetX:
-                        safeNumber(
-                            data.x,
-                            0
-                        ),
+    this.remotes.set(id, remote);
 
-                    targetY:
-                        safeNumber(
-                            data.y,
-                            0
-                        ),
+    console.log(
+      "[Connections] Remote player discovered:",
+      remote.name,
+      "|",
+      id
+    );
 
-                    targetZ:
-                        safeNumber(
-                            data.z,
-                            0
-                        ),
+    /*
+     * Cria UMA vez.
+     */
+    try {
+      this.createBot(remote);
+    } catch (e) {
+      console.error(
+        "[Connections] Failed creating remote bot:",
+        e
+      );
+    }
+  }
 
-                    targetYaw:
-                        safeNumber(
-                            data.yaw,
-                            0
-                        ),
+  /*
+   * Atualiza o estado existente.
+   */
+  remote.name = String(
+    incoming.name ||
+    data.name ||
+    remote.name ||
+    "Player"
+  );
 
-                    targetPitch:
-                        safeNumber(
-                            data.pitch,
-                            0
-                        ),
+  remote.team =
+    incoming.team ||
+    data.team ||
+    remote.team ||
+    "CT";
 
-                    targetVx:
-                        safeNumber(
-                            data.vx,
-                            0
-                        ),
+  const x = Number(incoming.x);
+  const y = Number(incoming.y);
+  const z = Number(incoming.z);
 
-                    targetVy:
-                        safeNumber(
-                            data.vy,
-                            0
-                        ),
+  if (Number.isFinite(x)) {
+    remote.targetX = x;
+  }
 
-                    targetVz:
-                        safeNumber(
-                            data.vz,
-                            0
-                        ),
+  if (Number.isFinite(y)) {
+    remote.targetY = y;
+  }
 
-                    targetOnGround:
-                        !!data.onGround,
+  if (Number.isFinite(z)) {
+    remote.targetZ = z;
+  }
 
-                    targetCrouching:
-                        !!data.crouching,
+  const yaw = Number(incoming.yaw);
+  const pitch = Number(incoming.pitch);
 
-                    avatar:
-                        data.avatar ||
-                        null,
+  if (Number.isFinite(yaw)) {
+    remote.targetYaw = yaw;
+  }
 
-                    avatarEnabled:
-                        data.avatarEnabled !==
-                        false,
+  if (Number.isFinite(pitch)) {
+    remote.targetPitch = pitch;
+  }
 
-                    lastUpdate:
-                        performance.now(),
+  if (Number.isFinite(Number(incoming.vx))) {
+    remote.vx = Number(incoming.vx);
+  }
 
-                    previousAlive:
-                        data.alive !==
-                        false,
+  if (Number.isFinite(Number(incoming.vy))) {
+    remote.vy = Number(incoming.vy);
+  }
 
-                    headBoost:
-                        null
-                };
+  if (Number.isFinite(Number(incoming.vz))) {
+    remote.vz = Number(incoming.vz);
+  }
 
-                State.remotes.set(
-                    id,
-                    remote
-                );
+  if (incoming.onGround !== undefined) {
+    remote.onGround = !!incoming.onGround;
+  }
 
-                RemoteBots.attach(
-                    remote
-                );
-            }
+  if (incoming.crouching !== undefined) {
+    remote.crouching = !!incoming.crouching;
+  }
+
+  if (incoming.alive !== undefined) {
+    remote.alive = incoming.alive !== false;
+  }
+
+  if (incoming.avatar !== undefined) {
+    remote.avatar = incoming.avatar;
+  }
+
+  if (data.avatar !== undefined) {
+    remote.avatar = data.avatar;
+  }
+
+  remote.lastPacket = performance.now();
+  remote.packetCount++;
+
+  /*
+   * NÃO recria o bot se ele já existe.
+   */
+  if (!remote.bot) {
+    try {
+      this.createBot(remote);
+    } catch (e) {
+      console.error(
+        "[Connections] Failed recreating missing remote bot:",
+        e
+      );
+    }
+  }
+
+  try {
+    this.applyAvatars();
+  } catch {}
+}
 
             remote.name =
                 data.name ||
@@ -3347,526 +3336,248 @@
                 );
             }
         },
-        updateBot(remote, dt) {
-            if (
-                !remote ||
-                !remote.bot
-            ) {
-                return;
-            }
-
-            const bot =
-                remote.bot;
-
-            const frameDt =
-                clamp(
-                    safeNumber(
-                        dt,
-                        0.016
-                    ),
-                    0.001,
-                    0.1
-                );
-
-            const current = {
-                x:
-                    safeNumber(
-                        bot.x,
-                        remote.x
-                    ),
-
-                y:
-                    safeNumber(
-                        bot.y,
-                        remote.y
-                    ),
-
-                z:
-                    safeNumber(
-                        bot.z,
-                        remote.z
-                    )
-            };
-
-            const target = {
-                x:
-                    safeNumber(
-                        remote.targetX,
-                        current.x
-                    ),
-
-                y:
-                    safeNumber(
-                        remote.targetY,
-                        current.y
-                    ),
-
-                z:
-                    safeNumber(
-                        remote.targetZ,
-                        current.z
-                    )
-            };
-
-            /*
-             * Never teleport the native bot directly to a
-             * network packet. The local game collision system
-             * gets a chance to reject/block the movement.
-             */
-            const safeTarget =
-                collisionSafeRemoteTarget(
-                    bot,
-                    target,
-                    frameDt
-                );
-
-            const interpolation =
-                1 -
-                Math.exp(
-                    -CONFIG.INTERPOLATION *
-                    frameDt
-                );
-
-            let nextX =
-                current.x +
-                (
-                    safeTarget.x -
-                    current.x
-                ) *
-                interpolation;
-
-            let nextY =
-                current.y +
-                (
-                    safeTarget.y -
-                    current.y
-                ) *
-                interpolation;
-
-            let nextZ =
-                current.z +
-                (
-                    safeTarget.z -
-                    current.z
-                ) *
-                interpolation;
-
-            /*
-             * Final movement clamp. This is deliberately small
-             * enough that a bad packet cannot launch the native
-             * player through half the map.
-             */
-            const dx =
-                nextX -
-                current.x;
-
-            const dy =
-                nextY -
-                current.y;
-
-            const dz =
-                nextZ -
-                current.z;
-
-            const movement =
-                Math.sqrt(
-                    dx * dx +
-                    dy * dy +
-                    dz * dz
-                );
-
-            const maxMovement =
-                Math.max(
-                    0.08,
-                    Math.min(
-                        0.75,
-                        8 *
-                        frameDt
-                    )
-                );
-
-            if (
-                movement >
-                maxMovement
-            ) {
-                const scale =
-                    maxMovement /
-                    movement;
-
-                nextX =
-                    current.x +
-                    dx * scale;
-
-                nextY =
-                    current.y +
-                    dy * scale;
-
-                nextZ =
-                    current.z +
-                    dz * scale;
-            }
-
-            setTransform(
-                bot,
-                nextX,
-                nextY,
-                nextZ
-            );
-
-            /*
-             * Rotation is synchronized separately from movement.
-             * This prevents the old problem where the body moved
-             * correctly but the native look direction stayed behind.
-             */
-            let currentYaw =
-                safeNumber(
-                    getYaw(bot),
-                    remote.targetYaw
-                );
-
-            let targetYaw =
-                safeNumber(
-                    remote.targetYaw,
-                    currentYaw
-                );
-
-            let yawDelta =
-                targetYaw -
-                currentYaw;
-
-            while (
-                yawDelta >
-                Math.PI
-            ) {
-                yawDelta -=
-                    Math.PI * 2;
-            }
-
-            while (
-                yawDelta <
-                -Math.PI
-            ) {
-                yawDelta +=
-                    Math.PI * 2;
-            }
-
-            currentYaw +=
-                yawDelta *
-                interpolation;
-
-            let currentPitch =
-                safeNumber(
-                    getPitch(bot),
-                    remote.targetPitch
-                );
-
-            const targetPitch =
-                safeNumber(
-                    remote.targetPitch,
-                    currentPitch
-                );
-
-            currentPitch +=
-                (
-                    targetPitch -
-                    currentPitch
-                ) *
-                interpolation;
-
-            setRotation(
-                bot,
-                currentYaw,
-                currentPitch
-            );
-
-            /*
-             * Estimate local velocity from the actual movement
-             * instead of blindly trusting network velocity.
-             */
-            const localVx =
-                (
-                    nextX -
-                    current.x
-                ) /
-                frameDt;
-
-            const localVy =
-                (
-                    nextY -
-                    current.y
-                ) /
-                frameDt;
-
-            const localVz =
-                (
-                    nextZ -
-                    current.z
-                ) /
-                frameDt;
-
-            const networkVx =
-                safeNumber(
-                    remote.targetVx,
-                    localVx
-                );
-
-            const networkVy =
-                safeNumber(
-                    remote.targetVy,
-                    localVy
-                );
-
-            const networkVz =
-                safeNumber(
-                    remote.targetVz,
-                    localVz
-                );
-
-            /*
-             * Blend network velocity with actual local velocity.
-             * This makes jumping/falling look much less robotic.
-             */
-            setVelocity(
-                bot,
-                localVx * 0.65 +
-                    networkVx * 0.35,
-
-                localVy * 0.65 +
-                    networkVy * 0.35,
-
-                localVz * 0.65 +
-                    networkVz * 0.35
-            );
-
-            try {
-                bot.onGround =
-                    !!remote.targetOnGround;
-            } catch {}
-
-            try {
-                bot.grounded =
-                    !!remote.targetOnGround;
-            } catch {}
-
-            try {
-                bot.isGrounded =
-                    !!remote.targetOnGround;
-            } catch {}
-
-            try {
-                bot.crouching =
-                    !!remote.targetCrouching;
-            } catch {}
-
-            try {
-                bot.crouched =
-                    !!remote.targetCrouching;
-            } catch {}
-
-            try {
-                bot.team =
-                    normalizeTeam(
-                        remote.team
-                    );
-            } catch {}
-
-            try {
-                bot.name =
-                    remote.name;
-            } catch {}
-
-            try {
-                bot._visY =
-                    nextY;
-            } catch {}
-
-            /*
-             * Some versions of the Clutcher engine use a CS2
-             * collision/body object underneath the bot.
-             */
-            try {
-                if (
-                    typeof bot._updateCS2Body ===
-                    "function"
-                ) {
-                    bot._updateCS2Body();
-                }
-            } catch {}
-
-            try {
-                const agent =
-                    bot.cs2Agent;
-
-                if (
-                    agent
-                ) {
-                    if (
-                        typeof agent.setTransform ===
-                        "function"
-                    ) {
-                        agent.setTransform(
-                            nextX,
-                            nextY,
-                            nextZ
-                        );
-                    }
-
-                    if (
-                        typeof agent.setPitch ===
-                        "function"
-                    ) {
-                        agent.setPitch(
-                            currentPitch
-                        );
-                    }
-
-                    if (
-                        typeof agent.update ===
-                        "function"
-                    ) {
-                        agent.update(
-                            frameDt,
-                            false,
-                            remote.targetCrouching
-                                ? 1
-                                : 0
-                        );
-                    }
-                }
-            } catch {}
-
-            /*
-             * Keep the render root synchronized too.
-             */
-            try {
-                const root =
-                    bot.cs2Agent?.root;
-
-                if (
-                    root
-                ) {
-                    if (
-                        root.position
-                    ) {
-                        root.position.x =
-                            nextX;
-
-                        root.position.y =
-                            nextY;
-
-                        root.position.z =
-                            nextZ;
-                    }
-
-                    if (
-                        root.rotation
-                    ) {
-                        root.rotation.y =
-                            currentYaw;
-                    }
-                }
-            } catch {}
-
-            /*
-             * Native visual objects.
-             */
-            try {
-                if (
-                    bot.mesh?.position
-                ) {
-                    bot.mesh.position.x =
-                        nextX;
-
-                    bot.mesh.position.y =
-                        nextY;
-
-                    bot.mesh.position.z =
-                        nextZ;
-                }
-            } catch {}
-
-            try {
-                if (
-                    bot.shadow?.position
-                ) {
-                    bot.shadow.position.x =
-                        nextX;
-
-                    bot.shadow.position.y =
-                        nextY;
-
-                    bot.shadow.position.z =
-                        nextZ;
-                }
-            } catch {}
-
-            /*
-             * Visibility/alive state.
-             */
-            if (
-                remote.previousAlive !==
-                remote.alive
-            ) {
-                remote.previousAlive =
-                    remote.alive;
-
-                try {
-                    bot.alive =
-                        remote.alive;
-                } catch {}
-
-                try {
-                    bot.health =
-                        remote.alive
-                            ? 100
-                            : 0;
-                } catch {}
-
-                if (
-                    !remote.alive
-                ) {
-                    try {
-                        if (
-                            typeof bot.die ===
-                            "function"
-                        ) {
-                            bot.die();
-                        }
-                    } catch {}
-                }
-            }
-
-            try {
-                if (
-                    bot.cs2Agent?.root
-                ) {
-                    bot.cs2Agent.root.visible =
-                        true;
-                }
-            } catch {}
-
-            try {
-                if (
-                    bot.mesh
-                ) {
-                    bot.mesh.visible =
-                        true;
-                }
-            } catch {}
-
-            try {
-                if (
-                    bot.shadow
-                ) {
-                    bot.shadow.visible =
-                        true;
-                }
-            } catch {}
-
-            this.applyAvatars(
-                remote
-            );
-        },
+updateBot(remote, dt) {
+  const bot = remote && remote.bot;
+  if (!remote || !bot) return;
+
+  const g = getGame();
+  if (!g) return;
+
+  const now = performance.now();
+
+  if (!Number.isFinite(remote.x)) remote.x = 0;
+  if (!Number.isFinite(remote.y)) remote.y = 0;
+  if (!Number.isFinite(remote.z)) remote.z = 0;
+
+  if (!Number.isFinite(remote.targetX)) remote.targetX = remote.x;
+  if (!Number.isFinite(remote.targetY)) remote.targetY = remote.y;
+  if (!Number.isFinite(remote.targetZ)) remote.targetZ = remote.z;
+
+  const px = Number(bot.x) || 0;
+  const py = Number(bot.y) || 0;
+  const pz = Number(bot.z) || 0;
+
+  const tx = Number(remote.targetX);
+  const ty = Number(remote.targetY);
+  const tz = Number(remote.targetZ);
+
+  let dx = tx - px;
+  let dy = ty - py;
+  let dz = tz - pz;
+
+  const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+  /*
+   * Network packets podem chegar atrasados.
+   * Nunca tenta atravessar uma parede com um único salto gigante.
+   */
+  const MAX_STEP = 0.55;
+
+  let nx = px;
+  let ny = py;
+  let nz = pz;
+
+  if (distance <= MAX_STEP) {
+    nx = tx;
+    ny = ty;
+    nz = tz;
+  } else {
+    const scale = MAX_STEP / distance;
+
+    nx += dx * scale;
+    ny += dy * scale;
+    nz += dz * scale;
+  }
+
+  /*
+   * Guarda velocidade estimada.
+   */
+  const safeDt = Math.max(0.001, Math.min(0.1, Number(dt) || 0.05));
+
+  const vx = (nx - px) / safeDt;
+  const vy = (ny - py) / safeDt;
+  const vz = (nz - pz) / safeDt;
+
+  remote.vx = vx;
+  remote.vy = vy;
+  remote.vz = vz;
+
+  /*
+   * Atualiza os campos básicos do bot.
+   */
+  try {
+    bot.vx = vx;
+    bot.vy = vy;
+    bot.vz = vz;
+  } catch {}
+
+  try {
+    bot.velocity = {
+      x: vx,
+      y: vy,
+      z: vz
+    };
+  } catch {}
+
+  /*
+   * Não força onGround.
+   */
+  if (remote.onGround !== undefined) {
+    try {
+      bot.onGround = !!remote.onGround;
+    } catch {}
+  }
+
+  /*
+   * Posição.
+   *
+   * Primeiro tentamos o método físico/nativo do bot.
+   * Só usamos os campos diretos como fallback.
+   */
+  let applied = false;
+
+  try {
+    if (typeof bot.setPosition === "function") {
+      bot.setPosition(nx, ny, nz);
+      applied = true;
+    }
+  } catch {}
+
+  if (!applied) {
+    try {
+      if (typeof bot.setPos === "function") {
+        bot.setPos(nx, ny, nz);
+        applied = true;
+      }
+    } catch {}
+  }
+
+  if (!applied) {
+    try {
+      if (bot.position) {
+        bot.position.x = nx;
+        bot.position.y = ny;
+        bot.position.z = nz;
+        applied = true;
+      }
+    } catch {}
+  }
+
+  try {
+    bot.x = nx;
+    bot.y = ny;
+    bot.z = nz;
+  } catch {}
+
+  /*
+   * Rotação.
+   */
+  const yaw = Number.isFinite(Number(remote.targetYaw))
+    ? Number(remote.targetYaw)
+    : Number(remote.yaw) || 0;
+
+  const pitch = Number.isFinite(Number(remote.targetPitch))
+    ? Number(remote.targetPitch)
+    : Number(remote.pitch) || 0;
+
+  remote.yaw = yaw;
+  remote.pitch = pitch;
+
+  try {
+    bot.yaw = yaw;
+  } catch {}
+
+  try {
+    bot.pitch = pitch;
+  } catch {}
+
+  try {
+    bot._lookPitch = pitch;
+  } catch {}
+
+  try {
+    bot.rotationY = yaw;
+  } catch {}
+
+  /*
+   * CS2 body/agent.
+   */
+  try {
+    if (typeof bot._updateCS2Body === "function") {
+      bot._updateCS2Body();
+    }
+  } catch {}
+
+  try {
+    const agent = bot.cs2Agent;
+
+    if (agent) {
+      if (typeof agent.setTransform === "function") {
+        agent.setTransform(nx, ny, nz, yaw);
+      }
+
+      if (typeof agent.setPitch === "function") {
+        agent.setPitch(pitch);
+      }
+
+      if (typeof agent.update === "function") {
+        agent.update(
+          safeDt,
+          !!remote.onGround,
+          !!remote.crouching
+        );
+      }
+    }
+  } catch {}
+
+  /*
+   * Estado visual.
+   */
+  try {
+    bot.team = remote.team || bot.team;
+  } catch {}
+
+  try {
+    bot.name = remote.name || bot.name;
+  } catch {}
+
+  try {
+    bot.alive = remote.alive !== false;
+  } catch {}
+
+  try {
+    if (remote.health !== undefined) {
+      bot.health = remote.health;
+    }
+  } catch {}
+
+  /*
+   * Nunca deixa o remote ser destruído só porque
+   * um pacote atrasou.
+   */
+  if (remote.alive === false) {
+    try {
+      bot.alive = false;
+    } catch {}
+
+    try {
+      if (typeof bot.visible !== "undefined") {
+        bot.visible = false;
+      }
+    } catch {}
+  } else {
+    try {
+      bot.visible = true;
+    } catch {}
+  }
+
+  remote.lastApplied = now;
+
+  try {
+    RemoteBots.applyAvatars();
+  } catch {}
+}
 
         applyImmediate(remote) {
             if (
@@ -4072,41 +3783,40 @@
             );
         },
 
-        remove(id) {
-            const key =
-                String(id);
+remove(id) {
+  id = String(id || "");
 
-            const remote =
-                State.remotes.get(
-                    key
-                );
+  if (!id) return;
 
-            if (
-                !remote
-            ) {
-                return;
-            }
+  const remote = this.remotes.get(id);
 
-            if (
-                remote.bot
-            ) {
-                this.destroyRemoteBot(
-                    remote.bot
-                );
+  if (!remote) {
+    return;
+  }
 
-                remote.bot =
-                    null;
-            }
+  /*
+   * Só remove quando o servidor realmente mandar
+   * player_left.
+   *
+   * Não chamamos isso por timeout, state vazio,
+   * mudança de round ou perda temporária de foco.
+   */
+  console.log(
+    "[Connections] Remote player removed:",
+    id
+  );
 
-            State.remotes.delete(
-                key
-            );
+  try {
+    this.destroyRemoteBot(remote);
+  } catch (e) {
+    console.warn(
+      "[Connections] Failed destroying remote bot:",
+      e
+    );
+  }
 
-            log(
-                "Remote player removed:",
-                key
-            );
-        },
+  this.remotes.delete(id);
+}
 
         destroyRemoteBot(bot) {
             if (
