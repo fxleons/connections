@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.0.2
+// @version      1.0.3
 // @description  clutcher.io multiply players
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
@@ -16,7 +16,7 @@
   const PAGE = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
   const CONFIG = {
-    VERSION: "1.0.2",
+    VERSION: "1.0.3",
     WS_URL: "wss://diagram-candle-carried-forever.trycloudflare.com",
     SEND_RATE: 50,
     INTERPOLATION: 100,
@@ -592,7 +592,7 @@
     },
 
     receiveState(data) {
-      const id = data.id || data.playerId || data.senderId;
+      const id = data.id || data.playerId || data.senderId || data.state?.id;
       if (!id || String(id) === String(State.id)) return;
 
       const state = data.state || data;
@@ -844,7 +844,7 @@
 
     play(url) {
       this.stop();
-      if (!url || typeof url !== "string") return;
+      if (!url || typeof url !== "string" || !/^https:\/\//i.test(url)) return;
       try {
         const audio = new Audio(url);
         audio.volume = 0.75;
