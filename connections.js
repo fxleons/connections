@@ -2439,3 +2439,2821 @@
     init();
   }
 })();
+    updateBot(remote, dt) {
+      const bot = remote && remote.bot;
+      if (!remote || !bot) return;
+
+      const g = getGame();
+      if (!g) return;
+
+      const now = performance.now();
+
+      if (!Number.isFinite(remote.x)) remote.x = 0;
+      if (!Number.isFinite(remote.y)) remote.y = 0;
+      if (!Number.isFinite(remote.z)) remote.z = 0;
+
+      if (!Number.isFinite(remote.targetX)) remote.targetX = remote.x;
+      if (!Number.isFinite(remote.targetY)) remote.targetY = remote.y;
+      if (!Number.isFinite(remote.targetZ)) remote.targetZ = remote.z;
+
+      const px = Number(bot.x) || 0;
+      const py = Number(bot.y) || 0;
+      const pz = Number(bot.z) || 0;
+
+      const tx = Number(remote.targetX);
+      const ty = Number(remote.targetY);
+      const tz = Number(remote.targetZ);
+
+      const dx = tx - px;
+      const dy = ty - py;
+      const dz = tz - pz;
+
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      const safeDt = Math.max(0.001, Math.min(0.1, Number(dt) || 0.05));
+
+      /*
+       * Step limit scales with dt so fast players don't lag behind,
+       * and big jumps (respawn / teleport) snap instead of crawling.
+       */
+      const TELEPORT_DISTANCE = 12;
+      const MAX_STEP = Math.max(0.55, 30 * safeDt);
+
+      let nx = px;
+      let ny = py;
+      let nz = pz;
+
+      if (distance <= MAX_STEP || distance > TELEPORT_DISTANCE) {
+        nx = tx;
+        ny = ty;
+        nz = tz;
+      } else {
+        const scale = MAX_STEP / distance;
+        nx += dx * scale;
+        ny += dy * scale;
+        nz += dz * scale;
+      }
+
+      const vx = (nx - px) / safeDt;
+      const vy = (ny - py) / safeDt;
+      const vz = (nz - pz) / safeDt;
+
+      remote.vx = vx;
+      remote.vy = vy;
+      remote.vz = vz;
+
+      try { bot.vx = vx; bot.vy = vy; bot.vz = vz; } catch {}
+      try { bot.velocity = { x: vx, y: vy, z: vz }; } catch {}
+
+      const onGround = !!remote.targetOnGround;
+      const crouching = !!remote.targetCrouching;
+
+      try { bot.onGround = onGround; } catch {}
+      try { bot.crouching = crouching; } catch {}
+
+      let applied = false;
+
+      try {
+        if (typeof bot.setPosition === "function") {
+          bot.setPosition(nx, ny, nz);
+          applied = true;
+        }
+      } catch {}
+
+      if (!applied) {
+        try {
+          if (typeof bot.setPos === "function") {
+            bot.setPos(nx, ny, nz);
+            applied = true;
+          }
+        } catch {}
+      }
+
+      if (!applied) {
+        try {
+          if (bot.position) {
+            bot.position.x = nx;
+            bot.position.y = ny;
+            bot.position.z = nz;
+            applied = true;
+          }
+        } catch {}
+      }
+
+      try {
+        bot.x = nx;
+        bot.y = ny;
+        bot.z = nz;
+      } catch {}
+
+      const yaw =
+        Number.isFinite(Number(remote.targetYaw))
+          ? Number(remote.targetYaw)
+          : Number(remote.yaw) || 0;
+
+      const pitch =
+        Number.isFinite(Number(remote.targetPitch))
+          ? Number(remote.targetPitch)
+          : Number(remote.pitch) || 0;
+
+      remote.yaw = yaw;
+      remote.pitch = pitch;
+
+      try { bot.yaw = yaw; } catch {}
+      try { bot.pitch = pitch; } catch {}
+      try { bot._lookPitch = pitch; } catch {}
+      try { bot.rotationY = yaw; } catch {}
+
+      try {
+        if (typeof bot._updateCS2Body === "function") {
+          bot._updateCS2Body();
+        }
+      } catch {}
+
+      try {
+        const agent = bot.cs2Agent;
+
+        if (agent) {
+          if (typeof agent.setTransform === "function") {
+            agent.setTransform(nx, ny, nz, yaw);
+          }
+
+          if (typeof agent.setPitch === "function") {
+            agent.setPitch(pitch);
+          }
+
+          if (typeof agent.update === "function") {
+            agent.update(safeDt, onGround, crouching);
+          }
+        }
+      } catch {}
+
+      try { bot.team = remote.team || bot.team; } catch {}
+      try { bot.name = remote.name || bot.name; } catch {}
+      try { bot.alive = remote.alive !== false; } catch {}
+
+      try {
+        if (remote.health !== undefined) {
+          bot.health = remote.health;
+        }
+      } catch {}
+
+      if (remote.alive === false) {
+        try { bot.alive = false; } catch {}
+
+        try {
+          if (typeof bot.visible !== "undefined") {
+            bot.visible = false;
+          }
+        } catch {}
+      } else {
+        try { bot.visible = true; } catch {}
+      }
+
+      remote.lastApplied = now;
+    },
+
+    applyImmediate(remote) {
+      if (!remote || !remote.bot) return;
+
+      const bot = remote.bot;
+
+      const x = safeNumber(remote.targetX, 0);
+      const y = safeNumber(remote.targetY, 0);
+      const z = safeNumber(remote.targetZ, 0);
+      const yaw = safeNumber(remote.targetYaw, 0);
+      const pitch = safeNumber(remote.targetPitch, 0);
+
+      setTransform(bot, x, y, z);
+      setRotation(bot, yaw, pitch);
+
+      setVelocity(
+        bot,
+        safeNumber(remote.targetVx, 0),
+        safeNumber(remote.targetVy, 0),
+        safeNumber(remote.targetVz, 0)
+      );
+
+      try { bot.onGround = !!remote.targetOnGround; } catch {}
+      try { bot.grounded = !!remote.targetOnGround; } catch {}
+      try { bot.crouching = !!remote.targetCrouching; } catch {}
+      try { bot.alive = remote.alive !== false; } catch {}
+      try { bot.health = remote.alive !== false ? 100 : 0; } catch {}
+      try { bot.team = normalizeTeam(remote.team); } catch {}
+      try { bot.name = remote.name; } catch {}
+
+      try {
+        if (typeof bot._updateCS2Body === "function") {
+          bot._updateCS2Body();
+        }
+      } catch {}
+
+      try {
+        const agent = bot.cs2Agent;
+
+        if (agent) {
+          if (typeof agent.setTransform === "function") {
+            agent.setTransform(x, y, z, yaw);
+          }
+
+          if (typeof agent.setPitch === "function") {
+            agent.setPitch(pitch);
+          }
+        }
+      } catch {}
+
+      try {
+        const root = bot.cs2Agent?.root;
+
+        if (root) {
+          if (root.position) {
+            root.position.x = x;
+            root.position.y = y;
+            root.position.z = z;
+          }
+
+          if (root.rotation) {
+            root.rotation.y = yaw;
+          }
+
+          root.visible = true;
+        }
+      } catch {}
+
+      try {
+        if (bot.mesh) bot.mesh.visible = true;
+      } catch {}
+
+      try {
+        if (bot.shadow) bot.shadow.visible = true;
+      } catch {}
+
+      this.applyAvatars(remote);
+    },
+
+    remove(id) {
+      id = String(id || "");
+      if (!id) return;
+
+      const remote = State.remotes.get(id);
+      if (!remote) return;
+
+      /*
+       * Only removed when the server sends player_left.
+       * Not on timeout, empty state, round change, or focus loss.
+       */
+      log("Remote player removed:", id);
+
+      try {
+        if (remote.bot) {
+          this.destroyRemoteBot(remote.bot);
+        }
+      } catch (e) {
+        warn("Failed destroying remote bot:", e);
+      }
+
+      State.remotes.delete(id);
+    },
+
+    destroyRemoteBot(bot) {
+      if (!bot) return;
+
+      try {
+        bot.__connectionsRemote = false;
+        bot.__connectionsRemoved = true;
+        bot.alive = false;
+        bot.health = 0;
+      } catch {}
+
+      try {
+        if (typeof bot.die === "function") {
+          bot.die();
+        }
+      } catch {}
+
+      try {
+        if (typeof bot.despawn === "function") {
+          bot.despawn();
+        }
+      } catch {}
+
+      try {
+        if (bot.cs2Agent?.root?.parent) {
+          bot.cs2Agent.root.parent.remove(bot.cs2Agent.root);
+        }
+      } catch {}
+
+      try {
+        if (bot.mesh?.parent) {
+          bot.mesh.parent.remove(bot.mesh);
+        }
+      } catch {}
+
+      try {
+        if (bot.shadow?.parent) {
+          bot.shadow.parent.remove(bot.shadow);
+        }
+      } catch {}
+
+      try {
+        const list = getGame()?.botMgr?.bots;
+
+        if (list) {
+          const index = list.indexOf(bot);
+
+          if (index !== -1) {
+            list.splice(index, 1);
+          }
+        }
+      } catch {}
+
+      try {
+        bot.update = function () {};
+      } catch {}
+    },
+
+    clear() {
+      for (const remote of State.remotes.values()) {
+        if (remote.bot) {
+          this.destroyRemoteBot(remote.bot);
+        }
+      }
+
+      State.remotes.clear();
+
+      this.restoreOriginalBots();
+      this.rebuildAvatars();
+
+      log("Remote bots cleared.");
+    },
+
+    restoreOriginalBots() {
+      const game = getGame();
+      const mgr = game?.botMgr;
+
+      if (!mgr || !Array.isArray(mgr.bots)) return;
+      if (!State.originalBots.length) return;
+
+      try {
+        mgr.bots.length = 0;
+
+        for (const bot of State.originalBots) {
+          if (!bot) continue;
+
+          bot.__connectionsPool = false;
+          bot.__connectionsRemote = false;
+          bot.__connectionsRemoved = false;
+
+          try {
+            bot.alive = true;
+          } catch {}
+
+          try {
+            if (bot.health <= 0) {
+              bot.health = 100;
+            }
+          } catch {}
+
+          try {
+            if (bot.__connectionsOriginalUpdate) {
+              bot.update = bot.__connectionsOriginalUpdate;
+            }
+          } catch {}
+
+          try {
+            if (typeof bot.spawn === "function") {
+              bot.spawn();
+            }
+          } catch {}
+
+          try {
+            if (bot.cs2Agent?.root) {
+              bot.cs2Agent.root.visible = true;
+            }
+          } catch {}
+
+          try {
+            if (bot.mesh) {
+              bot.mesh.visible = true;
+            }
+          } catch {}
+
+          try {
+            if (bot.shadow) {
+              bot.shadow.visible = true;
+            }
+          } catch {}
+
+          mgr.bots.push(bot);
+        }
+
+        log("Original AI bots restored.");
+      } catch (e) {
+        warn("Failed to restore original bots:", e);
+      }
+
+      State.originalBots = [];
+      State.originalBotArray = null;
+      State.botTemplate = null;
+      State.preparingBots = false;
+    },
+
+    rebuildAvatars() {
+      const game = getGame();
+      if (!game) return;
+
+      try {
+        if (
+          game.hud &&
+          typeof game.hud.buildAvatars === "function"
+        ) {
+          game.hud.buildAvatars();
+        }
+      } catch {}
+
+      setTimeout(() => {
+        for (const remote of State.remotes.values()) {
+          this.applyAvatars(remote);
+        }
+      }, 50);
+    },
+
+    applyAvatars(remote) {
+      if (!remote) return;
+
+      const avatar =
+        remote.avatarEnabled !== false && remote.avatar
+          ? remote.avatar
+          : null;
+
+      const game = getGame();
+      if (!game) return;
+
+      try {
+        const hud = game.hud;
+
+        if (hud) {
+          const roots = [
+            hud.avatars,
+            hud.avatarRows,
+            hud.scoreboard,
+            hud.scoreboardRows
+          ];
+
+          for (const root of roots) {
+            if (!root) continue;
+
+            this.walkAvatarObjects(
+              root,
+              remote,
+              avatar
+            );
+          }
+        }
+      } catch {}
+
+      try {
+        const rows = document.querySelectorAll(
+          "[data-player-id], [data-id]"
+        );
+
+        rows.forEach(row => {
+          const rowId =
+            row.getAttribute("data-player-id") ||
+            row.getAttribute("data-id");
+
+          if (
+            String(rowId) !==
+            String(remote.id)
+          ) {
+            return;
+          }
+
+          const image = row.querySelector("img");
+
+          if (image && avatar) {
+            image.src = avatar;
+            image.style.display = "block";
+          }
+        });
+      } catch {}
+    },
+
+    walkAvatarObjects(object, remote, avatar) {
+      if (!object) return;
+
+      if (object.nodeType === 1) {
+        try {
+          const id =
+            object.getAttribute("data-player-id") ||
+            object.getAttribute("data-id");
+
+          if (
+            id &&
+            String(id) === String(remote.id)
+          ) {
+            const img = object.querySelector("img");
+
+            if (img) {
+              if (avatar) {
+                img.src = avatar;
+                img.style.display = "block";
+              } else {
+                img.style.display = "none";
+              }
+            }
+          }
+        } catch {}
+      }
+
+      if (typeof object !== "object") return;
+
+      const visited = new Set();
+
+      const walk = value => {
+        if (!value || typeof value !== "object") return;
+        if (visited.has(value)) return;
+
+        visited.add(value);
+
+        try {
+          if (
+            value.playerId !== undefined &&
+            String(value.playerId) === String(remote.id)
+          ) {
+            if (value.src !== undefined) {
+              value.src = avatar || "";
+            }
+
+            if (value.texture !== undefined) {
+              value.texture = avatar || "";
+            }
+          }
+        } catch {}
+
+        const keys = [
+          "children",
+          "avatars",
+          "rows",
+          "players",
+          "items",
+          "elements"
+        ];
+
+        for (const key of keys) {
+          try {
+            const child = value[key];
+
+            if (Array.isArray(child)) {
+              child.forEach(walk);
+            } else if (
+              child &&
+              typeof child === "object"
+            ) {
+              walk(child);
+            }
+          } catch {}
+        }
+      };
+
+      walk(object);
+    }
+  };
+
+  /* =========================================================
+   * CHAT
+   * ========================================================= */
+
+  const Chat = {
+    send(message) {
+      const text = String(message || "")
+        .trim()
+        .slice(0, 300);
+
+      if (
+        !text ||
+        !State.connected ||
+        !State.room
+      ) {
+        return;
+      }
+
+      Network.send({
+        type: "chat",
+        message: text,
+        name: State.name
+      });
+    }
+  };
+
+  /* =========================================================
+   * MATCH LIFECYCLE
+   * ========================================================= */
+
+  function handleMatchEnd() {
+    if (State.matchEnding) return;
+
+    State.matchEnding = true;
+
+    log(
+      "Match ended. Cleaning multiplayer state."
+    );
+
+    Music.stopForMatchEnd();
+
+    if (State.connected) {
+      Network.send({
+        type: "leave_room"
+      });
+    }
+
+    RemoteBots.clear();
+
+    State.room = null;
+    State.isHost = false;
+
+    State.matchSync.hostId = null;
+    State.matchSync.roundSeq = 0;
+    State.matchSync.lastActive = null;
+    State.matchSync.roundEndAt = 0;
+    State.matchSync.endAt = 0;
+    State.matchSync.lastReceived = 0;
+
+    State.hostRoundSeq = 0;
+    State.hostLastActive = null;
+    State.hostRoundEndAt = 0;
+    State.hostEndAt = 0;
+
+    State.confirmedMatch = false;
+    State.outsideMatchSince = 0;
+
+    UI.setScanState(false);
+    UI.renderRoom();
+
+    UI.setMessage(
+      "Lobby. Enter a match and press Confirm."
+    );
+
+    State.matchEnding = false;
+  }
+
+  function monitorGame() {
+    const game = getGame();
+
+    if (
+      game &&
+      State.game !== game
+    ) {
+      State.game = game;
+
+      log(
+        "Game engine detected."
+      );
+    }
+
+    if (!game) return;
+
+    if (State.confirmedMatch) {
+      const inside =
+        isInsideMatch(game);
+
+      if (inside) {
+        State.outsideMatchSince = 0;
+      } else if (State.room) {
+        if (!State.outsideMatchSince) {
+          State.outsideMatchSince =
+            Date.now();
+
+          log(
+            "Temporarily outside match state. Waiting for transition..."
+          );
+        }
+
+        /*
+         * Team selection / round transitions can briefly report a
+         * non-playing state. Don't instantly destroy remote players.
+         */
+        if (
+          Date.now() -
+            State.outsideMatchSince >
+          1800
+        ) {
+          handleMatchEnd();
+        }
+      }
+    }
+
+    if (
+      State.confirmedMatch &&
+      State.room &&
+      State.isHost
+    ) {
+      broadcastRoundState();
+    }
+
+    if (
+      State.confirmedMatch &&
+      State.room &&
+      !State.isHost
+    ) {
+      applyAuthoritativeMatchState();
+    }
+  }
+
+  function startMonitor() {
+    if (State.monitorTimer) return;
+
+    State.monitorTimer =
+      setInterval(
+        monitorGame,
+        CONFIG.MATCH_CHECK_RATE
+      );
+  }
+
+  /* =========================================================
+   * ENGINE SCANNER
+   * ========================================================= */
+
+  function scanEngine() {
+    const game = getGame();
+        if (!game) {
+      warn("Game engine not found.");
+      return null;
+    }
+
+    State.game = game;
+
+    const result = {
+      game,
+      player: getPlayer(),
+      botMgr: game.botMgr || null,
+      physics: game.physics || null,
+      hud: game.hud || null
+    };
+
+    log("Engine scan:", result);
+    return result;
+  }
+
+  /* =========================================================
+   * MATCH CONFIRMATION
+   * ========================================================= */
+
+  function confirmMatch() {
+    if (State.confirmedMatch) return;
+
+    const game = getGame();
+
+    if (!game) {
+      UI.setMessage("Game engine not found.");
+      return;
+    }
+
+    if (!isInsideMatch(game)) {
+      UI.setMessage("You must already be inside a match.");
+      return;
+    }
+
+    UI.setScanState(true);
+    UI.setMessage("Scanning game engine...");
+
+    setTimeout(() => {
+      const result = scanEngine();
+
+      if (!result) {
+        UI.setScanState(false);
+        UI.setMessage("Engine scan failed.");
+        return;
+      }
+
+      if (
+        !result.botMgr ||
+        !Array.isArray(result.botMgr.bots)
+      ) {
+        UI.setScanState(false);
+        UI.setMessage("Native bot manager not found.");
+        warn("botMgr.bots unavailable.");
+        return;
+      }
+
+      log(
+        "Preparing native bot removal:",
+        result.botMgr.bots.length
+      );
+
+      const prepared =
+        RemoteBots.preparePool();
+
+      if (!prepared) {
+        UI.setScanState(false);
+        UI.setMessage("Could not prepare native bots.");
+        return;
+      }
+
+      State.confirmedMatch = true;
+      State.matchEnding = false;
+      State.outsideMatchSince = 0;
+
+      UI.setScanState(false);
+      UI.setMessage("Multiplayer active.");
+
+      log("Match confirmed.");
+
+      Network.connect();
+    }, 80);
+  }
+
+  /* =========================================================
+   * ROOM MANAGEMENT
+   * ========================================================= */
+
+  function createRoom(opts) {
+    opts = opts || {};
+
+    if (!State.connected) {
+      UI.setMessage(
+        'Not connected. Enter a match and press "I AM INSIDE A MATCH" first.'
+      );
+      return;
+    }
+
+    if (!State.confirmedMatch) {
+      UI.setMessage(
+        "Confirm that you are inside a match first."
+      );
+      return;
+    }
+
+    const segments = (opts.segments || [])
+      .map(seg => ({
+        text: String(seg.text || "").trim(),
+        color: /^#[0-9a-f]{6}$/i.test(seg.color)
+          ? seg.color
+          : "#ffffff"
+      }))
+      .filter(seg => seg.text);
+
+    if (!segments.length) {
+      UI.setMessage("Enter a room name.");
+      return;
+    }
+
+    /*
+     * this is the only capacity setting the UI exposes.
+     *
+     * 1 = 1v1
+     * 5 = 5v5
+     * 10 = 10v10
+     */
+    const teamSize = clamp(
+      parseInt(opts.teamSize, 10) || 5,
+      1,
+      10
+    );
+
+    const maxPlayers = teamSize * 2;
+    const professional = !!opts.professional;
+
+    Network.send({
+      type: "create_room",
+
+      name: segments
+        .map(seg => seg.text)
+        .join(" ")
+        .slice(0, 40),
+
+      nameSegments: segments,
+
+      teamSize,
+      maxPlayers,
+
+      rafit:
+        professional ||
+        !!opts.rafit,
+
+      professional
+    });
+  }
+
+  function joinRoom(room) {
+    if (!State.connected) {
+      UI.setMessage("Not connected.");
+      return;
+    }
+
+    const id = roomId(room);
+    if (!id) return;
+
+    Network.send({
+      type: "join_room",
+      room: id,
+      roomId: id,
+      id
+    });
+
+    UI.setMessage("Joining room...");
+  }
+
+  function leaveRoom() {
+    if (!State.room) return;
+
+    Music.stop();
+
+    Network.send({
+      type: "leave_room"
+    });
+
+    const oldRoom = State.room;
+
+    State.room = null;
+    State.isHost = false;
+
+    RemoteBots.clear();
+    UI.renderRoom();
+
+    UI.setMessage("Left room.");
+
+    log("Left room:", oldRoom);
+  }
+
+  /* =========================================================
+   * RAFIT IDENTITY + CHEAT SIGNATURE SCAN
+   * ========================================================= */
+
+  function getRafitToken() {
+    try {
+      let t = localStorage.getItem(
+        "connections_rafit_token"
+      );
+
+      if (
+        t &&
+        /^[a-f0-9]{32,128}$/i.test(t)
+      ) {
+        return t;
+      }
+
+      const bytes =
+        new Uint8Array(24);
+
+      (
+        PAGE.crypto ||
+        window.crypto
+      ).getRandomValues(bytes);
+
+      t = Array.from(
+        bytes,
+        b =>
+          b
+            .toString(16)
+            .padStart(2, "0")
+      ).join("");
+
+      localStorage.setItem(
+        "connections_rafit_token",
+        t
+      );
+
+      return t;
+    } catch {
+      return null;
+    }
+  }
+
+  function scanCheatMarkers() {
+    const found = [];
+
+    try {
+      for (
+        const id of [
+          "pp-root",
+          "pp-theme",
+          "pp-hud",
+          "pp-wnum",
+          "pp-wicons"
+        ]
+      ) {
+        if (document.getElementById(id)) {
+          found.push("el:" + id);
+        }
+      }
+    } catch {}
+
+    try {
+      for (
+        const k of [
+          "_ppDd",
+          "_ppAsp"
+        ]
+      ) {
+        if (PAGE[k]) {
+          found.push("win:" + k);
+        }
+      }
+    } catch {}
+
+    try {
+      const g = getGame();
+
+      if (g?.player?.update?._pp) {
+        found.push("fn:player.update");
+      }
+
+      if (g?.hud?.update?._pp) {
+        found.push("fn:hud.update");
+      }
+
+      if (g?.weapons?.fire?._pp) {
+        found.push("fn:weapons.fire");
+      }
+    } catch {}
+
+    return found;
+  }
+
+  function startCheatScan() {
+    if (State.cheatTimer) return;
+
+    State.cheatTimer =
+      setInterval(() => {
+        if (
+          !State.connected ||
+          !State.room
+        ) {
+          return;
+        }
+
+        if (
+          !getRoomObject(
+            State.room
+          )?.rafit
+        ) {
+          return;
+        }
+
+        const markers =
+          scanCheatMarkers();
+
+        if (!markers.length) {
+          return;
+        }
+
+        const sig = markers
+          .slice()
+          .sort()
+          .join("|");
+
+        if (sig === State.cheatSig) {
+          return;
+        }
+
+        State.cheatSig = sig;
+
+        Network.send({
+          type: "rafit_flag",
+          flag: "cheat_signature",
+          markers
+        });
+      }, 5000);
+  }
+
+  /* =========================================================
+   * UI
+   * ========================================================= */
+
+  function safeColor(c, fallback) {
+    return /^#[0-9a-f]{6}$/i.test(
+      String(c)
+    )
+      ? String(c)
+      : fallback || "#ffffff";
+  }
+
+  function coloredName(
+    segments,
+    fallback
+  ) {
+    if (
+      Array.isArray(segments) &&
+      segments.length
+    ) {
+      return segments
+        .slice(0, 8)
+        .map(
+          s =>
+            `<span style="color:${safeColor(
+              s && s.color
+            )}">${escapeHtml(
+              s && s.text
+            )}</span>`
+        )
+        .join(" ");
+    }
+
+    return escapeHtml(
+      fallback || "Room"
+    );
+  }
+
+  function roomBadges(room) {
+    if (!room) return "";
+
+    return (
+      (
+        room.rafit
+          ? '<span class="cn-badge">RAFIT</span>'
+          : ""
+      ) +
+      (
+        room.professional
+          ? '<span class="cn-badge pro">PRO</span>'
+          : ""
+      )
+    );
+  }
+
+  const UI = {
+    root: null,
+    els: {},
+    segments: [
+      {
+        text: "",
+        color: "#ff3b3b"
+      }
+    ],
+    chatLog: null,
+    avatarToggle: null,
+    scanButton: null,
+
+    init() {
+      if (this.root) return;
+
+      const style =
+        document.createElement(
+          "style"
+        );
+
+      style.textContent = `
+        #connections-root {
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 760px;
+          max-width: 94vw;
+          max-height: 94vh;
+          overflow-y: auto;
+          z-index: 2147483647;
+          background: #14151a;
+          color: #f4f4f5;
+          border: 1px solid #2a2c35;
+          border-radius: 14px;
+          box-shadow: 0 20px 70px rgba(0,0,0,.65);
+          font-family: Inter, Arial, sans-serif;
+          font-size: 13px;
+          padding: 18px;
+          display: none;
+          box-sizing: border-box;
+        }
+
+        #connections-root * {
+          box-sizing: border-box;
+        }
+
+        .cn-head {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+
+        .cn-titles {
+          flex: 1;
+        }
+
+        .cn-title {
+          font-size: 22px;
+          font-weight: 800;
+          line-height: 1.1;
+        }
+
+        .cn-sub {
+          font-size: 11px;
+          color: #8a8f9c;
+        }
+
+        .cn-x {
+          width: 32px;
+          height: 32px;
+          border: 0;
+          border-radius: 8px;
+          background: #262832;
+          color: #fff;
+          font-size: 16px;
+          cursor: pointer;
+        }
+
+        .cn-card {
+          background: #1a1b21;
+          border: 1px solid #2a2c35;
+          border-radius: 12px;
+          padding: 14px;
+          margin-bottom: 12px;
+        }
+
+        .cn-h {
+          font-size: 12px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+          color: #c9cbd3;
+          margin-bottom: 10px;
+        }
+
+        .cn-input {
+          width: 100%;
+          border: 1px solid #30333d;
+          background: #0d0e12;
+          color: #fff;
+          border-radius: 10px;
+          padding: 10px 12px;
+          outline: none;
+          font-size: 13px;
+        }
+
+        .cn-input:focus {
+          border-color: #7289da;
+        }
+
+        .cn-btn {
+          border: 0;
+          border-radius: 9px;
+          background: #5b5ff0;
+          color: #fff;
+          padding: 9px 14px;
+          font-weight: 700;
+          cursor: pointer;
+          font-size: 13px;
+        }
+
+        .cn-btn:hover {
+          filter: brightness(1.1);
+        }
+
+        .cn-btn:disabled {
+          opacity: .5;
+          cursor: default;
+        }
+
+        .cn-dark {
+          background: #262832;
+        }
+
+        .cn-scan {
+          width: 100%;
+          padding: 14px;
+          background: #7088d8;
+          font-size: 13px;
+          letter-spacing: .02em;
+        }
+
+        .cn-hint {
+          color: #747b88;
+          font-size: 11px;
+          text-align: center;
+          margin-top: 8px;
+        }
+
+        .cn-hint.left {
+          text-align: left;
+          margin-top: 4px;
+        }
+
+        .cn-seg {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+
+        .cn-color {
+          width: 40px;
+          height: 34px;
+          padding: 0;
+          border: 1px solid #30333d;
+          border-radius: 8px;
+          background: #0d0e12;
+          cursor: pointer;
+          flex: none;
+        }
+
+        .cn-del {
+          width: 34px;
+          height: 34px;
+          padding: 0;
+          flex: none;
+        }
+
+        .cn-preview {
+          background: #0d0e12;
+          border-radius: 10px;
+          padding: 12px 14px;
+          font-size: 17px;
+          font-weight: 800;
+          margin: 4px 0 10px;
+          min-height: 44px;
+        }
+
+        .cn-ph {
+          color: #4e535f;
+          font-weight: 600;
+        }
+
+        .cn-row2 {
+          display: flex;
+          gap: 10px;
+          margin: 10px 0;
+        }
+
+        .cn-field-label {
+          color: #c9cbd3;
+          font-size: 11px;
+          font-weight: 700;
+          margin: 10px 0 6px;
+        }
+
+        .cn-check {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #c9cbd3;
+          margin: 6px 0;
+          cursor: pointer;
+        }
+
+        .cn-rooms-empty {
+          text-align: center;
+          color: #747b88;
+          padding: 26px 0;
+          font-size: 14px;
+        }
+
+        .cn-room-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          background: #101218;
+          margin-top: 8px;
+        }
+
+        .cn-rn {
+          font-size: 15px;
+          font-weight: 800;
+        }
+
+        .cn-badge {
+          display: inline-block;
+          margin-left: 8px;
+          padding: 2px 6px;
+          border-radius: 6px;
+          font-size: 10px;
+          font-weight: 800;
+          background: #1f3a2b;
+          color: #5fe39a;
+          vertical-align: middle;
+        }
+
+        .cn-badge.pro {
+          background: #3d3216;
+          color: #f5c451;
+        }
+
+        .cn-status {
+          font-size: 16px;
+          font-weight: 800;
+          margin-top: 4px;
+        }
+
+        .cn-status.off {
+          color: #ff5c5c;
+        }
+
+        .cn-status.on {
+          color: #4ade80;
+        }
+
+        .cn-status.wait {
+          color: #f5c451;
+        }
+
+        .cn-msg {
+          min-height: 16px;
+          color: #8e96a5;
+          font-size: 11px;
+          margin-top: 4px;
+        }
+
+        .cn-more summary {
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 800;
+          text-transform: uppercase;
+          color: #8f96a3;
+        }
+
+        .cn-avatar {
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          object-fit: cover;
+          background: #0b0d11;
+          border: 1px solid #30343e;
+        }
+
+        .cn-chat {
+          height: 120px;
+          overflow-y: auto;
+          background: #0d0f13;
+          border-radius: 8px;
+          border: 1px solid #272b34;
+          padding: 8px;
+          font-size: 12px;
+          margin: 8px 0;
+        }
+
+        .cn-chat-line {
+          padding: 3px 0;
+          word-break: break-word;
+        }
+
+        .cn-chat-name {
+          font-weight: 800;
+          color: #aebcff;
+        }
+
+        .cn-flex {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          margin-top: 8px;
+        }
+      `;
+
+      document.head.appendChild(
+        style
+      );
+
+      const root =
+        document.createElement(
+          "div"
+        );
+
+      root.id =
+        "connections-root";
+
+      root.innerHTML = `
+        <div class="cn-head">
+          <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+            <circle cx="22" cy="22" r="19" fill="none" stroke="#e5383b" stroke-width="3"/>
+            <path d="M14 15l6 6m0-6l-6 6M24 15l6 6m0-6l-6 6" stroke="#e5383b" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M15 29q7 -5 14 0" fill="none" stroke="#e5383b" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M8 8l28 28" stroke="#e5383b" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+
+          <div class="cn-titles">
+            <div class="cn-title">Connections</div>
+            <div class="cn-sub">Multiplayer</div>
+          </div>
+
+          <button id="cn-close" class="cn-x" title="Close">×</button>
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">Player</div>
+          <input
+            id="cn-name"
+            class="cn-input"
+            maxlength="24"
+            placeholder="Username"
+          />
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">Match</div>
+
+          <button
+            id="cn-scan"
+            class="cn-btn cn-scan"
+          >
+            I AM INSIDE A MATCH
+          </button>
+
+          <div class="cn-hint">
+            Enter a match, then scan.
+          </div>
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">
+            Create Room
+          </div>
+
+          <div id="cn-segs"></div>
+
+          <div
+            id="cn-preview"
+            class="cn-preview"
+          ></div>
+
+          <button
+            id="cn-addseg"
+            class="cn-btn cn-dark"
+          >
+            + Add color segment
+          </button>
+
+          <div class="cn-field-label">
+            Max players on each team
+          </div>
+
+          <input
+            id="cn-team"
+            class="cn-input"
+            type="number"
+            min="1"
+            max="10"
+            value="5"
+            title="Max players on each team"
+          />
+
+          <div class="cn-hint left">
+            1 = 1v1 · 5 = 5v5 · 10 = 10v10
+          </div>
+
+          <label class="cn-check">
+            <input
+              type="checkbox"
+              id="cn-rafit"
+            />
+            Enable RAFIT
+          </label>
+
+          <label class="cn-check">
+            <input
+              type="checkbox"
+              id="cn-pro"
+            />
+            Professional Server (2000+ RTP)
+          </label>
+
+          <button
+            id="cn-create"
+            class="cn-btn"
+            style="margin-top:8px;"
+          >
+            Create Room
+          </button>
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">
+            Rooms
+          </div>
+
+          <div id="cn-rooms"></div>
+        </div>
+
+        <div class="cn-card">
+          <div class="cn-h">
+            Current Room
+          </div>
+
+          <div
+            id="cn-room"
+            style="font-size:15px;margin-bottom:10px;"
+          >
+            No room
+          </div>
+
+          <button
+            id="cn-leave"
+            class="cn-btn cn-dark"
+          >
+            Leave Room
+          </button>
+        </div>
+
+        <details class="cn-card cn-more">
+          <summary>
+            Avatar &amp; chat
+          </summary>
+
+          <div class="cn-flex">
+            <img
+              id="cn-avatar-preview"
+              class="cn-avatar"
+              alt=""
+            />
+
+            <input
+              id="cn-avatar-input"
+              class="cn-input"
+              type="file"
+              accept="image/*"
+            />
+          </div>
+
+          <div class="cn-flex">
+            <button
+              id="cn-avatar-toggle"
+              class="cn-btn cn-dark"
+            >
+              Avatar: ON
+            </button>
+
+            <button
+              id="cn-avatar-reset"
+              class="cn-btn cn-dark"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div
+            id="cn-chat"
+            class="cn-chat"
+          ></div>
+
+          <div class="cn-flex">
+            <input
+              id="cn-chat-input"
+              class="cn-input"
+              maxlength="300"
+              placeholder="Message..."
+            />
+
+            <button
+              id="cn-chat-send"
+              class="cn-btn"
+            >
+              Send
+            </button>
+          </div>
+        </details>
+
+        <div
+          id="cn-status"
+          class="cn-status off"
+        >
+          OFFLINE
+        </div>
+
+        <div class="cn-hint left">
+          Backspace = open/close
+        </div>
+
+        <div
+          id="cn-msg"
+          class="cn-msg"
+        ></div>
+      `;
+
+      document.body.appendChild(
+        root
+      );
+
+      this.root = root;
+
+      const $ = s =>
+        root.querySelector(s);
+
+      this.els = {
+        status:
+          $("#cn-status"),
+
+        msg:
+          $("#cn-msg"),
+
+        scan:
+          $("#cn-scan"),
+
+        name:
+          $("#cn-name"),
+
+        segs:
+          $("#cn-segs"),
+
+        preview:
+          $("#cn-preview"),
+
+        add:
+          $("#cn-addseg"),
+
+        team:
+          $("#cn-team"),
+
+        rafit:
+          $("#cn-rafit"),
+
+        pro:
+          $("#cn-pro"),
+
+        rooms:
+          $("#cn-rooms"),
+
+        room:
+          $("#cn-room"),
+
+        chat:
+          $("#cn-chat"),
+
+        avatarToggle:
+          $("#cn-avatar-toggle"),
+
+        avatarPreview:
+          $("#cn-avatar-preview"),
+
+        avatarInput:
+          $("#cn-avatar-input")
+      };
+
+      this.chatLog =
+        this.els.chat;
+
+      this.avatarToggle =
+        this.els.avatarToggle;
+
+      this.scanButton =
+        this.els.scan;
+
+      this.els.name.value =
+        State.name;
+
+      const saveName = () => {
+        const value =
+          String(
+            this.els.name.value ||
+            ""
+          )
+            .trim()
+            .slice(0, 24);
+
+        if (
+          !value ||
+          value === State.name
+        ) {
+          return;
+        }
+
+        State.name = value;
+
+        try {
+          localStorage.setItem(
+            "connections_player_name",
+            value
+          );
+        } catch {}
+
+        Network.send({
+          type: "hello",
+          name: value
+        });
+
+        this.setMessage(
+          "Username saved."
+        );
+      };
+
+      this.els.name.addEventListener(
+        "change",
+        saveName
+      );
+
+      this.els.name.addEventListener(
+        "keydown",
+        e => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            saveName();
+          }
+        }
+      );
+
+      $("#cn-close").addEventListener(
+        "click",
+        () => this.toggle()
+      );
+
+      this.els.scan.addEventListener(
+        "click",
+        confirmMatch
+      );
+
+      this.els.add.addEventListener(
+        "click",
+        () => {
+          if (
+            this.segments.length >=
+            6
+          ) {
+            return;
+          }
+
+          this.segments.push({
+            text: "",
+            color: "#ff4fd8"
+          });
+
+          this.renderSegments();
+        }
+      );
+
+      this.els.pro.addEventListener(
+        "change",
+        () => {
+          if (
+            this.els.pro.checked
+          ) {
+            this.els.rafit.checked =
+              true;
+          }
+
+          this.els.rafit.disabled =
+            this.els.pro.checked;
+        }
+      );
+
+      $("#cn-create").addEventListener(
+        "click",
+        () => {
+          createRoom({
+            segments:
+              this.segments,
+
+            teamSize:
+              this.els.team.value,
+
+            rafit:
+              this.els.rafit.checked,
+
+            professional:
+              this.els.pro.checked
+          });
+        }
+      );
+
+      $("#cn-leave").addEventListener(
+        "click",
+        leaveRoom
+      );
+
+      this.els.rooms.addEventListener(
+        "click",
+        e => {
+          const b =
+            e.target.closest(
+              "[data-join-room]"
+            );
+
+          if (b) {
+            joinRoom(
+              b.getAttribute(
+                "data-join-room"
+              )
+            );
+          }
+        }
+      );
+
+      this.els.avatarInput.addEventListener(
+        "change",
+        e =>
+          Avatar.setFile(
+            e.target?.files?.[0]
+          )
+      );
+
+      this.els.avatarToggle.addEventListener(
+        "click",
+        () => Avatar.toggle()
+      );
+
+      $("#cn-avatar-reset").addEventListener(
+        "click",
+        () => Avatar.reset()
+      );
+
+      const chatInput =
+        $("#cn-chat-input");
+
+      const sendChat = () => {
+        Chat.send(
+          chatInput.value
+        );
+
+        chatInput.value = "";
+      };
+
+      $("#cn-chat-send").addEventListener(
+        "click",
+        sendChat
+      );
+
+      chatInput.addEventListener(
+        "keydown",
+        e => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            sendChat();
+          }
+        }
+      );
+
+      this.renderSegments();
+      this.updateAvatarControls();
+      this.renderRooms();
+      this.renderRoom();
+      this.renderStatus();
+    },
+
+    renderSegments() {
+      const wrap =
+        this.els.segs;
+
+      wrap.innerHTML = "";
+
+      this.segments.forEach(
+        (seg, i) => {
+          const row =
+            document.createElement(
+              "div"
+            );
+
+          row.className =
+            "cn-seg";
+
+          const text =
+            document.createElement(
+              "input"
+            );
+
+          text.className =
+            "cn-input";
+
+          text.maxLength = 32;
+
+          text.placeholder =
+            i === 0
+              ? "Room name"
+              : "Another color segment";
+
+          text.value =
+            seg.text;
+
+          text.addEventListener(
+            "input",
+            () => {
+              seg.text =
+                text.value;
+
+              this.renderPreview();
+            }
+          );
+
+          const color =
+            document.createElement(
+              "input"
+            );
+
+          color.type = "color";
+          color.className =
+            "cn-color";
+
+          color.value =
+            safeColor(
+              seg.color
+            );
+
+          color.addEventListener(
+            "input",
+            () => {
+              seg.color =
+                color.value;
+
+              this.renderPreview();
+            }
+          );
+
+          const del =
+            document.createElement(
+              "button"
+            );
+
+          del.className =
+            "cn-btn cn-dark cn-del";
+
+          del.textContent = "×";
+
+          del.title =
+            "Remove segment";
+
+          del.addEventListener(
+            "click",
+            () => {
+              if (
+                this.segments
+                  .length > 1
+              ) {
+                this.segments.splice(
+                  i,
+                  1
+                );
+              } else {
+                seg.text = "";
+              }
+
+              this.renderSegments();
+            }
+          );
+
+          row.append(
+            text,
+            color,
+            del
+          );
+
+          wrap.appendChild(row);
+        }
+      );
+
+      this.els.add.disabled =
+        this.segments.length >=
+        6;
+
+      this.renderPreview();
+    },
+
+    renderPreview() {
+      const parts =
+        this.segments
+          .filter(
+            s =>
+              String(
+                s.text
+              ).trim()
+          )
+          .map(
+            s =>
+              `<span style="color:${safeColor(
+                s.color
+              )}">${escapeHtml(
+                String(
+                  s.text
+                ).trim()
+              )}</span>`
+          );
+
+      this.els.preview.innerHTML =
+        parts.length
+          ? parts.join(" ")
+          : '<span class="cn-ph">Room name preview</span>';
+    },
+
+    toggle() {
+      this.init();
+
+      State.ui.open =
+        !State.ui.open;
+
+      this.root.style.display =
+        State.ui.open
+          ? "block"
+          : "none";
+    },
+
+    setScanState(scanning) {
+      this.init();
+
+      this.els.scan.disabled =
+        scanning ||
+        State.confirmedMatch;
+
+      this.els.scan.textContent =
+        scanning
+          ? "SCANNING..."
+          : State.confirmedMatch
+            ? "MATCH CONFIRMED"
+            : "I AM INSIDE A MATCH";
+
+      if (
+        !scanning &&
+        !State.confirmedMatch
+      ) {
+        this.els.scan.disabled =
+          false;
+      }
+    },
+
+    renderStatus() {
+      if (!this.els.status) {
+        return;
+      }
+
+      let text = "OFFLINE";
+      let cls = "off";
+
+      if (State.connected) {
+        text = "ONLINE";
+        cls = "on";
+
+        if (State.profile) {
+          text +=
+            " · RTP " +
+            safeNumber(
+              State.profile.rtp,
+              1000
+            );
+        }
+      } else if (
+        State.connecting
+      ) {
+        text = "CONNECTING…";
+        cls = "wait";
+      }
+
+      this.els.status.textContent =
+        text;
+
+      this.els.status.className =
+        "cn-status " + cls;
+    },
+        updateStatus(text) {
+      this.init();
+
+      if (
+        !/^(Connected|Connecting\.\.\.|Disconnected)$/.test(
+          String(text)
+        )
+      ) {
+        this.setMessage(text);
+      }
+
+      this.renderStatus();
+    },
+
+    setMessage(text) {
+      this.init();
+
+      this.els.msg.textContent =
+        String(text || "");
+    },
+
+    updateAvatarControls() {
+      if (!this.els.avatarToggle) {
+        return;
+      }
+
+      this.els.avatarToggle.textContent =
+        `Avatar: ${
+          State.avatarEnabled
+            ? "ON"
+            : "OFF"
+        }`;
+
+      const p =
+        this.els.avatarPreview;
+
+      if (
+        State.avatar &&
+        State.avatarEnabled
+      ) {
+        p.src = State.avatar;
+      } else {
+        p.removeAttribute("src");
+      }
+    },
+
+    renderRooms() {
+      if (!this.els.rooms) {
+        return;
+      }
+
+      if (!State.rooms.length) {
+        this.els.rooms.innerHTML =
+          '<div class="cn-rooms-empty">No rooms yet. Create the first one.</div>';
+
+        return;
+      }
+
+      this.els.rooms.innerHTML =
+        State.rooms
+          .map(room => {
+            const id =
+              room.id ??
+              room.roomId ??
+              "";
+
+            const here =
+              State.room &&
+              String(State.room) ===
+                String(id);
+
+            const teamSize =
+              safeNumber(
+                room.teamSize,
+                Math.max(
+                  1,
+                  Math.floor(
+                    safeNumber(
+                      room.maxPlayers,
+                      10
+                    ) / 2
+                  )
+                )
+              );
+
+            const players =
+              safeNumber(
+                room.players ??
+                room.count,
+                0
+              );
+
+            const maxPlayers =
+              safeNumber(
+                room.maxPlayers,
+                teamSize * 2
+              );
+
+            const meta =
+              `${escapeHtml(
+                players
+              )}/${escapeHtml(
+                maxPlayers
+              )}` +
+              ` · ${escapeHtml(
+                teamSize
+              )} per team`;
+
+            return `
+              <div class="cn-room-item">
+                <div>
+                  <div class="cn-rn">
+                    ${coloredName(
+                      room.nameSegments,
+                      room.name
+                    )}
+                    ${roomBadges(room)}
+                  </div>
+
+                  <div class="cn-hint left">
+                    ${meta}
+                  </div>
+                </div>
+
+                <button
+                  class="cn-btn"
+                  data-join-room="${escapeHtml(
+                    id
+                  )}"
+                  ${
+                    here
+                      ? "disabled"
+                      : ""
+                  }
+                >
+                  ${
+                    here
+                      ? "Joined"
+                      : "Join"
+                  }
+                </button>
+              </div>
+            `;
+          })
+          .join("");
+    },
+
+    renderRoom() {
+      if (!this.els.room) {
+        return;
+      }
+
+      if (!State.room) {
+        this.els.room.textContent =
+          "No room";
+
+        return;
+      }
+
+      const room =
+        getRoomObject(
+          State.room
+        );
+
+      const count =
+        room?.players ??
+        room?.count ??
+        State.remotes.size + 1;
+
+      const teamSize =
+        safeNumber(
+          room?.teamSize,
+          Math.max(
+            1,
+            Math.floor(
+              safeNumber(
+                room?.maxPlayers,
+                10
+              ) / 2
+            )
+          )
+        );
+
+      const max =
+        safeNumber(
+          room?.maxPlayers,
+          teamSize * 2
+        );
+
+      const team =
+        ` · ${escapeHtml(
+          teamSize
+        )} per team`;
+
+      this.els.room.innerHTML =
+        `<div class="cn-rn">` +
+        `${coloredName(
+          room?.nameSegments,
+          room?.name ||
+          State.room
+        )}` +
+        `${roomBadges(room)}` +
+        `</div>` +
+        `<div class="cn-hint left">` +
+        `Players ${escapeHtml(
+          count
+        )}/${escapeHtml(
+          max
+        )}${team}` +
+        `</div>`;
+    },
+
+    addChatMessage(data) {
+      if (!this.chatLog) {
+        return;
+      }
+
+      const line =
+        document.createElement(
+          "div"
+        );
+
+      line.className =
+        "cn-chat-line";
+
+      line.innerHTML =
+        `<span class="cn-chat-name">` +
+        `${escapeHtml(
+          data.name ||
+          data.playerName ||
+          "Player"
+        )}` +
+        `</span>: ` +
+        escapeHtml(
+          data.message || ""
+        );
+
+      this.chatLog.appendChild(
+        line
+      );
+
+      while (
+        this.chatLog.children
+          .length > 100
+      ) {
+        this.chatLog
+          .firstChild
+          ?.remove();
+      }
+
+      this.chatLog.scrollTop =
+        this.chatLog.scrollHeight;
+    }
+  };
+
+  /* =========================================================
+   * KEYBOARD / VISIBILITY
+   * ========================================================= */
+
+  function installKeyboard() {
+    window.addEventListener(
+      "keydown",
+      event => {
+        if (event.repeat) {
+          return;
+        }
+
+        if (
+          event.key ===
+          "Backspace"
+        ) {
+          const target =
+            event.target;
+
+          const typing =
+            target &&
+            (
+              target.tagName ===
+                "INPUT" ||
+              target.tagName ===
+                "TEXTAREA" ||
+              target
+                .isContentEditable
+            );
+
+          if (typing) {
+            return;
+          }
+
+          event.preventDefault();
+
+          UI.toggle();
+        }
+      },
+      true
+    );
+  }
+
+  function installVisibilityHooks() {
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.hidden) {
+          log(
+            "Window unfocused. Multiplayer remains active."
+          );
+
+          return;
+        }
+
+        log(
+          "Window focused."
+        );
+
+        if (
+          State.confirmedMatch
+        ) {
+          State.avatarDirty =
+            true;
+
+          RemoteBots
+            .rebuildAvatars();
+        }
+      }
+    );
+
+    window.addEventListener(
+      "focus",
+      () => {
+        if (
+          State.confirmedMatch
+        ) {
+          State.avatarDirty =
+            true;
+        }
+      }
+    );
+
+    window.addEventListener(
+      "blur",
+      () => {
+        /*
+         * intentionally do not disconnect.
+         *
+         * multiplayer + the authoritative
+         * wall-clock round state continue
+         * while the tab isn't focused.
+         */
+      }
+    );
+  }
+
+  /* =========================================================
+   * HEARTBEAT + BACKGROUND ROUND CLOCK
+   * ========================================================= */
+
+  function startHeartbeat() {
+    if (State.visibilityTimer) {
+      return;
+    }
+
+    /*
+     * clutcher's native round timer is frame-delta based,
+     * which means requestAnimationFrame can stop advancing
+     * it when the browser backgrounds the tab.
+     *
+     * this interval uses Date.now() deadlines instead.
+     */
+    State.visibilityTimer =
+      setInterval(() => {
+        const now =
+          Date.now();
+
+        if (State.connected) {
+          Network.send({
+            type: "ping",
+            t: now
+          });
+        }
+
+        if (
+          !State.confirmedMatch ||
+          !State.room
+        ) {
+          return;
+        }
+
+        const game =
+          getGame();
+
+        if (!game) {
+          return;
+        }
+
+        /*
+         * host owns the authoritative clock.
+         */
+        if (State.isHost) {
+          const snapshot =
+            getRoundSnapshot();
+
+          if (!snapshot) {
+            return;
+          }
+
+          if (snapshot.active) {
+            const remaining =
+              Math.max(
+                0,
+                (
+                  snapshot
+                    .roundEndAt -
+                  now
+                ) /
+                  1000
+              );
+
+            try {
+              game.roundTimeLeft =
+                remaining;
+            } catch {}
+
+            if (
+              remaining <= 0
+            ) {
+              try {
+                if (
+                  typeof game
+                    .endRound ===
+                  "function"
+                ) {
+                  /*
+                   * clear deadline first so
+                   * getRoundSnapshot creates
+                   * the next transition deadline.
+                   */
+                  State.hostRoundEndAt =
+                    0;
+
+                  game.endRound();
+                }
+              } catch (e) {
+                warn(
+                  "Background endRound failed:",
+                  e
+                );
+              }
+            }
+          } else {
+            const remaining =
+              Math.max(
+                0,
+                (
+                  snapshot.endAt -
+                  now
+                ) /
+                  1000
+              );
+
+            try {
+              game.endT =
+                remaining;
+            } catch {}
+
+            if (
+              remaining <= 0
+            ) {
+              try {
+                if (
+                  typeof game
+                    .startRound ===
+                  "function"
+                ) {
+                  State.hostEndAt =
+                    0;
+
+                  game.startRound();
+                }
+              } catch (e) {
+                warn(
+                  "Background startRound failed:",
+                  e
+                );
+              }
+            }
+          }
+
+          broadcastRoundState();
+        } else {
+          /*
+           * clients calculate remaining time from
+           * the host's absolute timestamp.
+           */
+          applyAuthoritativeMatchState();
+        }
+      }, 250);
+  }
+
+  /* =========================================================
+   * GLOBAL DEBUG API
+   * ========================================================= */
+
+  function installDebugAPI() {
+    try {
+      PAGE.__connections_multiplayer =
+        {
+          state: State,
+          network: Network,
+          remoteBots:
+            RemoteBots,
+          avatar: Avatar,
+          music: Music,
+          headBoost:
+            HeadBoost,
+          chat: Chat,
+
+          getGame,
+          getPlayer,
+          isInsideMatch,
+          confirmMatch,
+          createRoom,
+          joinRoom,
+          leaveRoom,
+          scanEngine,
+          sendLocalState,
+          scanCheatMarkers,
+
+          debug() {
+            return {
+              version:
+                CONFIG.VERSION,
+
+              connected:
+                State.connected,
+
+              id:
+                State.id,
+
+              room:
+                State.room,
+
+              confirmedMatch:
+                State.confirmedMatch,
+
+              remotes:
+                State.remotes.size,
+
+              isHost:
+                State.isHost,
+
+              game:
+                !!getGame(),
+
+              inMatch:
+                isInsideMatch(),
+
+              botConstructor:
+                !!State.botCtor,
+
+              teamSize:
+                getRoomObject(
+                  State.room
+                )?.teamSize ??
+                null,
+
+              maxPlayers:
+                getRoomObject(
+                  State.room
+                )?.maxPlayers ??
+                null,
+
+              round: {
+                host:
+                  State.isHost,
+
+                active:
+                  getGame()
+                    ?.roundActive ??
+                  null,
+
+                roundTimeLeft:
+                  getGame()
+                    ?.roundTimeLeft ??
+                  null,
+
+                endT:
+                  getGame()
+                    ?.endT ??
+                  null,
+
+                hostRoundEndAt:
+                  State
+                    .hostRoundEndAt,
+
+                hostEndAt:
+                  State.hostEndAt,
+
+                sync:
+                  {
+                    ...State
+                      .matchSync
+                  }
+              }
+            };
+          }
+        };
+    } catch (e) {
+      warn(
+        "Could not install debug API:",
+        e
+      );
+    }
+  }
+
+  /* =========================================================
+   * INITIALIZATION
+   * ========================================================= */
+
+  function init() {
+    UI.init();
+
+    installKeyboard();
+    installVisibilityHooks();
+
+    startMonitor();
+    startHeartbeat();
+    startCheatScan();
+
+    installDebugAPI();
+
+    State.game =
+      getGame();
+
+    log(
+      `Connections ${CONFIG.VERSION} loaded.`
+    );
+
+    log(
+      "Press [Backspace] to open."
+    );
+
+    log(
+      'Click "I AM INSIDE A MATCH" after entering a match.'
+    );
+
+    if (State.game) {
+      log(
+        "Game engine detected."
+      );
+    }
+  }
+
+  if (
+    document.readyState ===
+    "loading"
+  ) {
+    document.addEventListener(
+      "DOMContentLoaded",
+      init,
+      {
+        once: true
+      }
+    );
+  } else {
+    init();
+  }
+})();
