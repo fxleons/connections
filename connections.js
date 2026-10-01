@@ -104,34 +104,89 @@
     return State.rooms.find(r => String(r.id ?? r.roomId ?? "") === id) || null;
   }
 
-  function isInsideMatch(game = getGame()) {
-    if (!game) return false;
+function isInsideMatch(game = getGame()) {
+  if (!game) return false;
 
-    try {
-      if (typeof game.isInMatch === "function") {
-        const r = game.isInMatch();
-        if (typeof r === "boolean") return r;
+  /*
+   * Prefer Clutcher's own explicit match flags
+   * when they're available.
+   */
+  try {
+    if (typeof game.isInMatch === "function") {
+      const r = game.isInMatch();
+
+      if (r === true) {
+        return true;
       }
-    } catch {}
+    }
+  } catch {}
 
-    try {
-      if (game.gameState === "playing" || game.gameState === "teamselect") return true;
-    } catch {}
+  try {
+    if (
+      game.gameState === "playing" ||
+      game.gameState === "teamselect"
+    ) {
+      return true;
+    }
+  } catch {}
 
-    try {
-      if (game.state === "playing" || game.state === "teamselect") return true;
-    } catch {}
+  try {
+    if (
+      game.state === "playing" ||
+      game.state === "teamselect"
+    ) {
+      return true;
+    }
+  } catch {}
 
-    try {
-      if (game.inMatch === true) return true;
-    } catch {}
+  try {
+    if (game.inMatch === true) {
+      return true;
+    }
+  } catch {}
 
-    try {
-      if (game.match && game.match.isStarted === true) return true;
-    } catch {}
+  try {
+    if (
+      game.match &&
+      game.match.isStarted === true
+    ) {
+      return true;
+    }
+  } catch {}
 
-    return false;
-  }
+  /*
+   * Native structural fallback.
+   *
+   * During map/round rebuilds Clutcher can stop
+   * exposing the high-level state above even
+   * though the actual playable game has returned.
+   */
+  try {
+    const player = game.player;
+
+    if (
+      player &&
+      Number.isFinite(Number(player.x)) &&
+      Number.isFinite(Number(player.y)) &&
+      Number.isFinite(Number(player.z))
+    ) {
+      /*
+       * These are native match systems we've
+       * already seen Connections interact with.
+       */
+      const hasRoundSystem =
+        typeof game.startRound === "function" ||
+        typeof game.endRound === "function" ||
+        typeof game.dealDamage === "function";
+
+      if (hasRoundSystem) {
+        return true;
+      }
+    }
+  } catch {}
+
+  return false;
+}
 
   function getName() {
     try {
@@ -3066,6 +3121,31 @@ function monitorGame() {
         log(
           "Temporarily outside match state. Preserving multiplayer room..."
         );
+        console.log(
+  "[Connections Match Debug]",
+  {
+    gameState: game.gameState,
+    state: game.state,
+    inMatch: game.inMatch,
+    roundActive: game.roundActive,
+    roundTimeLeft: game.roundTimeLeft,
+    endT: game.endT,
+    player: !!game.player,
+    playerPosition: game.player
+      ? {
+          x: game.player.x,
+          y: game.player.y,
+          z: game.player.z
+        }
+      : null,
+    dealDamage:
+      typeof game.dealDamage,
+    startRound:
+      typeof game.startRound,
+    endRound:
+      typeof game.endRound
+  }
+);
       }
     }
   }
