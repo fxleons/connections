@@ -829,12 +829,21 @@
       vy: velocity.y,
       vz: velocity.z,
 
-      onGround: getOnGround(player),
-      crouching: getCrouching(player),
-      alive: getAlive(player),
+onGround: getOnGround(player),
+crouching: getCrouching(player),
+alive: getAlive(player),
 
-      team: getTeam(player),
-      name: State.name,
+health: clamp(
+  safeNumber(
+    player.health,
+    getAlive(player) ? 100 : 0
+  ),
+  0,
+  100
+),
+
+team: getTeam(player),
+name: State.name,
 
       avatar: sendAvatar
         ? State.avatarEnabled
