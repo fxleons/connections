@@ -3436,34 +3436,38 @@ function monitorGame() {
     );
   }
 
-  function leaveRoom() {
-    if (!State.room) return;
+function leaveRoom() {
+  console.trace(
+    "[Connections DEBUG] leaveRoom() CALLED"
+  );
 
-    Music.stop();
+  if (!State.room) return;
 
-    Network.send({
-      type: "leave_room"
-    });
+  Music.stop();
 
-    const oldRoom =
-      State.room;
+  Network.send({
+    type: "leave_room"
+  });
 
-    State.room = null;
-    State.roomData = null;
-    State.isHost = false;
+  const oldRoom =
+    State.room;
 
-    RemoteBots.clear();
-    UI.renderRoom();
+  State.room = null;
+  State.roomData = null;
+  State.isHost = false;
 
-    UI.setMessage(
-      "Left room."
-    );
+  RemoteBots.clear();
+  UI.renderRoom();
 
-    log(
-      "Left room:",
-      oldRoom
-    );
-  }
+  UI.setMessage(
+    "Left room."
+  );
+
+  log(
+    "Left room:",
+    oldRoom
+  );
+}
 
   /* =========================================================
    * RAFIT IDENTITY + CHEAT SIGNATURE SCAN
