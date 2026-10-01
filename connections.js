@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connections
 // @namespace    conn
-// @version      1.1.0
+// @version      1.0.0
 // @description  clutcher.io multiply players
 // @match        *://clutcher.io/*
 // @match        *://*.clutcher.io/*
@@ -16,7 +16,7 @@
   const PAGE = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
   const CONFIG = {
-    VERSION: "1.1.0",
+    VERSION: "1.0.0",
     WS_URL: "wss://spanking-lot-cargo-daily.trycloudflare.com",
     SEND_RATE: 50,
     INTERPOLATION: 100,
@@ -69,7 +69,13 @@
     hostRoundSeq: 0,
     hostLastActive: null,
     hostRoundEndAt: 0,
-    hostEndAt: 0
+    hostEndAt: 0,
+    bombSync: {
+      ownerId: null,
+      lastPlantKey: "",
+      lastRemoteAt: 0,
+      applying: false
+    }
   };
 
   function log(...a) { console.log("[Connections]", ...a); }
@@ -846,6 +852,14 @@ function isInsideMatch(game = getGame()) {
         onGround: !!state.onGround,
         crouching: !!state.crouching,
         alive: state.alive !== false,
+        health: clamp(
+          safeNumber(
+            state.health,
+            state.alive !== false ? 100 : 0
+          ),
+          0,
+          100
+        ),
 
         avatar:
           state.avatar ??
@@ -855,8 +869,204 @@ function isInsideMatch(game = getGame()) {
         avatarEnabled:
           state.avatarEnabled !== false
       });
+
+      if (state.bomb) {
+        applyRemoteBombState(String(id), state.bomb);
+      }
     }
   };
+
+  function getBombSnapshot() {
+    const game = getGame();
+    const ctl = game && game.modeCtl;
+
+    if (!ctl || typeof ctl !== "object") return null;
+
+    const out = {
+      authority: !!State.isHost,
+      mode: "defusal",
+      state: String(ctl.state || ""),
+      round: safeNumber(ctl.roundNum, 0),
+      bombT: safeNumber(ctl.bombT, 0),
+      scoreCT: safeNumber(ctl.score && ctl.score.CT, 0),
+      scoreT: safeNumber(ctl.score && ctl.score.T, 0),
+      planted: null,
+      carrierId: null
+    };
+
+    if (ctl.planted) {
+      out.planted = {
+        x: safeNumber(ctl.planted.x, 0),
+        y: safeNumber(ctl.planted.y, 0),
+        z: safeNumber(ctl.planted.z, 0),
+        site: String(ctl.planted.site || "?")
+      };
+    }
+
+    if (State.isHost && ctl.carrier) {
+      if (ctl.carrier === game.player) {
+        out.carrierId = State.id ? String(State.id) : null;
+      } else if (ctl.carrier.__connectionsRemoteId) {
+        out.carrierId = String(ctl.carrier.__connectionsRemoteId);
+      }
+    }
+
+    return out;
+  }
+
+  function getEntityForConnectionId(id) {
+    const game = getGame();
+    if (!game || id === null || id === undefined) return null;
+
+    id = String(id);
+
+    if (State.id !== null && id === String(State.id)) {
+      return game.player || null;
+    }
+
+    const remote = State.remotes.get(id);
+    return remote && remote.bot ? remote.bot : null;
+  }
+
+  function applyBombCarrier(snapshot) {
+    if (!snapshot || !snapshot.authority) return;
+
+    const game = getGame();
+    const ctl = game && game.modeCtl;
+    if (!game || !ctl || !game.weapons) return;
+
+    const carrierId = snapshot.carrierId == null
+      ? null
+      : String(snapshot.carrierId);
+
+    let carrier = carrierId ? getEntityForConnectionId(carrierId) : null;
+
+    try {
+      for (const remote of State.remotes.values()) {
+        if (remote && remote.bot) remote.bot.hasBomb = false;
+      }
+    } catch {}
+
+    try {
+      if (carrierId && State.id !== null && carrierId === String(State.id)) {
+        carrier = game.player;
+        game.weapons.slots[5] = "c4";
+        if (!game.weapons.states.c4) {
+          game.weapons.states.c4 = { ammo: 1, reserve: 0 };
+        }
+      } else if (game.weapons.slots[5] === "c4") {
+        game.weapons.slots[5] = null;
+        if (game.weapons.current === "c4" && typeof game.weapons.equip === "function") {
+          game.weapons.equip(
+            game.weapons.slots[1] ||
+            game.weapons.slots[2] ||
+            "knife"
+          );
+        }
+      }
+    } catch {}
+
+    if (carrier && carrier !== game.player) {
+      try { carrier.hasBomb = true; } catch {}
+    }
+
+    try { ctl.carrier = carrier || null; } catch {}
+    try { if (game.hud && typeof game.hud.updateWeapon === "function") game.hud.updateWeapon(); } catch {}
+  }
+
+  function applyRemoteBombState(senderId, snapshot) {
+    if (!snapshot || snapshot.mode !== "defusal") return;
+
+    const game = getGame();
+    const ctl = game && game.modeCtl;
+    if (!game || !ctl || typeof ctl !== "object") return;
+
+    if (snapshot.authority) {
+      applyBombCarrier(snapshot);
+
+      try {
+        if (ctl.score) {
+          ctl.score.CT = safeNumber(snapshot.scoreCT, ctl.score.CT || 0);
+          ctl.score.T = safeNumber(snapshot.scoreT, ctl.score.T || 0);
+        }
+      } catch {}
+    }
+
+    const p = snapshot.planted;
+
+    if (p && snapshot.state === "planted") {
+      const key = [
+        safeNumber(snapshot.round, 0),
+        safeNumber(p.x, 0).toFixed(3),
+        safeNumber(p.y, 0).toFixed(3),
+        safeNumber(p.z, 0).toFixed(3),
+        String(p.site || "?")
+      ].join(":");
+
+      if (!ctl.planted || State.bombSync.lastPlantKey !== key) {
+        try {
+          State.bombSync.applying = true;
+
+          if (typeof ctl.cleanupBomb === "function") {
+            ctl.cleanupBomb();
+          }
+
+          const fakePlanter = {
+            x: safeNumber(p.x, 0),
+            y: safeNumber(p.y, 0),
+            z: safeNumber(p.z, 0),
+            money: 0,
+            isPlayer: false,
+            hasBomb: true,
+            team: "T",
+            alive: true
+          };
+
+          if (typeof ctl.plant === "function") {
+            ctl.plant(fakePlanter, { name: String(p.site || "?") });
+          }
+
+          if (ctl.planted) {
+            ctl.bombT = Math.max(0, safeNumber(snapshot.bombT, ctl.bombT));
+            ctl.state = "planted";
+            State.bombSync.ownerId = String(senderId || "");
+            State.bombSync.lastPlantKey = key;
+            State.bombSync.lastRemoteAt = Date.now();
+            log("[BOMB] received planted", p.site, p.x, p.y, p.z);
+          }
+        } catch (e) {
+          warn("[BOMB] failed applying remote plant:", e);
+        } finally {
+          State.bombSync.applying = false;
+        }
+      } else {
+        try {
+          const remoteT = Math.max(0, safeNumber(snapshot.bombT, ctl.bombT));
+          if (Math.abs(safeNumber(ctl.bombT, 0) - remoteT) > 1.25) {
+            ctl.bombT = remoteT;
+          }
+        } catch {}
+      }
+
+      return;
+    }
+
+    /* Host is authoritative for round-end/cleanup. This prevents stale
+       state packets from another client from resurrecting an old C4. */
+    if (snapshot.authority && ctl.planted && snapshot.state !== "planted") {
+      try {
+        State.bombSync.applying = true;
+        if (typeof ctl.cleanupBomb === "function") ctl.cleanupBomb();
+        State.bombSync.ownerId = null;
+        State.bombSync.lastPlantKey = "";
+        log("[BOMB] authoritative cleanup");
+      } catch (e) {
+        warn("[BOMB] cleanup failed:", e);
+      } finally {
+        State.bombSync.applying = false;
+      }
+    }
+  }
 
   function buildLocalState() {
     const game = getGame();
@@ -899,6 +1109,8 @@ health: clamp(
 
 team: getTeam(player),
 name: State.name,
+
+bomb: getBombSnapshot(),
 
       avatar: sendAvatar
         ? State.avatarEnabled
@@ -1762,7 +1974,7 @@ name: State.name,
 
       bot.health =
         bot.alive
-          ? 100
+          ? clamp(safeNumber(remote.health, 100), 0, 100)
           : 0;
 
       try {
@@ -1951,6 +2163,16 @@ name: State.name,
             incoming.alive !==
             false,
 
+          health:
+            clamp(
+              safeNumber(
+                incoming.health,
+                incoming.alive !== false ? 100 : 0
+              ),
+              0,
+              100
+            ),
+
           avatar:
             incoming.avatar !==
             undefined
@@ -2098,6 +2320,14 @@ name: State.name,
         remote.alive =
           incoming.alive !==
           false;
+      }
+
+      if (incoming.health !== undefined) {
+        remote.health = clamp(
+          safeNumber(incoming.health, remote.alive ? 100 : 0),
+          0,
+          100
+        );
       }
 
       let avatarChanged =
