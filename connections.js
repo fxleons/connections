@@ -7,7 +7,7 @@
 // @match        *://*.clutcher.io/*
 // @grant        unsafeWindow
 // @grant        GM_addStyle
-// @connect      soil-certain-cement-dakota.trycloudflare.com
+// @connect      spanking-lot-cargo-daily.trycloudflare.com
 // ==/UserScript==
 
 (() => {
@@ -17,7 +17,7 @@
 
   const CONFIG = {
     VERSION: "1.1.0",
-    WS_URL: "wss://soil-certain-cement-dakota.trycloudflare.com",
+    WS_URL: "wss://spanking-lot-cargo-daily.trycloudflare.com",
     SEND_RATE: 50,
     INTERPOLATION: 100,
     MAX_REMOTE_BOTS: 32,
