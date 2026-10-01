@@ -3013,73 +3013,82 @@ name: State.name,
     State.matchEnding = false;
   }
 
-  function monitorGame() {
-    const game = getGame();
+function monitorGame() {
+  const game = getGame();
 
-    if (
-      game &&
-      State.game !== game
-    ) {
-      State.game = game;
+  if (
+    game &&
+    State.game !== game
+  ) {
+    State.game = game;
 
-      log(
-        "Game engine detected."
-      );
-    }
+    log(
+      "Game engine detected."
+    );
+  }
 
-    if (!game) return;
+  if (!game) return;
 
-    if (State.confirmedMatch) {
-      const inside =
-        isInsideMatch(game);
+  if (State.confirmedMatch) {
+    const inside =
+      isInsideMatch(game);
 
-      if (inside) {
-        State.outsideMatchSince = 0;
-      } else if (State.room) {
-        if (!State.outsideMatchSince) {
-          State.outsideMatchSince =
-            Date.now();
-
-          log(
-            "Temporarily outside match state. Waiting for transition..."
-          );
-        }
-
-        if (
+    if (inside) {
+      if (State.outsideMatchSince) {
+        const outsideFor =
           Date.now() -
-            State.outsideMatchSince >
-          1800
-        ) {
-          handleMatchEnd();
-        }
+          State.outsideMatchSince;
+
+        log(
+          "Match state restored after transition. " +
+          outsideFor +
+          "ms"
+        );
+      }
+
+      State.outsideMatchSince = 0;
+    } else if (State.room) {
+      /*
+       * IMPORTANT:
+       *
+       * Clutcher temporarily stops looking like
+       * an active match while rebuilding the map,
+       * navigation, round state, etc.
+       *
+       * DO NOT call handleMatchEnd() here.
+       * The multiplayer room must survive that
+       * transition.
+       */
+      if (!State.outsideMatchSince) {
+        State.outsideMatchSince =
+          Date.now();
+
+        log(
+          "Temporarily outside match state. Preserving multiplayer room..."
+        );
       }
     }
+  }
 
-    /*
-     * This interval uses Date.now()
-     * rather than relying on the
-     * game's requestAnimationFrame.
-     *
-     * That means round timers continue
-     * being synchronized while the tab
-     * is in the background.
-     */
-    if (
-      State.confirmedMatch &&
-      State.room &&
-      State.isHost
-    ) {
+  /*
+   * Only synchronize the actual game clock while
+   * Clutcher currently has a usable match.
+   *
+   * We still KEEP the Connections room while the
+   * native game is transitioning.
+   */
+  if (
+    State.confirmedMatch &&
+    State.room &&
+    isInsideMatch(game)
+  ) {
+    if (State.isHost) {
       broadcastRoundState();
-    }
-
-    if (
-      State.confirmedMatch &&
-      State.room &&
-      !State.isHost
-    ) {
+    } else {
       applyAuthoritativeMatchState();
     }
   }
+}
 
   function startMonitor() {
     if (State.monitorTimer) return;
