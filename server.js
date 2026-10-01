@@ -1181,19 +1181,10 @@ function handleHit(client, data) {
     ];
   }
 
-console.log(
-  "[COMBAT] HIT RECEIVED | attacker=" + client.id +
-  " target=" + target.id +
-  " damage=" + amount +
-  " head=" + (data.head === true) +
-  " weapon=" + weaponId +
-  " targetHealthBefore=" + safeNumber(target.state.health, 100)
-);
-
-sendClient(
-  target,
-  {
-    type: "hit",
+  sendClient(
+    target,
+    {
+      type: "hit",
 
       attackerId:
         client.id,
@@ -1282,22 +1273,6 @@ function handleCombatState(
           100
         )
       : null;
-
-  console.log(
-  "[COMBAT] VICTIM RESULT | player=" + client.id +
-  " health=" + health +
-  " alive=" + alive +
-  " attacker=" + (attackerId || "unknown")
-);
-
-if (!alive) {
-  console.log(
-    "[COMBAT] DEATH CONFIRMED | player=" +
-    client.id +
-    " killedBy=" +
-    (attackerId || "unknown")
-  );
-}
 
   broadcastRoom(
     room,
