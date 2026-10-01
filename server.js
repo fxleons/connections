@@ -566,9 +566,11 @@ function createRoom(client, data) {
     roundStartedAt: 0,
     roundEndsAt: 0,
 
-    lastRound: null,
+lastRound: null,
 
-    closed: false
+lastBombState: null,
+
+closed: false
   };
 
   rooms.set(
@@ -741,6 +743,13 @@ function joinRoom(client, data) {
       room.lastRound
     );
   }
+
+  if (room.lastBombState) {
+  sendClient(
+    client,
+    room.lastBombState
+  );
+}
 
   broadcastRoom(
     room,
@@ -1642,6 +1651,178 @@ function handleRoundState(
 }
 
 /* =========================================================
+ * BOMB DEFUSE SYNC
+ * ========================================================= */
+
+function handleBombState(client, data) {
+  if (!client || !client.room) {
+    return;
+  }
+
+  const room = rooms.get(client.room);
+
+  if (!room || room.closed) {
+    return;
+  }
+
+  const action = cleanString(
+    data.action || "state",
+    "state",
+    32
+  );
+
+  const validActions = [
+    "state",
+    "carrier",
+    "planting",
+    "planted",
+    "defusing",
+    "defused",
+    "exploded",
+    "dropped",
+    "picked_up",
+    "reset"
+  ];
+
+  if (validActions.indexOf(action) === -1) {
+    return;
+  }
+
+  const roundSeq = Math.max(
+    0,
+    parseInt(data.roundSeq, 10) || 0
+  );
+
+  /*
+   * Não deixa pacote velho de outro round
+   * sobrescrever a bomba do round atual.
+   */
+  if (
+    room.round &&
+    roundSeq &&
+    roundSeq < room.round
+  ) {
+    return;
+  }
+
+  function coord(value) {
+    return clamp(
+      safeNumber(value, 0),
+      -100000,
+      100000
+    );
+  }
+
+  let position = null;
+
+  if (
+    data.position &&
+    typeof data.position === "object"
+  ) {
+    position = {
+      x: coord(data.position.x),
+      y: coord(data.position.y),
+      z: coord(data.position.z)
+    };
+  } else if (
+    Number.isFinite(Number(data.x)) &&
+    Number.isFinite(Number(data.y)) &&
+    Number.isFinite(Number(data.z))
+  ) {
+    position = {
+      x: coord(data.x),
+      y: coord(data.y),
+      z: coord(data.z)
+    };
+  }
+
+  const packet = {
+    type: "bomb_state",
+
+    action: action,
+
+    roomId: room.id,
+
+    playerId: client.id,
+
+    name: client.name,
+
+    roundSeq: roundSeq || room.round || 0,
+
+    carrierId:
+      typeof data.carrierId === "string"
+        ? data.carrierId.slice(0, 100)
+        : null,
+
+    planterId:
+      typeof data.planterId === "string"
+        ? data.planterId.slice(0, 100)
+        : null,
+
+    defuserId:
+      typeof data.defuserId === "string"
+        ? data.defuserId.slice(0, 100)
+        : null,
+
+    planted:
+      data.planted === true ||
+      action === "planted",
+
+    position: position,
+
+    bombT: clamp(
+      safeNumber(data.bombT, 0),
+      0,
+      300
+    ),
+
+    plantProgress: clamp(
+      safeNumber(data.plantProgress, 0),
+      0,
+      1
+    ),
+
+    defuseProgress: clamp(
+      safeNumber(data.defuseProgress, 0),
+      0,
+      1
+    ),
+
+    timestamp: now()
+  };
+
+  /*
+   * RESET / final do round.
+   */
+  if (
+    action === "reset" ||
+    action === "defused" ||
+    action === "exploded"
+  ) {
+    packet.planted = false;
+  }
+
+  /*
+   * Guardamos o último estado para alguém que
+   * entrar na sala depois da bomba ter sido plantada.
+   */
+  room.lastBombState = packet;
+
+  broadcastRoom(
+    room,
+    packet
+  );
+
+  console.log(
+    "[BOMB]",
+    action,
+    "| player=" + client.id,
+    "| round=" + packet.roundSeq,
+    "| planted=" + packet.planted
+  );
+}
+
+/* =========================================================
  * MUSIC
  * ========================================================= */
 
@@ -1970,14 +2151,21 @@ function handleMessage(
       );
       break;
 
-    case "combat_state":
-      handleCombatState(
-        client,
-        data
-      );
-      break;
+case "combat_state":
+  handleCombatState(
+    client,
+    data
+  );
+  break;
 
-    case "head_boost":
+case "bomb_state":
+  handleBombState(
+    client,
+    data
+  );
+  break;
+
+case "head_boost":
       updateHeadBoost(
         client,
         data,
